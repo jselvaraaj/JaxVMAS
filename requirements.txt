@@ -1,0 +1,7 @@
+jax
+jaxtyping
+flax
+
+pyglet<=1.5.27
+cv2
+
