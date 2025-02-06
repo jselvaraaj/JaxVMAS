@@ -1623,32 +1623,36 @@ class World(JaxVectorizedObject):
 
     # start from here !!!!
     def get_distance_from_point(
-        self, entity: Entity, test_point_pos, env_index: int = None
+        self,
+        entity: Entity,
+        entity_state: EntityRLState,
+        test_point_pos: Array,
+        env_index: int = None,
     ):
         self._check_batch_index(env_index)
 
         if isinstance(entity.shape, Sphere):
-            delta_pos = entity.state.pos - test_point_pos
+            delta_pos = entity_state.pos - test_point_pos
             dist = jnp.linalg.vector_norm(delta_pos, axis=-1)
             return_value = dist - entity.shape.radius
         elif isinstance(entity.shape, Box):
             closest_point = _get_closest_point_box(
-                entity.state.pos,
-                entity.state.rot,
+                entity_state.pos,
+                entity_state.rot,
                 entity.shape.width,
                 entity.shape.length,
                 test_point_pos,
             )
-            distance = torch.linalg.vector_norm(test_point_pos - closest_point, dim=-1)
+            distance = jnp.linalg.vector_norm(test_point_pos - closest_point, axis=-1)
             return_value = distance - LINE_MIN_DIST
         elif isinstance(entity.shape, Line):
             closest_point = _get_closest_point_line(
-                entity.state.pos,
-                entity.state.rot,
+                entity_state.pos,
+                entity_state.rot,
                 entity.shape.length,
                 test_point_pos,
             )
-            distance = torch.linalg.vector_norm(test_point_pos - closest_point, dim=-1)
+            distance = jnp.linalg.vector_norm(test_point_pos - closest_point, axis=-1)
             return_value = distance - LINE_MIN_DIST
         else:
             raise RuntimeError("Distance not computable for given entity")
@@ -1656,12 +1660,21 @@ class World(JaxVectorizedObject):
             return_value = return_value[env_index]
         return return_value
 
-    def get_distance(self, entity_a: Entity, entity_b: Entity, env_index: int = None):
+    def get_distance(
+        self,
+        entity_a: Entity,
+        entity_b: Entity,
+        entity_a_state: EntityRLState,
+        entity_b_state: EntityRLState,
+        env_index: int = None,
+    ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
 
         if isinstance(a_shape, Sphere) and isinstance(b_shape, Sphere):
-            dist = self.get_distance_from_point(entity_a, entity_b.state.pos, env_index)
+            dist = self.get_distance_from_point(
+                entity_a, entity_a_state, entity_b_state.pos, env_index
+            )
             return_value = dist - b_shape.radius
         elif (
             isinstance(entity_a.shape, Box)
@@ -1674,7 +1687,9 @@ class World(JaxVectorizedObject):
                 if isinstance(entity_b.shape, Sphere)
                 else (entity_b, entity_a)
             )
-            dist = self.get_distance_from_point(box, sphere.state.pos, env_index)
+            dist = self.get_distance_from_point(
+                box, entity_a_state, entity_b_state.pos, env_index
+            )
             return_value = dist - sphere.shape.radius
             is_overlapping = self.is_overlapping(entity_a, entity_b)
             return_value[is_overlapping] = -1
@@ -1689,18 +1704,20 @@ class World(JaxVectorizedObject):
                 if isinstance(entity_b.shape, Sphere)
                 else (entity_b, entity_a)
             )
-            dist = self.get_distance_from_point(line, sphere.state.pos, env_index)
+            dist = self.get_distance_from_point(
+                line, entity_a_state, entity_b_state.pos, env_index
+            )
             return_value = dist - sphere.shape.radius
         elif isinstance(entity_a.shape, Line) and isinstance(entity_b.shape, Line):
             point_a, point_b = _get_closest_points_line_line(
-                entity_a.state.pos,
-                entity_a.state.rot,
+                entity_a_state.pos,
+                entity_a_state.rot,
                 entity_a.shape.length,
-                entity_b.state.pos,
-                entity_b.state.rot,
+                entity_b_state.pos,
+                entity_b_state.rot,
                 entity_b.shape.length,
             )
-            dist = torch.linalg.vector_norm(point_a - point_b, dim=1)
+            dist = jnp.linalg.vector_norm(point_a - point_b, axis=-1)
             return_value = dist - LINE_MIN_DIST
         elif (
             isinstance(entity_a.shape, Box)
@@ -1708,40 +1725,47 @@ class World(JaxVectorizedObject):
             or isinstance(entity_b.shape, Box)
             and isinstance(entity_a.shape, Line)
         ):
-            box, line = (
-                (entity_a, entity_b)
+            box, box_state, line, line_state = (
+                (entity_a, entity_a_state, entity_b, entity_b_state)
                 if isinstance(entity_b.shape, Line)
-                else (entity_b, entity_a)
+                else (entity_b, entity_b_state, entity_a, entity_a_state)
             )
             point_box, point_line = _get_closest_line_box(
-                box.state.pos,
-                box.state.rot,
+                box_state.pos,
+                box_state.rot,
                 box.shape.width,
                 box.shape.length,
-                line.state.pos,
-                line.state.rot,
+                line_state.pos,
+                line_state.rot,
                 line.shape.length,
             )
-            dist = torch.linalg.vector_norm(point_box - point_line, dim=1)
+            dist = jnp.linalg.vector_norm(point_box - point_line, dim=1)
             return_value = dist - LINE_MIN_DIST
         elif isinstance(entity_a.shape, Box) and isinstance(entity_b.shape, Box):
             point_a, point_b = _get_closest_box_box(
-                entity_a.state.pos,
-                entity_a.state.rot,
+                entity_a_state.pos,
+                entity_a_state.rot,
                 entity_a.shape.width,
                 entity_a.shape.length,
-                entity_b.state.pos,
-                entity_b.state.rot,
+                entity_b_state.pos,
+                entity_b_state.rot,
                 entity_b.shape.width,
                 entity_b.shape.length,
             )
-            dist = torch.linalg.vector_norm(point_a - point_b, dim=-1)
+            dist = jnp.linalg.vector_norm(point_a - point_b, axis=-1)
             return_value = dist - LINE_MIN_DIST
         else:
             raise RuntimeError("Distance not computable for given entities")
         return return_value
 
-    def is_overlapping(self, entity_a: Entity, entity_b: Entity, env_index: int = None):
+    def is_overlapping(
+        self,
+        entity_a: Entity,
+        entity_b: Entity,
+        entity_a_state: EntityRLState,
+        entity_b_state: EntityRLState,
+        env_index: int = None,
+    ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
         self._check_batch_index(env_index)
@@ -1773,27 +1797,27 @@ class World(JaxVectorizedObject):
             or isinstance(entity_b.shape, Box)
             and isinstance(entity_a.shape, Sphere)
         ):
-            box, sphere = (
-                (entity_a, entity_b)
+            box, box_state, sphere, sphere_state = (
+                (entity_a, entity_a_state, entity_b, entity_b_state)
                 if isinstance(entity_b.shape, Sphere)
-                else (entity_b, entity_a)
+                else (entity_b, entity_b_state, entity_a, entity_a_state)
             )
             closest_point = _get_closest_point_box(
-                box.state.pos,
-                box.state.rot,
+                box_state.pos,
+                box_state.rot,
                 box.shape.width,
                 box.shape.length,
-                sphere.state.pos,
+                sphere_state.pos,
             )
 
-            distance_sphere_closest_point = torch.linalg.vector_norm(
-                sphere.state.pos - closest_point, dim=-1
+            distance_sphere_closest_point = jnp.linalg.vector_norm(
+                sphere_state.pos - closest_point, axis=-1
             )
-            distance_sphere_box = torch.linalg.vector_norm(
-                sphere.state.pos - box.state.pos, dim=-1
+            distance_sphere_box = jnp.linalg.vector_norm(
+                sphere_state.pos - box_state.pos, axis=-1
             )
-            distance_closest_point_box = torch.linalg.vector_norm(
-                box.state.pos - closest_point, dim=-1
+            distance_closest_point_box = jnp.linalg.vector_norm(
+                box_state.pos - closest_point, axis=-1
             )
             dist_min = sphere.shape.radius + LINE_MIN_DIST
             return_value = (distance_sphere_box < distance_closest_point_box) + (
@@ -1811,20 +1835,18 @@ class World(JaxVectorizedObject):
 
         for substep in range(self._substeps):
             self.forces_dict = {
-                e: torch.zeros(
+                e: jnp.zeros(
                     self._batch_dim,
                     self._dim_p,
-                    device=self.device,
-                    dtype=torch.float32,
+                    dtype=jnp.float32,
                 )
                 for e in self.entities
             }
             self.torques_dict = {
-                e: torch.zeros(
+                e: jnp.zeros(
                     self._batch_dim,
                     1,
-                    device=self.device,
-                    dtype=torch.float32,
+                    dtype=jnp.float32,
                 )
                 for e in self.entities
             }
@@ -1855,11 +1877,11 @@ class World(JaxVectorizedObject):
     def _apply_action_force(self, agent: Agent):
         if agent.movable:
             if agent.max_f is not None:
-                agent.state.force = TorchUtils.clamp_with_norm(
+                agent.state.force = JaxUtils.clamp_with_norm(
                     agent.state.force, agent.max_f
                 )
             if agent.f_range is not None:
-                agent.state.force = torch.clamp(
+                agent.state.force = jnp.clip(
                     agent.state.force, -agent.f_range, agent.f_range
                 )
             self.forces_dict[agent] = self.forces_dict[agent] + agent.state.force
@@ -1867,11 +1889,11 @@ class World(JaxVectorizedObject):
     def _apply_action_torque(self, agent: Agent):
         if agent.rotatable:
             if agent.max_t is not None:
-                agent.state.torque = TorchUtils.clamp_with_norm(
+                agent.state.torque = JaxUtils.clamp_with_norm(
                     agent.state.torque, agent.max_t
                 )
             if agent.t_range is not None:
-                agent.state.torque = torch.clamp(
+                agent.state.torque = jnp.clip(
                     agent.state.torque, -agent.t_range, agent.t_range
                 )
 
@@ -1888,51 +1910,51 @@ class World(JaxVectorizedObject):
                     self.forces_dict[entity] + entity.mass * entity.gravity
                 )
 
-    def _apply_friction_force(self, entity: Entity):
+    def _apply_friction_force(self, entity: Entity, entity_state: EntityRLState):
         def get_friction_force(vel, coeff, force, mass):
-            speed = torch.linalg.vector_norm(vel, dim=-1)
+            speed = jnp.linalg.vector_norm(vel, axis=-1)
             static = speed == 0
-            static_exp = static.unsqueeze(-1).expand(vel.shape)
+            static_exp = jnp.broadcast_to(static[..., None], vel.shape)
 
-            if not isinstance(coeff, Tensor):
-                coeff = torch.full_like(force, coeff, device=self.device)
-            coeff = coeff.expand(force.shape)
+            if not isinstance(coeff, Array):
+                coeff = jnp.full_like(force, coeff)
+            coeff = jnp.broadcast_to(coeff, force.shape)
 
             friction_force_constant = coeff * mass
 
             friction_force = -(
-                vel / torch.where(static, 1e-8, speed).unsqueeze(-1)
-            ) * torch.minimum(
-                friction_force_constant, (vel.abs() / self._sub_dt) * mass
+                vel / jnp.broadcast_to(jnp.where(static, 1e-8, speed), vel.shape)
+            ) * jnp.minimum(
+                friction_force_constant, (jnp.abs(vel) / self._sub_dt) * mass
             )
-            friction_force = torch.where(static_exp, 0.0, friction_force)
+            friction_force = jnp.where(static_exp, 0.0, friction_force)
 
             return friction_force
 
         if entity.linear_friction is not None:
             self.forces_dict[entity] = self.forces_dict[entity] + get_friction_force(
-                entity.state.vel,
+                entity_state.vel,
                 entity.linear_friction,
                 self.forces_dict[entity],
                 entity.mass,
             )
         elif self._linear_friction > 0:
             self.forces_dict[entity] = self.forces_dict[entity] + get_friction_force(
-                entity.state.vel,
+                entity_state.vel,
                 self._linear_friction,
                 self.forces_dict[entity],
                 entity.mass,
             )
         if entity.angular_friction is not None:
             self.torques_dict[entity] = self.torques_dict[entity] + get_friction_force(
-                entity.state.ang_vel,
+                entity_state.ang_vel,
                 entity.angular_friction,
                 self.torques_dict[entity],
                 entity.moment_of_inertia,
             )
         elif self._angular_friction > 0:
             self.torques_dict[entity] = self.torques_dict[entity] + get_friction_force(
-                entity.state.ang_vel,
+                entity_state.ang_vel,
                 self._angular_friction,
                 self.torques_dict[entity],
                 entity.moment_of_inertia,
@@ -2053,37 +2075,40 @@ class World(JaxVectorizedObject):
                 pos_joint_b.append(joint.pos_point(entity_b))
                 pos_a.append(entity_a.state.pos)
                 pos_b.append(entity_b.state.pos)
-                dist.append(torch.tensor(joint.dist, device=self.device))
-                rotate.append(torch.tensor(joint.rotate, device=self.device))
+                dist.append(joint.dist)
+                rotate.append(joint.rotate)
                 rot_a.append(entity_a.state.rot)
                 rot_b.append(entity_b.state.rot)
                 joint_rot.append(
-                    torch.tensor(joint.fixed_rotation, device=self.device)
-                    .unsqueeze(-1)
-                    .expand(self.batch_dim, 1)
+                    jnp.broadcast_to(
+                        jnp.asarray(joint.fixed_rotation)[..., None],
+                        (self.batch_dim, 1),
+                    )
                     if isinstance(joint.fixed_rotation, float)
                     else joint.fixed_rotation
                 )
-            pos_a = torch.stack(pos_a, dim=-2)
-            pos_b = torch.stack(pos_b, dim=-2)
-            pos_joint_a = torch.stack(pos_joint_a, dim=-2)
-            pos_joint_b = torch.stack(pos_joint_b, dim=-2)
-            rot_a = torch.stack(rot_a, dim=-2)
-            rot_b = torch.stack(rot_b, dim=-2)
-            dist = (
-                torch.stack(
+            pos_a = jnp.stack(pos_a, axis=-2)
+            pos_b = jnp.stack(pos_b, axis=-2)
+            pos_joint_a = jnp.stack(pos_joint_a, axis=-2)
+            pos_joint_b = jnp.stack(pos_joint_b, axis=-2)
+            rot_a = jnp.stack(rot_a, axis=-2)
+            rot_b = jnp.stack(rot_b, axis=-2)
+            dist = jnp.broadcast_to(
+                jnp.stack(
                     dist,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            rotate_prior = torch.stack(
+            rotate_prior = jnp.stack(
                 rotate,
-                dim=-1,
+                axis=-1,
             )
-            rotate = rotate_prior.unsqueeze(0).expand(self.batch_dim, -1).unsqueeze(-1)
-            joint_rot = torch.stack(joint_rot, dim=-2)
+            rotate = jnp.broadcast_to(
+                jnp.expand_dims(rotate_prior, 0),
+                (self.batch_dim, -1, 1),
+            )
+            joint_rot = jnp.stack(joint_rot, axis=-2)
 
             (
                 force_a_attractive,
@@ -2107,17 +2132,17 @@ class World(JaxVectorizedObject):
             r_a = pos_joint_a - pos_a
             r_b = pos_joint_b - pos_b
 
-            torque_a_rotate = TorchUtils.compute_torque(force_a, r_a)
-            torque_b_rotate = TorchUtils.compute_torque(force_b, r_b)
+            torque_a_rotate = JaxUtils.compute_torque(force_a, r_a)
+            torque_b_rotate = JaxUtils.compute_torque(force_b, r_b)
 
             torque_a_fixed, torque_b_fixed = self._get_constraint_torques(
                 rot_a, rot_b + joint_rot, force_multiplier=self._torque_constraint_force
             )
 
-            torque_a = torch.where(
+            torque_a = jnp.where(
                 rotate, torque_a_rotate, torque_a_rotate + torque_a_fixed
             )
-            torque_b = torch.where(
+            torque_b = jnp.where(
                 rotate, torque_b_rotate, torque_b_rotate + torque_b_fixed
             )
 
@@ -2140,26 +2165,24 @@ class World(JaxVectorizedObject):
             for s_a, s_b in s_s:
                 pos_s_a.append(s_a.state.pos)
                 pos_s_b.append(s_b.state.pos)
-                radius_s_a.append(torch.tensor(s_a.shape.radius, device=self.device))
-                radius_s_b.append(torch.tensor(s_b.shape.radius, device=self.device))
+                radius_s_a.append(s_a.shape.radius)
+                radius_s_b.append(s_b.shape.radius)
 
-            pos_s_a = torch.stack(pos_s_a, dim=-2)
-            pos_s_b = torch.stack(pos_s_b, dim=-2)
-            radius_s_a = (
-                torch.stack(
+            pos_s_a = jnp.stack(pos_s_a, axis=-2)
+            pos_s_b = jnp.stack(pos_s_b, axis=-2)
+            radius_s_a = jnp.broadcast_to(
+                jnp.stack(
                     radius_s_a,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            radius_s_b = (
-                torch.stack(
+            radius_s_b = jnp.broadcast_to(
+                jnp.stack(
                     radius_s_b,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
             force_a, force_b = self._get_constraint_forces(
                 pos_s_a,
@@ -2189,26 +2212,24 @@ class World(JaxVectorizedObject):
                 pos_l.append(line.state.pos)
                 pos_s.append(sphere.state.pos)
                 rot_l.append(line.state.rot)
-                radius_s.append(torch.tensor(sphere.shape.radius, device=self.device))
-                length_l.append(torch.tensor(line.shape.length, device=self.device))
-            pos_l = torch.stack(pos_l, dim=-2)
-            pos_s = torch.stack(pos_s, dim=-2)
-            rot_l = torch.stack(rot_l, dim=-2)
-            radius_s = (
-                torch.stack(
+                radius_s.append(sphere.shape.radius)
+                length_l.append(line.shape.length)
+            pos_l = jnp.stack(pos_l, axis=-2)
+            pos_s = jnp.stack(pos_s, axis=-2)
+            rot_l = jnp.stack(rot_l, axis=-2)
+            radius_s = jnp.broadcast_to(
+                jnp.stack(
                     radius_s,
                     dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                )[None],
+                (self.batch_dim, -1),
             )
-            length_l = (
-                torch.stack(
+            length_l = jnp.broadcast_to(
+                jnp.stack(
                     length_l,
                     dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                )[None],
+                (self.batch_dim, -1),
             )
 
             closest_point = _get_closest_point_line(pos_l, rot_l, length_l, pos_s)
@@ -2219,7 +2240,7 @@ class World(JaxVectorizedObject):
                 force_multiplier=self._collision_force,
             )
             r = closest_point - pos_l
-            torque_line = TorchUtils.compute_torque(force_line, r)
+            torque_line = JaxUtils.compute_torque(force_line, r)
 
             for i, (entity_a, entity_b) in enumerate(l_s):
                 self.update_env_forces(
@@ -2244,27 +2265,26 @@ class World(JaxVectorizedObject):
                 pos_l_b.append(l_b.state.pos)
                 rot_l_a.append(l_a.state.rot)
                 rot_l_b.append(l_b.state.rot)
-                length_l_a.append(torch.tensor(l_a.shape.length, device=self.device))
-                length_l_b.append(torch.tensor(l_b.shape.length, device=self.device))
-            pos_l_a = torch.stack(pos_l_a, dim=-2)
-            pos_l_b = torch.stack(pos_l_b, dim=-2)
-            rot_l_a = torch.stack(rot_l_a, dim=-2)
-            rot_l_b = torch.stack(rot_l_b, dim=-2)
-            length_l_a = (
-                torch.stack(
+                length_l_a.append(l_a.shape.length)
+                length_l_b.append(l_b.shape.length)
+            pos_l_a = jnp.stack(pos_l_a, axis=-2)
+            pos_l_b = jnp.stack(pos_l_b, axis=-2)
+            rot_l_a = jnp.stack(rot_l_a, axis=-2)
+            rot_l_b = jnp.stack(rot_l_b, axis=-2)
+            length_l_a = jnp.broadcast_to(
+                jnp.stack(
                     length_l_a,
                     dim=-1,
                 )
                 .unsqueeze(0)
                 .expand(self.batch_dim, -1)
             )
-            length_l_b = (
-                torch.stack(
+            length_l_b = jnp.broadcast_to(
+                jnp.stack(
                     length_l_b,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
 
             point_a, point_b = _get_closest_points_line_line(
@@ -2284,8 +2304,8 @@ class World(JaxVectorizedObject):
             r_a = point_a - pos_l_a
             r_b = point_b - pos_l_b
 
-            torque_a = TorchUtils.compute_torque(force_a, r_a)
-            torque_b = TorchUtils.compute_torque(force_b, r_b)
+            torque_a = JaxUtils.compute_torque(force_a, r_a)
+            torque_b = JaxUtils.compute_torque(force_b, r_b)
             for i, (entity_a, entity_b) in enumerate(l_l):
                 self.update_env_forces(
                     entity_a,
@@ -2309,47 +2329,41 @@ class World(JaxVectorizedObject):
                 pos_box.append(box.state.pos)
                 pos_sphere.append(sphere.state.pos)
                 rot_box.append(box.state.rot)
-                length_box.append(torch.tensor(box.shape.length, device=self.device))
-                width_box.append(torch.tensor(box.shape.width, device=self.device))
-                not_hollow_box.append(
-                    torch.tensor(not box.shape.hollow, device=self.device)
-                )
-                radius_sphere.append(
-                    torch.tensor(sphere.shape.radius, device=self.device)
-                )
-            pos_box = torch.stack(pos_box, dim=-2)
-            pos_sphere = torch.stack(pos_sphere, dim=-2)
-            rot_box = torch.stack(rot_box, dim=-2)
-            length_box = (
-                torch.stack(
+                length_box.append(box.shape.length)
+                width_box.append(box.shape.width)
+                not_hollow_box.append(not box.shape.hollow)
+                radius_sphere.append(sphere.shape.radius)
+            pos_box = jnp.stack(pos_box, axis=-2)
+            pos_sphere = jnp.stack(pos_sphere, axis=-2)
+            rot_box = jnp.stack(rot_box, axis=-2)
+            length_box = jnp.broadcast_to(
+                jnp.stack(
                     length_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            width_box = (
-                torch.stack(
+            width_box = jnp.broadcast_to(
+                jnp.stack(
                     width_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            not_hollow_box_prior = torch.stack(
+            not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
-                dim=-1,
+                axis=-1,
             )
-            not_hollow_box = not_hollow_box_prior.unsqueeze(0).expand(
-                self.batch_dim, -1
+            not_hollow_box = jnp.broadcast_to(
+                not_hollow_box_prior[None],
+                (self.batch_dim, -1),
             )
-            radius_sphere = (
-                torch.stack(
+            radius_sphere = jnp.broadcast_to(
+                jnp.stack(
                     radius_sphere,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
 
             closest_point_box = _get_closest_point_box(
@@ -2361,16 +2375,19 @@ class World(JaxVectorizedObject):
             )
 
             inner_point_box = closest_point_box
-            d = torch.zeros_like(radius_sphere, device=self.device, dtype=torch.float)
+            d = jnp.zeros_like(radius_sphere)
             if not_hollow_box_prior.any():
                 inner_point_box_hollow, d_hollow = _get_inner_point_box(
                     pos_sphere, closest_point_box, pos_box
                 )
-                cond = not_hollow_box.unsqueeze(-1).expand(inner_point_box.shape)
-                inner_point_box = torch.where(
+                cond = jnp.broadcast_to(
+                    not_hollow_box[..., None],
+                    inner_point_box.shape,
+                )
+                inner_point_box = jnp.where(
                     cond, inner_point_box_hollow, inner_point_box
                 )
-                d = torch.where(not_hollow_box, d_hollow, d)
+                d = jnp.where(not_hollow_box, d_hollow, d)
 
             force_sphere, force_box = self._get_constraint_forces(
                 pos_sphere,
@@ -2379,7 +2396,7 @@ class World(JaxVectorizedObject):
                 force_multiplier=self._collision_force,
             )
             r = closest_point_box - pos_box
-            torque_box = TorchUtils.compute_torque(force_box, r)
+            torque_box = JaxUtils.compute_torque(force_box, r)
 
             for i, (entity_a, entity_b) in enumerate(b_s):
                 self.update_env_forces(
@@ -2406,46 +2423,42 @@ class World(JaxVectorizedObject):
                 pos_line.append(line.state.pos)
                 rot_box.append(box.state.rot)
                 rot_line.append(line.state.rot)
-                length_box.append(torch.tensor(box.shape.length, device=self.device))
-                width_box.append(torch.tensor(box.shape.width, device=self.device))
-                not_hollow_box.append(
-                    torch.tensor(not box.shape.hollow, device=self.device)
-                )
-                length_line.append(torch.tensor(line.shape.length, device=self.device))
-            pos_box = torch.stack(pos_box, dim=-2)
-            pos_line = torch.stack(pos_line, dim=-2)
-            rot_box = torch.stack(rot_box, dim=-2)
-            rot_line = torch.stack(rot_line, dim=-2)
-            length_box = (
-                torch.stack(
+                length_box.append(box.shape.length)
+                width_box.append(box.shape.width)
+                not_hollow_box.append(not box.shape.hollow)
+                length_line.append(line.shape.length)
+            pos_box = jnp.stack(pos_box, axis=-2)
+            pos_line = jnp.stack(pos_line, axis=-2)
+            rot_box = jnp.stack(rot_box, axis=-2)
+            rot_line = jnp.stack(rot_line, axis=-2)
+            length_box = jnp.broadcast_to(
+                jnp.stack(
                     length_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            width_box = (
-                torch.stack(
+            width_box = jnp.broadcast_to(
+                jnp.stack(
                     width_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            not_hollow_box_prior = torch.stack(
+            not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
-                dim=-1,
+                axis=-1,
             )
-            not_hollow_box = not_hollow_box_prior.unsqueeze(0).expand(
-                self.batch_dim, -1
+            not_hollow_box = jnp.broadcast_to(
+                not_hollow_box_prior[None],
+                (self.batch_dim, -1),
             )
-            length_line = (
-                torch.stack(
+            length_line = jnp.broadcast_to(
+                jnp.stack(
                     length_line,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
 
             point_box, point_line = _get_closest_line_box(
@@ -2459,16 +2472,19 @@ class World(JaxVectorizedObject):
             )
 
             inner_point_box = point_box
-            d = torch.zeros_like(length_line, device=self.device, dtype=torch.float)
+            d = jnp.zeros_like(length_line)
             if not_hollow_box_prior.any():
                 inner_point_box_hollow, d_hollow = _get_inner_point_box(
                     point_line, point_box, pos_box
                 )
-                cond = not_hollow_box.unsqueeze(-1).expand(inner_point_box.shape)
-                inner_point_box = torch.where(
+                cond = jnp.broadcast_to(
+                    not_hollow_box[..., None],
+                    inner_point_box.shape,
+                )
+                inner_point_box = jnp.where(
                     cond, inner_point_box_hollow, inner_point_box
                 )
-                d = torch.where(not_hollow_box, d_hollow, d)
+                d = jnp.where(not_hollow_box, d_hollow, d)
 
             force_box, force_line = self._get_constraint_forces(
                 inner_point_box,
@@ -2479,8 +2495,8 @@ class World(JaxVectorizedObject):
             r_box = point_box - pos_box
             r_line = point_line - pos_line
 
-            torque_box = TorchUtils.compute_torque(force_box, r_box)
-            torque_line = TorchUtils.compute_torque(force_line, r_line)
+            torque_box = JaxUtils.compute_torque(force_box, r_box)
+            torque_line = JaxUtils.compute_torque(force_line, r_line)
 
             for i, (entity_a, entity_b) in enumerate(b_l):
                 self.update_env_forces(
@@ -2507,65 +2523,57 @@ class World(JaxVectorizedObject):
             for box, box2 in b_b:
                 pos_box.append(box.state.pos)
                 rot_box.append(box.state.rot)
-                length_box.append(torch.tensor(box.shape.length, device=self.device))
-                width_box.append(torch.tensor(box.shape.width, device=self.device))
-                not_hollow_box.append(
-                    torch.tensor(not box.shape.hollow, device=self.device)
-                )
+                length_box.append(box.shape.length)
+                width_box.append(box.shape.width)
+                not_hollow_box.append(not box.shape.hollow)
                 pos_box2.append(box2.state.pos)
                 rot_box2.append(box2.state.rot)
-                length_box2.append(torch.tensor(box2.shape.length, device=self.device))
-                width_box2.append(torch.tensor(box2.shape.width, device=self.device))
-                not_hollow_box2.append(
-                    torch.tensor(not box2.shape.hollow, device=self.device)
-                )
+                length_box2.append(box2.shape.length)
+                width_box2.append(box2.shape.width)
+                not_hollow_box2.append(not box2.shape.hollow)
 
-            pos_box = torch.stack(pos_box, dim=-2)
-            rot_box = torch.stack(rot_box, dim=-2)
-            length_box = (
-                torch.stack(
+            pos_box = jnp.stack(pos_box, axis=-2)
+            rot_box = jnp.stack(rot_box, axis=-2)
+            length_box = jnp.broadcast_to(
+                jnp.stack(
                     length_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            width_box = (
-                torch.stack(
+            width_box = jnp.broadcast_to(
+                jnp.stack(
                     width_box,
-                    dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                    axis=-1,
+                )[None],
+                (self.batch_dim, -1),
             )
-            not_hollow_box_prior = torch.stack(
+            not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
-                dim=-1,
+                axis=-1,
             )
             not_hollow_box = not_hollow_box_prior.unsqueeze(0).expand(
                 self.batch_dim, -1
             )
-            pos_box2 = torch.stack(pos_box2, dim=-2)
-            rot_box2 = torch.stack(rot_box2, dim=-2)
-            length_box2 = (
-                torch.stack(
+            pos_box2 = jnp.stack(pos_box2, axis=-2)
+            rot_box2 = jnp.stack(rot_box2, axis=-2)
+            length_box2 = jnp.broadcast_to(
+                jnp.stack(
                     length_box2,
                     dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                )[None],
+                (self.batch_dim, -1),
             )
-            width_box2 = (
-                torch.stack(
+            width_box2 = jnp.broadcast_to(
+                jnp.stack(
                     width_box2,
                     dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                )[None],
+                (self.batch_dim, -1),
             )
-            not_hollow_box2_prior = torch.stack(
+            not_hollow_box2_prior = jnp.stack(
                 not_hollow_box2,
-                dim=-1,
+                axis=-1,
             )
             not_hollow_box2 = not_hollow_box2_prior.unsqueeze(0).expand(
                 self.batch_dim, -1
@@ -2583,26 +2591,30 @@ class World(JaxVectorizedObject):
             )
 
             inner_point_a = point_a
-            d_a = torch.zeros_like(length_box, device=self.device, dtype=torch.float)
+            d_a = jnp.zeros_like(length_box)
             if not_hollow_box_prior.any():
                 inner_point_box_hollow, d_hollow = _get_inner_point_box(
                     point_b, point_a, pos_box
                 )
-                cond = not_hollow_box.unsqueeze(-1).expand(inner_point_a.shape)
-                inner_point_a = torch.where(cond, inner_point_box_hollow, inner_point_a)
-                d_a = torch.where(not_hollow_box, d_hollow, d_a)
+                cond = jnp.broadcast_to(
+                    not_hollow_box[..., None],
+                    inner_point_a.shape,
+                )
+                inner_point_a = jnp.where(cond, inner_point_box_hollow, inner_point_a)
+                d_a = jnp.where(not_hollow_box, d_hollow, d_a)
 
             inner_point_b = point_b
-            d_b = torch.zeros_like(length_box2, device=self.device, dtype=torch.float)
+            d_b = jnp.zeros_like(length_box2)
             if not_hollow_box2_prior.any():
                 inner_point_box2_hollow, d_hollow2 = _get_inner_point_box(
                     point_a, point_b, pos_box2
                 )
-                cond = not_hollow_box2.unsqueeze(-1).expand(inner_point_b.shape)
-                inner_point_b = torch.where(
-                    cond, inner_point_box2_hollow, inner_point_b
+                cond = jnp.broadcast_to(
+                    not_hollow_box2[..., None],
+                    inner_point_b.shape,
                 )
-                d_b = torch.where(not_hollow_box2, d_hollow2, d_b)
+                inner_point_b = jnp.where(cond, inner_point_box2_hollow, inner_point_b)
+                d_b = jnp.where(not_hollow_box2, d_hollow2, d_b)
 
             force_a, force_b = self._get_constraint_forces(
                 inner_point_a,
@@ -2612,8 +2624,8 @@ class World(JaxVectorizedObject):
             )
             r_a = point_a - pos_box
             r_b = point_b - pos_box2
-            torque_a = TorchUtils.compute_torque(force_a, r_a)
-            torque_b = TorchUtils.compute_torque(force_b, r_b)
+            torque_a = JaxUtils.compute_torque(force_a, r_a)
+            torque_b = JaxUtils.compute_torque(force_b, r_b)
 
             for i, (entity_a, entity_b) in enumerate(b_b):
                 self.update_env_forces(
@@ -2625,7 +2637,9 @@ class World(JaxVectorizedObject):
                     torque_b[:, i],
                 )
 
-    def collides(self, a: Entity, b: Entity) -> bool:
+    def collides(
+        self, a: Entity, b: Entity, a_state: EntityRLState, b_state: EntityRLState
+    ) -> bool:
         if (not a.collides(b)) or (not b.collides(a)) or a is b:
             return False
         a_shape = a.shape
@@ -2635,7 +2649,7 @@ class World(JaxVectorizedObject):
         if {a_shape.__class__, b_shape.__class__} not in self._collidable_pairs:
             return False
         if not (
-            torch.linalg.vector_norm(a.state.pos - b.state.pos, dim=-1)
+            jnp.linalg.vector_norm(a_state.pos - b_state.pos, axis=-1)
             <= a.shape.circumscribed_radius() + b.shape.circumscribed_radius()
         ).any():
             return False
@@ -2644,22 +2658,22 @@ class World(JaxVectorizedObject):
 
     def _get_constraint_forces(
         self,
-        pos_a: Tensor,
-        pos_b: Tensor,
-        dist_min,
+        pos_a: Array,
+        pos_b: Array,
+        dist_min: float,
         force_multiplier: float,
         attractive: bool = False,
-    ) -> Tensor:
+    ) -> tuple[Array, Array]:
         min_dist = 1e-6
         delta_pos = pos_a - pos_b
-        dist = torch.linalg.vector_norm(delta_pos, dim=-1)
+        dist = jnp.linalg.vector_norm(delta_pos, axis=-1)
         sign = -1 if attractive else 1
 
         # softmax penetration
         k = self._contact_margin
         penetration = (
-            torch.logaddexp(
-                torch.tensor(0.0, dtype=torch.float32, device=self.device),
+            jnp.logaddexp(
+                jnp.array(0.0, dtype=jnp.float32),
                 (dist_min - dist) * sign / k,
             )
             * k
@@ -2668,92 +2682,105 @@ class World(JaxVectorizedObject):
             sign
             * force_multiplier
             * delta_pos
-            / torch.where(dist > 0, dist, 1e-8).unsqueeze(-1)
-            * penetration.unsqueeze(-1)
+            / jnp.where(dist > 0, dist, 1e-8)[..., None]
+            * penetration[..., None]
         )
-        force = torch.where((dist < min_dist).unsqueeze(-1), 0.0, force)
+        force = jnp.where((dist < min_dist)[..., None], 0.0, force)
         if not attractive:
-            force = torch.where((dist > dist_min).unsqueeze(-1), 0.0, force)
+            force = jnp.where((dist > dist_min)[..., None], 0.0, force)
         else:
-            force = torch.where((dist < dist_min).unsqueeze(-1), 0.0, force)
+            force = jnp.where((dist < dist_min)[..., None], 0.0, force)
         return force, -force
 
     def _get_constraint_torques(
         self,
-        rot_a: Tensor,
-        rot_b: Tensor,
+        rot_a: Array,
+        rot_b: Array,
         force_multiplier: float = TORQUE_CONSTRAINT_FORCE,
-    ) -> Tensor:
+    ) -> tuple[Array, Array]:
         min_delta_rot = 1e-9
         delta_rot = rot_a - rot_b
-        abs_delta_rot = torch.linalg.vector_norm(delta_rot, dim=-1).unsqueeze(-1)
+        abs_delta_rot = jnp.linalg.vector_norm(delta_rot, axis=-1)[..., None]
 
         # softmax penetration
         k = 1
-        penetration = k * (torch.exp(abs_delta_rot / k) - 1)
+        penetration = k * (jnp.exp(abs_delta_rot / k) - 1)
 
         torque = force_multiplier * delta_rot.sign() * penetration
-        torque = torch.where((abs_delta_rot < min_delta_rot), 0.0, torque)
+        torque = jnp.where((abs_delta_rot < min_delta_rot), 0.0, torque)
 
         return -torque, torque
 
     # integrate physical state
     # uses semi-implicit euler with sub-stepping
-    def _integrate_state(self, entity: Entity, substep: int):
+    def _integrate_state(
+        self, entity: Entity, entity_state: EntityRLState, substep: int
+    ):
         if entity.movable:
             # Compute translation
             if substep == 0:
                 if entity.drag is not None:
-                    entity.state.vel = entity.state.vel * (1 - entity.drag)
+                    entity_state = entity_state.replace(
+                        vel=entity_state.vel * (1 - entity.drag)
+                    )
                 else:
-                    entity.state.vel = entity.state.vel * (1 - self._drag)
+                    entity_state = entity_state.replace(
+                        vel=entity_state.vel * (1 - self._drag)
+                    )
             accel = self.forces_dict[entity] / entity.mass
-            entity.state.vel = entity.state.vel + accel * self._sub_dt
+            entity_state = entity_state.replace(
+                vel=entity_state.vel + accel * self._sub_dt
+            )
             if entity.max_speed is not None:
-                entity.state.vel = TorchUtils.clamp_with_norm(
-                    entity.state.vel, entity.max_speed
+                entity_state = entity_state.replace(
+                    vel=JaxUtils.clamp_with_norm(entity_state.vel, entity.max_speed)
                 )
             if entity.v_range is not None:
-                entity.state.vel = entity.state.vel.clamp(
-                    -entity.v_range, entity.v_range
+                entity_state = entity_state.replace(
+                    vel=jnp.clip(entity_state.vel, -entity.v_range, entity.v_range)
                 )
-            new_pos = entity.state.pos + entity.state.vel * self._sub_dt
-            entity.state.pos = torch.stack(
-                [
-                    (
-                        new_pos[..., X].clamp(-self._x_semidim, self._x_semidim)
-                        if self._x_semidim is not None
-                        else new_pos[..., X]
-                    ),
-                    (
-                        new_pos[..., Y].clamp(-self._y_semidim, self._y_semidim)
-                        if self._y_semidim is not None
-                        else new_pos[..., Y]
-                    ),
-                ],
-                dim=-1,
+            new_pos = entity_state.pos + entity_state.vel * self._sub_dt
+            entity_state = entity_state.replace(
+                pos=jnp.stack(
+                    [
+                        (
+                            new_pos[..., X].clip(-self._x_semidim, self._x_semidim)
+                            if self._x_semidim is not None
+                            else new_pos[..., X]
+                        ),
+                        (
+                            new_pos[..., Y].clip(-self._y_semidim, self._y_semidim)
+                            if self._y_semidim is not None
+                            else new_pos[..., Y]
+                        ),
+                    ],
+                    axis=-1,
+                )
             )
 
         if entity.rotatable:
             # Compute rotation
             if substep == 0:
                 if entity.drag is not None:
-                    entity.state.ang_vel = entity.state.ang_vel * (1 - entity.drag)
+                    entity_state = entity_state.replace(
+                        ang_vel=entity_state.ang_vel * (1 - entity.drag)
+                    )
                 else:
-                    entity.state.ang_vel = entity.state.ang_vel * (1 - self._drag)
-            entity.state.ang_vel = (
-                entity.state.ang_vel
+                    entity_state = entity_state.replace(
+                        ang_vel=entity_state.ang_vel * (1 - self._drag)
+                    )
+            entity_state = entity_state.replace(
+                ang_vel=entity_state.ang_vel
                 + (self.torques_dict[entity] / entity.moment_of_inertia) * self._sub_dt
             )
-            entity.state.rot = entity.state.rot + entity.state.ang_vel * self._sub_dt
+            entity_state = entity_state.replace(
+                rot=entity_state.rot + entity_state.ang_vel * self._sub_dt
+            )
 
-    def _update_comm_state(self, agent):
+        return entity_state
+
+    def _update_comm_state(self, agent: Agent, agent_dynamic_state: AgentDynamicState):
         # set communication state (directly for now)
         if not agent.silent:
-            agent.state.c = agent.action.c
-
-    @override(TorchVectorizedObject)
-    def to(self, device: torch.device):
-        super().to(device)
-        for e in self.entities:
-            e.to(device)
+            agent_dynamic_state = agent_dynamic_state.replace(c=agent.action.c)
+        return agent_dynamic_state
