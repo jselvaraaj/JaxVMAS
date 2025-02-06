@@ -5,30 +5,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, List, Tuple, Union
+from typing import TYPE_CHECKING, Callable, List, Tuple, Union
 
 import jax.numpy as jnp
 from jax import vmap
 from jaxtyping import Array, Float
 
-from jaxvmas.simulator.core import Agent, Entity, World
+from jaxvmas.equinox_utils import PyTreeNode
+
+if TYPE_CHECKING:
+    from jaxvmas.simulator.core import Agent, Entity, World
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color
 
 
-class Sensor(ABC):
-    def __init__(self, world: World):
+class Sensor(PyTreeNode, ABC):
+    agent: "Agent" | None
+    world: "World"
+
+    def __init__(self, world: "World"):
         super().__init__()
-        self._world = world
-        self._agent: Agent | None = None
-
-    @property
-    def agent(self) -> Agent | None:
-        return self._agent
-
-    @agent.setter
-    def agent(self, agent: Agent):
-        self._agent = agent
+        self.world = world
+        self.agent = None
 
     @abstractmethod
     def measure(self):
@@ -48,12 +46,12 @@ pos_dim = "pos_dim"
 class Lidar(Sensor):
     def __init__(
         self,
-        world: World,
+        world: "World",
         angle_start: float = 0.0,
         angle_end: float = 2 * jnp.pi,
         n_rays: int = 8,
         max_range: float = 1.0,
-        entity_filter: Callable[[Entity], bool] = lambda _: True,
+        entity_filter: Callable[["Entity"], bool] = lambda _: True,
         render_color: Union[Color, Tuple[float, float, float]] = Color.GRAY,
         alpha: float = 1.0,
         render: bool = True,
@@ -77,7 +75,7 @@ class Lidar(Sensor):
         return self._entity_filter
 
     @entity_filter.setter
-    def entity_filter(self, entity_filter: Callable[[Entity], bool]):
+    def entity_filter(self, entity_filter: Callable[["Entity"], bool]):
         self._entity_filter = entity_filter
 
     @property

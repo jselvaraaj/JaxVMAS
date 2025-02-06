@@ -3,40 +3,29 @@
 #  All rights reserved.
 import abc
 from abc import ABC
+from typing import TYPE_CHECKING, Union
 
-from flax import struct
 from jaxtyping import Array
 
+from jaxvmas.equinox_utils import PyTreeNode
 
-class DynamicsDynamicState(struct.PyTreeNode):
-    pass
+if TYPE_CHECKING:
+    from jaxvmas.simulator.core import Agent
 
 
-class Dynamics(ABC):
+class Dynamics(PyTreeNode, ABC):
+    agent: Union["Agent", None]
+
     def __init__(
         self,
     ):
-        self._agent = None
+        self.agent = None
 
     def reset(self, index: Array | int = None):
         return
 
     def zero_grad(self):
         return
-
-    @property
-    def agent(self):
-        if self._agent is None:
-            raise ValueError(
-                "You need to add the dynamics to an agent during construction before accessing its properties"
-            )
-        return self._agent
-
-    @agent.setter
-    def agent(self, value):
-        if self._agent is not None:
-            raise ValueError("Agent in dynamics has already been set")
-        self._agent = value
 
     def check_and_process_action(self):
         action = self.agent.action.u

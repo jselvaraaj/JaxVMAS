@@ -5,12 +5,14 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 
-from jaxvmas.simulator.rendering import Geom
+if TYPE_CHECKING:
+    from jaxvmas.simulator.rendering import Geom
 
 X = 0
 Y = 1
@@ -65,14 +67,14 @@ class Observable:
     def __init__(self):
         self._observers = []
 
-    def subscribe(self, observer):
+    def subscribe(self, observer: "Observer"):
         self._observers.append(observer)
 
     def notify_observers(self, *args, **kwargs):
         for obs in self._observers:
             obs.notify(self, *args, **kwargs)
 
-    def unsubscribe(self, observer):
+    def unsubscribe(self, observer: "Observer"):
         self._observers.remove(observer)
 
 
@@ -203,7 +205,9 @@ class JaxUtils:
 
     @staticmethod
     def where_from_index(env_index, new_value, old_value):
-        return jax.lax.dynamic_update_slice(old_value, new_value, (env_index, 0))
+        mask = jnp.zeros_like(old_value, dtype=jnp.bool)
+        mask = mask.at[env_index].set(True)
+        return jnp.where(mask, new_value, old_value)
 
 
 class ScenarioUtils:
@@ -308,7 +312,7 @@ class ScenarioUtils:
     @staticmethod
     def render_agent_indices(
         scenario, env_index: int, start_from: int = 0, exclude: list = None
-    ) -> list[Geom]:
+    ) -> list["Geom"]:
         from jaxvmas.simulator import rendering
 
         aspect_r = scenario.viewer_size[X] / scenario.viewer_size[Y]
@@ -340,7 +344,7 @@ class ScenarioUtils:
         return geoms
 
     @staticmethod
-    def plot_entity_rotation(entity, env_index: int, length: float = 0.15) -> Geom:
+    def plot_entity_rotation(entity, env_index: int, length: float = 0.15) -> "Geom":
         from jaxvmas.simulator import rendering
 
         color = entity.color
