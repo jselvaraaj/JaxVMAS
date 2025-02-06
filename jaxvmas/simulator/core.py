@@ -94,51 +94,66 @@ class Shape(ABC):
 
 class Box(Shape):
     def __init__(self, length: float = 0.3, width: float = 0.1, hollow: bool = False):
-        if length <= 0:
-            raise ValueError(f"Length must be > 0, got {length}")
-        if width <= 0:
-            raise ValueError(f"Width must be > 0, got {width}")
-        self.length = length
-        self.width = width
+        super().__init__()
+        assert length > 0, f"Length must be > 0, got {length}"
+        assert width > 0, f"Width must be > 0, got {length}"
+        self._length = length
+        self._width = width
         self.hollow = hollow
 
-    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
-        return (anchor[0] * self.length / 2, anchor[1] * self.width / 2)
+    @property
+    def length(self):
+        return self._length
 
-    def moment_of_inertia(self, mass: float) -> float:
+    @property
+    def width(self):
+        return self._width
+
+    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
+        return anchor[X] * self.length / 2, anchor[Y] * self.width / 2
+
+    def moment_of_inertia(self, mass: float):
         return (1 / 12) * mass * (self.length**2 + self.width**2)
 
-    def circumscribed_radius(self) -> float:
-        return float(jnp.sqrt((self.length / 2) ** 2 + (self.width / 2) ** 2))
+    def circumscribed_radius(self):
+        return jnp.sqrt((self.length / 2) ** 2 + (self.width / 2) ** 2)
 
-    def get_geometry(self):
+    def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
 
-        l, r = -self.length / 2, self.length / 2
-        t, b = self.width / 2, -self.width / 2
+        l, r, t, b = (
+            -self.length / 2,
+            self.length / 2,
+            self.width / 2,
+            -self.width / 2,
+        )
         return rendering.make_polygon([(l, b), (l, t), (r, t), (r, b)])
 
 
 class Sphere(Shape):
     def __init__(self, radius: float = 0.05):
-        if radius <= 0:
-            raise ValueError(f"Radius must be > 0, got {radius}")
-        self.radius = radius
+        super().__init__()
+        assert radius > 0, f"Radius must be > 0, got {radius}"
+        self._radius = radius
+
+    @property
+    def radius(self):
+        return self._radius
 
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
-        delta = jnp.array([anchor[0] * self.radius, anchor[1] * self.radius])
-        norm = jnp.linalg.norm(delta)
-        if norm > self.radius:
-            delta = delta / (norm / self.radius)
+        delta = jnp.array([anchor[X] * self.radius, anchor[Y] * self.radius])
+        delta_norm = jnp.linalg.vector_norm(delta)
+        if delta_norm > self.radius:
+            delta /= delta_norm * self.radius
         return tuple(delta.tolist())
 
-    def moment_of_inertia(self, mass: float) -> float:
-        return 0.5 * mass * self.radius**2
+    def moment_of_inertia(self, mass: float):
+        return (1 / 2) * mass * self.radius**2
 
-    def circumscribed_radius(self) -> float:
+    def circumscribed_radius(self):
         return self.radius
 
-    def get_geometry(self):
+    def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
 
         return rendering.make_circle(self.radius)
@@ -146,10 +161,18 @@ class Sphere(Shape):
 
 class Line(Shape):
     def __init__(self, length: float = 0.5):
-        if length <= 0:
-            raise ValueError(f"Length must be > 0, got {length}")
-        self.length = length
-        self.width = 2.0
+        super().__init__()
+        assert length > 0, f"Length must be > 0, got {length}"
+        self._length = length
+        self._width = 2
+
+    @property
+    def length(self):
+        return self._length
+
+    @property
+    def width(self):
+        return self._width
 
     def moment_of_inertia(self, mass: float) -> float:
         return (1 / 12) * mass * (self.length**2)
@@ -158,13 +181,15 @@ class Line(Shape):
         return self.length / 2
 
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
-        return (anchor[0] * self.length / 2, 0.0)
+        return anchor[X] * self.length / 2, 0.0
 
-    def get_geometry(self):
+    def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
 
         return rendering.Line(
-            (-self.length / 2, 0), (self.length / 2, 0), width=self.width
+            (-self.length / 2, 0),
+            (self.length / 2, 0),
+            width=self.width,
         )
 
 
