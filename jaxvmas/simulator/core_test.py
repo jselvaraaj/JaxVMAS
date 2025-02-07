@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -34,3 +35,17 @@ def test_entity_state_spawn(entity_state: EntityState):
     assert jnp.array_equal(spawned_state.vel, jnp.zeros((2, 4)))
     assert jnp.array_equal(spawned_state.rot, jnp.zeros((2, 1)))
     assert jnp.array_equal(spawned_state.ang_vel, jnp.zeros((2, 1)))
+
+
+def test_entity_state_is_jittable(entity_state: EntityState):
+    @eqx.filter_jit
+    def f(e_s):
+        return e_s._spawn(dim_c=3, dim_p=4)
+
+    f(entity_state)
+
+    @eqx.filter_jit
+    def f2(e_s):
+        return e_s._reset()
+
+    f2(entity_state)
