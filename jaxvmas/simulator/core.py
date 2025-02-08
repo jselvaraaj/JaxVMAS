@@ -3,6 +3,7 @@
 #  All rights reserved.
 
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from typing import Callable, Sequence
 
 import jax.numpy as jnp
@@ -51,6 +52,10 @@ dots_dim = "..."
 
 class JaxVectorizedObject(PyTreeNode):
     batch_dim: int
+
+    @classmethod
+    def create(cls, batch_dim: int):
+        return cls(batch_dim)
 
     def _check_batch_index(self, batch_index: int):
         if batch_index is not None:
@@ -234,14 +239,25 @@ class AgentState(EntityState):
     force: Float[Array, f"{batch_dim} {pos_dim}"]
     torque: Float[Array, f"{batch_dim} 1"]
 
-    def __init__(self, batch_dim: int, dim_c: int, dim_p: int):
-        super().__init__(batch_dim, dim_c, dim_p)
+    @classmethod
+    def create(cls, batch_dim: int, dim_c: int, dim_p: int):
+        entity_state = EntityState.create(batch_dim, dim_c, dim_p)
         # communication utterance
-        self.c = jnp.zeros((batch_dim, dim_c))
+        c = jnp.zeros((batch_dim, dim_c))
         # Agent force from actions
-        self.force = jnp.zeros((batch_dim, dim_p))
+        force = jnp.zeros((batch_dim, dim_p))
         # Agent torque from actions
-        self.torque = jnp.zeros((batch_dim, 1))
+        torque = jnp.zeros((batch_dim, 1))
+        return cls(
+            batch_dim,
+            entity_state.pos,
+            entity_state.vel,
+            entity_state.rot,
+            entity_state.ang_vel,
+            c,
+            force,
+            torque,
+        )
 
     def _reset(self, env_index: int | None = None) -> "AgentState":
         if env_index is None:
@@ -261,8 +277,7 @@ class AgentState(EntityState):
         )
 
     def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
-        if dim_c > 0:
-            self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
+        self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
         self = self.replace(
             force=jnp.zeros((self.batch_dim, dim_p)),
             torque=jnp.zeros((self.batch_dim, 1)),
@@ -279,8 +294,13 @@ class Action(JaxVectorizedObject):
     u_noise: float | Sequence[float]
     action_size: int
 
-    def __init__(
-        self,
+    _u_range_jax_array: Sequence[float] | None
+    _u_multiplier_jax_array: Sequence[float] | None
+    _u_noise_jax_array: Sequence[float] | None
+
+    @classmethod
+    def create(
+        cls,
         batch_dim: int,
         action_size: int,
         comm_dim: int,
@@ -288,25 +308,32 @@ class Action(JaxVectorizedObject):
         u_multiplier: float | Sequence[float],
         u_noise: float | Sequence[float],
     ):
-        super().__init__(batch_dim)
-
-        self.u = jnp.zeros((batch_dim, action_size))
-        self.c = jnp.zeros((batch_dim, comm_dim))
+        u = jnp.zeros((batch_dim, action_size))
+        c = jnp.zeros((batch_dim, comm_dim))
 
         # control range
-        self._u_range = u_range
+        _u_range = u_range
         # agent action is a force multiplied by this amount
-        self._u_multiplier = u_multiplier
+        _u_multiplier = u_multiplier
         # physical motor noise amount
-        self._u_noise = u_noise
+        _u_noise = u_noise
         # Number of actions
-        self.action_size = action_size
+        action_size = action_size
 
-        self._u_range_jax_array = None
-        self._u_multiplier_jax_array = None
-        self._u_noise_jax_array = None
-
-        self._check_action_init()
+        action = cls(
+            batch_dim,
+            u,
+            c,
+            _u_range,
+            _u_multiplier,
+            _u_noise,
+            action_size,
+            None,
+            None,
+            None,
+        )
+        action._check_action_init()
+        return action
 
     def _check_action_init(self):
         for attr in (self.u_multiplier, self.u_range, self.u_noise):
@@ -342,21 +369,21 @@ class Action(JaxVectorizedObject):
             value if isinstance(value, Sequence) else [value] * self.action_size,
         )
 
-    def _reset(self, action: "Action", env_index: None | int):
+    def _reset(self, env_index: None | int):
         for attr_name in ["u", "c"]:
-            attr = getattr(action, attr_name)
+            attr = getattr(self, attr_name)
             if attr is not None:
                 if env_index is None:
-                    action = action.replace(**{attr_name: jnp.zeros_like(attr)})
+                    self = self.replace(**{attr_name: jnp.zeros_like(attr)})
                 else:
-                    action = action.replace(
+                    self = self.replace(
                         **{
                             attr_name: JaxUtils.where_from_index(
                                 env_index, jnp.zeros_like(attr), attr
                             )
                         }
                     )
-        return action
+        return self
 
 
 class Entity(JaxVectorizedObject, Observable):
@@ -380,8 +407,12 @@ class Entity(JaxVectorizedObject, Observable):
     angular_friction: float | None
     collision_filter: Callable[["Entity"], bool]
 
-    def __init__(
-        self,
+    goal: Array | None
+    _render: Array
+
+    @classmethod
+    def create(
+        cls,
         batch_dim: int,
         name: str,
         movable: bool = False,
@@ -399,87 +430,107 @@ class Entity(JaxVectorizedObject, Observable):
         angular_friction: float | None = None,
         gravity: float | Sequence[float] | None = None,
         collision_filter: Callable[["Entity"], bool] = lambda _: True,
+        dim_p: int = 2,
+        dim_c: int = 0,
     ):
         if shape is None:
             shape = Sphere()
-
-        JaxVectorizedObject.__init__(self, batch_dim)
-        Observable.__init__(self)
         # name
-        self.name = name
+        name = name
         # entity can move / be pushed
-        self.movable = movable
+        movable = movable
         # entity can rotate
-        self.rotatable = rotatable
+        rotatable = rotatable
         # entity collides with others
-        self.collide = collide
+        collide = collide
         # material density (affects mass)
-        self.density = density
+        density = density
         # mass
-        self.mass = mass
+        mass = mass
         # max speed
-        self.max_speed = max_speed
-        self.v_range = v_range
+        max_speed = max_speed
+        v_range = v_range
         # color
-        self.color = color
+        color = color
         # shape
-        self.shape = shape
+        shape = shape
         # is joint
-        self.is_joint = is_joint
+        is_joint = is_joint
         # collision filter
-        self.collision_filter = collision_filter
+        collision_filter = collision_filter
         # drag
-        self.drag = drag
+        drag = drag
         # friction
-        self.linear_friction = linear_friction
-        self.angular_friction = angular_friction
+        linear_friction = linear_friction
+        angular_friction = angular_friction
         # gravity
         if isinstance(gravity, Array):
-            self.gravity = gravity
+            gravity = gravity
         else:
-            self.gravity = (
-                jnp.array(gravity)
-                if gravity is not None
-                else jnp.zeros((self.batch_dim, 1))
+            gravity = (
+                jnp.array(gravity) if gravity is not None else jnp.zeros((batch_dim, 1))
             )
         # entity goal
-        self.goal = None
+        goal = None
         # Render the entity
-        self._render = jnp.full((self.batch_dim,), False)
+        _render = jnp.full((batch_dim,), True)
+
+        state = EntityState.create(batch_dim, dim_c, dim_p)
+
+        return cls(
+            batch_dim,
+            state,
+            gravity,
+            name,
+            movable,
+            rotatable,
+            collide,
+            density,
+            mass,
+            shape,
+            v_range,
+            max_speed,
+            color,
+            is_joint,
+            drag,
+            linear_friction,
+            angular_friction,
+            collision_filter,
+            goal,
+            _render,
+        )
 
     @property
     def is_rendering(self):
         return self._render
 
     def reset_render(self):
-        self._render = jnp.full((self.batch_dim,), True)
+        return self.replace(_render=jnp.full((self.batch_dim,), True))
 
     def collides(self, entity: "Entity"):
         if not self.collide:
             return False
         return self.collision_filter(entity)
 
-    def _spawn(self, dim_c: int, dim_p: int) -> EntityState:
-        return self.state._spawn(dim_c, dim_p)
+    def _spawn(self, dim_c: int, dim_p: int) -> "Entity":
+        return self.replace(state=self.state._spawn(dim_c, dim_p))
 
     def _reset(self, env_index: int):
-        return self.state._reset(env_index)
+        return self.replace(state=self.state._reset(env_index))
 
     def set_pos(self, pos: Array, batch_index: int):
-        return self._set_state_property(EntityState.pos, self.state, pos, batch_index)
+        return self._set_state_property("pos", pos, batch_index)
 
     def set_vel(self, vel: Array, batch_index: int):
-        return self._set_state_property(EntityState.vel, self.state, vel, batch_index)
+        return self._set_state_property("vel", vel, batch_index)
 
     def set_rot(self, rot: Array, batch_index: int):
-        return self._set_state_property(EntityState.rot, self.state, rot, batch_index)
+        return self._set_state_property("rot", rot, batch_index)
 
     def set_ang_vel(self, ang_vel: Array, batch_index: int):
-        return self._set_state_property(
-            EntityState.ang_vel, self.state, ang_vel, batch_index
-        )
+        return self._set_state_property("ang_vel", ang_vel, batch_index)
 
-    def _set_state_property(self, prop, new: Array, batch_index: int | None):
+    def _set_state_property(self, prop_name: str, new: Array, batch_index: int | None):
         assert (
             self.batch_dim is not None
         ), f"Tried to set property of {self.name} without adding it to the world"
@@ -487,14 +538,17 @@ class Entity(JaxVectorizedObject, Observable):
         new_entity = None
         if batch_index is None:
             if len(new.shape) > 1 and new.shape[0] == self.batch_dim:
-                new_entity = self.state.replace(**{prop: new})
+                new_entity = self.state.replace(**{prop_name: new})
             else:
-                new_entity = self.state.replace(**{prop: new.repeat(self.batch_dim, 1)})
+                new_entity = self.state.replace(
+                    **{prop_name: new.repeat(self.batch_dim, 1)}
+                )
         else:
-            value = prop.fget(self.state)
-            new_entity = self.state.replace(**{prop: value.at[batch_index].set(new)})
-        self.notify_observers(new_entity)
-        return new_entity
+            value = getattr(self.state, prop_name)
+            new_entity = self.state.replace(
+                **{prop_name: value.at[batch_index].set(new)}
+            )
+        return self.replace(state=new_entity)
 
     def render(self, env_index: int = 0) -> "list[Geom]":
         from jaxvmas.simulator import rendering
@@ -506,12 +560,12 @@ class Entity(JaxVectorizedObject, Observable):
         geom.add_attr(xform)
 
         xform.set_translation(*self.state.pos[env_index])
-        xform.set_rotation(self.state.rot[env_index])
+        xform.set_rotation(self.state.rot[env_index].item())
 
         color = self.color
         if isinstance(color, Array) and len(color.shape) > 1:
             color = color[env_index]
-        geom.set_color(*color)
+        geom.set_color(*color.value)
 
         return [geom]
 
@@ -579,8 +633,9 @@ class Agent(Entity):
     action_size: int
     discrete_action_nvec: list[int]
 
-    def __init__(
-        self,
+    @classmethod
+    def create(
+        cls,
         batch_dim: int,
         name: str,
         dim_c: int,
@@ -621,7 +676,7 @@ class Agent(Entity):
             list[int] | None
         ) = None,  # Defaults to 3-way discretization if discrete actions are chosen (stay, decrement, increment)
     ):
-        super().__init__(
+        entity = Entity.create(
             batch_dim,
             name,
             movable,
@@ -653,56 +708,88 @@ class Agent(Entity):
                 raise ValueError(
                     f"All values in discrete_action_nvec must be greater than 1, got {discrete_action_nvec}"
                 )
-
+        state = AgentState.create(batch_dim, dim_c, dim_p)
         # cannot observe the world
-        self.obs_range = obs_range
+        obs_range = obs_range
         # observation noise
-        self.obs_noise = obs_noise
+        obs_noise = obs_noise
         # force constraints
-        self.f_range = f_range
-        self.max_f = max_f
+        f_range = f_range
+        max_f = max_f
         # torque constraints
-        self.t_range = t_range
-        self.max_t = max_t
+        t_range = t_range
+        max_t = max_t
         # script behavior to execute
-        self.action_script = action_script
+        action_script = action_script
         # agents sensors
-        self.sensors = []
-        if sensors is not None:
-            [sensor.replace(agent=self) for sensor in sensors]
+        sensors = []
         # non differentiable communication noise
-        self.c_noise = c_noise
+        c_noise = c_noise
         # cannot send communication signals
-        self.silent = silent
+        silent = silent
         # render the agent action force
-        self.render_action = render_action
+        render_action = render_action
         # is adversary
-        self.adversary = adversary
+        adversary = adversary
         # Render alpha
-        self.alpha = alpha
+        alpha = alpha
 
         # Dynamics
-        dynamics = dynamics if dynamics is not None else Holonomic()
-        self.dynamics = dynamics.replace(agent=self)
+        dynamics = dynamics if dynamics is not None else Holonomic(agent=None)
         # Action
         if action_size is not None:
-            self.action_size = action_size
+            action_size = action_size
         elif discrete_action_nvec is not None:
-            self.action_size = len(discrete_action_nvec)
+            action_size = len(discrete_action_nvec)
         else:
-            self.action_size = self.dynamics.needed_action_size
+            action_size = dynamics.needed_action_size
         if discrete_action_nvec is None:
-            self.discrete_action_nvec = [3] * self.action_size
+            discrete_action_nvec = [3] * action_size
         else:
-            self.discrete_action_nvec = discrete_action_nvec
-        self.action = Action(
+            discrete_action_nvec = discrete_action_nvec
+        action = Action.create(
             batch_dim=batch_dim,
             u_range=u_range,
             u_multiplier=u_multiplier,
             u_noise=u_noise,
-            action_size=self.action_size,
+            action_size=action_size,
+            comm_dim=dim_c,
         )
-        self.state = AgentState(batch_dim=batch_dim, dim_c=dim_c, dim_p=dim_p)
+
+        agent = cls(
+            **(
+                asdict(entity)
+                | {
+                    "state": state,
+                    "action": action,
+                    "obs_range": obs_range,
+                    "obs_noise": obs_noise,
+                    "f_range": f_range,
+                    "max_f": max_f,
+                    "t_range": t_range,
+                    "max_t": max_t,
+                    "action_script": action_script,
+                    "sensors": sensors,
+                    "c_noise": c_noise,
+                    "silent": silent,
+                    "render_action": render_action,
+                    "adversary": adversary,
+                    "alpha": alpha,
+                    "dynamics": dynamics,
+                    "action_size": action_size,
+                    "discrete_action_nvec": discrete_action_nvec,
+                }
+            )
+        )
+
+        dynamics = dynamics.replace(agent=agent)
+        agent = agent.replace(dynamics=dynamics)
+
+        if sensors is not None:
+            sensors = [sensor.replace(agent=agent) for sensor in sensors]
+            agent = agent.replace(sensors=sensors)
+
+        return agent
 
     def action_callback(self, world: "World"):
         self._action_script(self, world)
@@ -743,7 +830,7 @@ class Agent(Entity):
         if len(geoms) == 0:
             return geoms
         for geom in geoms:
-            geom.set_color(*self.color, alpha=self.alpha)
+            geom.set_color(*self.color.value, alpha=self.alpha)
         if self.sensors is not None:
             for sensor in self.sensors:
                 geoms += sensor.render(env_index=env_index)
@@ -754,7 +841,7 @@ class Agent(Entity):
                 + self.state.force[env_index] * 10 * self.shape.circumscribed_radius(),
                 width=2,
             )
-            velocity.set_color(*self.color)
+            velocity.set_color(*self.color.value)
             geoms.append(velocity)
 
         return geoms

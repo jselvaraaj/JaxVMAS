@@ -16,10 +16,9 @@ if TYPE_CHECKING:
 class Dynamics(PyTreeNode, ABC):
     agent: Union["Agent", None]
 
-    def __init__(
-        self,
-    ):
-        self.agent = None
+    @classmethod
+    def create(cls, agent: "Agent" = None):
+        return cls(agent=agent)
 
     def reset(self, index: Array | int = None):
         return

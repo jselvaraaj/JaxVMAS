@@ -225,6 +225,9 @@ class Transform(Attr):
     def set_scale(self, newx: float, newy: float) -> None:
         self.scale = (float(newx), float(newy))
 
+    def set_color(self, r: float, g: float, b: float, alpha: float = 1.0) -> None:
+        self._color.vec4 = (r, g, b, alpha)
+
 
 class Color(Attr):
     def __init__(self, vec4: tuple[float, float, float, float]):
