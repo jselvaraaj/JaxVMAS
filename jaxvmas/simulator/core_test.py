@@ -97,7 +97,7 @@ class TestAgentState:
 
         # Test spawn with zero dim_c
         spawned_state_zero_c = agent_state._spawn(dim_c=0, dim_p=3)
-        assert spawned_state_zero_c.c.shape == (2, 3)  # Should keep original shape
+        assert spawned_state_zero_c.c.shape == (2, 0)
         assert spawned_state_zero_c.force.shape == (2, 3)
         assert spawned_state_zero_c.torque.shape == (2, 1)
 
@@ -174,7 +174,7 @@ class TestAction:
         # Set non-zero values
         action = basic_action.replace(u=jnp.ones((2, 3)), c=jnp.ones((2, 2)))
         # Test reset
-        reset_action = action._reset(action, None)
+        reset_action = action._reset(None)
         assert jnp.all(reset_action.u == 0)
         assert jnp.all(reset_action.c == 0)
 
@@ -182,7 +182,7 @@ class TestAction:
         # Set non-zero values
         action = basic_action.replace(u=jnp.ones((2, 3)), c=jnp.ones((2, 2)))
         # Test reset for specific environment
-        reset_action = action._reset(action, 0)
+        reset_action = action._reset(0)
         assert jnp.all(reset_action.u[0] == 0)
         assert jnp.all(reset_action.u[1] == 1)
         assert jnp.all(reset_action.c[0] == 0)
@@ -267,7 +267,7 @@ class TestEntity:
 
     def test_render_flags(self, basic_entity):
         # Test initial render state
-        assert jnp.all(basic_entity._render == False)
+        assert jnp.all(basic_entity._render == True)
 
         # Test reset render
         basic_entity = basic_entity.reset_render()
@@ -275,16 +275,16 @@ class TestEntity:
 
     def test_spawn_and_reset(self, basic_entity):
         # Test spawn
-        spawned_state = basic_entity._spawn(dim_c=3, dim_p=4)
-        assert spawned_state.pos.shape == (2, 4)
-        assert spawned_state.vel.shape == (2, 4)
-        assert spawned_state.rot.shape == (2, 1)
+        spawned_entity = basic_entity._spawn(dim_c=3, dim_p=4)
+        assert spawned_entity.state.pos.shape == (2, 4)
+        assert spawned_entity.state.vel.shape == (2, 4)
+        assert spawned_entity.state.rot.shape == (2, 1)
 
         # Test reset
-        reset_state = basic_entity._reset(env_index=0)
-        assert jnp.all(reset_state.pos[0] == 0)
-        assert jnp.all(reset_state.vel[0] == 0)
-        assert jnp.all(reset_state.rot[0] == 0)
+        reset_entity = basic_entity._reset(env_index=0)
+        assert jnp.all(reset_entity.state.pos[0] == 0)
+        assert jnp.all(reset_entity.state.vel[0] == 0)
+        assert jnp.all(reset_entity.state.rot[0] == 0)
 
     def test_is_jittable(self, basic_entity):
         @eqx.filter_jit

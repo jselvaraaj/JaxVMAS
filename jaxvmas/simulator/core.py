@@ -1602,7 +1602,6 @@ class World(JaxVectorizedObject):
         dist, _ = jnp.min(dists, axis=-1)
         return dist
 
-    # start from here !!!!
     def get_distance_from_point(
         self,
         entity: Entity,
