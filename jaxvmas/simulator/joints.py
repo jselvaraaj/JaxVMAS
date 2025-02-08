@@ -33,10 +33,11 @@ class Joint(PyTreeNode):
     joint_constraints: list["JointConstraint"]
 
     @classmethod
-    def __init__(
+    def create(
         cls,
         entity_a: "Entity",
         entity_b: "Entity",
+        batch_dim: int = 1,
         anchor_a: tuple[float, float] = (0.0, 0.0),
         anchor_b: tuple[float, float] = (0.0, 0.0),
         rotate_a: bool = True,
@@ -85,7 +86,7 @@ class Joint(PyTreeNode):
         joint_constraints = []
         if dist == 0:
             joint_constraints.append(
-                JointConstraint(
+                JointConstraint.create(
                     entity_a,
                     entity_b,
                     anchor_a=anchor_a,
@@ -99,7 +100,8 @@ class Joint(PyTreeNode):
             from jaxvmas.simulator.core import Box, Landmark, Line
 
             self = self.replace(
-                landmark=Landmark(
+                landmark=Landmark.create(
+                    batch_dim=batch_dim,
                     name=f"joint {entity_a.name} {entity_b.name}",
                     collide=collidable,
                     movable=True,
@@ -115,7 +117,7 @@ class Joint(PyTreeNode):
                 ),
             )
             joint_constraints += [
-                JointConstraint(
+                JointConstraint.create(
                     self.landmark,
                     entity_a,
                     anchor_a=(-1, 0),
@@ -124,7 +126,7 @@ class Joint(PyTreeNode):
                     rotate=rotate_a,
                     fixed_rotation=fixed_rotation_a,
                 ),
-                JointConstraint(
+                JointConstraint.create(
                     self.landmark,
                     entity_b,
                     anchor_a=(1, 0),
@@ -172,7 +174,7 @@ class Joint(PyTreeNode):
 
 
 # Private class: do not instantiate directly
-class JointConstraint:
+class JointConstraint(PyTreeNode):
     """
     This is an uncollidable constraint that bounds two entities in the specified anchor points at the specified distance
     """
@@ -210,17 +212,15 @@ class JointConstraint:
             ), "If you provide a fixed rotation, rotate should be False"
             fixed_rotation = 0.0
 
-        self = cls(
+        return cls(
             entity_a=entity_a,
             entity_b=entity_b,
             anchor_a=anchor_a,
             anchor_b=anchor_b,
             dist=dist,
-            fixed_rotation=fixed_rotation,
             rotate=rotate,
             _delta_anchor_tensor_map={},
         )
-        return self
 
     def _delta_anchor_tensor(self, entity):
         if entity not in self._delta_anchor_tensor_map:

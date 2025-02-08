@@ -1861,8 +1861,10 @@ class World(JaxVectorizedObject):
 
         # update non-differentiable comm state
         if self._dim_c > 0:
+            agents = []
             for agent in self._agents:
-                self._update_comm_state(agent)
+                agents.append(self._update_comm_state(agent))
+            self = self.replace(_agents=agents)
 
         return self
 
@@ -2824,5 +2826,5 @@ class World(JaxVectorizedObject):
     def _update_comm_state(self, agent: "Agent"):
         # set communication state (directly for now)
         if not agent.silent:
-            agent = agent.replace(c=agent.action.c)
+            agent = agent.replace(state=agent.state.replace(c=agent.action.c))
         return agent

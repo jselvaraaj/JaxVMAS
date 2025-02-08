@@ -567,20 +567,26 @@ class TestWorld:
         world = world.add_agent(agent1).add_agent(agent2)
 
         # Create and add joint
-        joint = Joint(
-            entity_a=agent1, entity_b=agent2, anchor_a=(0, 0), anchor_b=(0, 0), dist=1.0
+        joint = Joint.create(
+            batch_dim=2,
+            entity_a=agent1,
+            entity_b=agent2,
+            anchor_a=(0, 0),
+            anchor_b=(0, 0),
+            dist=1.0,
         )
         world = world.add_joint(joint)
 
-        assert len(world._joints) == 1
+        assert len(world._joints) == 2
         assert isinstance(list(world._joints.values())[0], JointConstraint)
+        assert isinstance(list(world._joints.values())[1], JointConstraint)
 
     def test_entity_index_map(self, world_with_agent):
         # Test entity index map is properly updated
         world = world_with_agent.step()
         assert len(world._entity_index_map) == 1
-        assert world._agents[0] in world._entity_index_map
-        assert world._entity_index_map[world._agents[0]] == 0
+        assert world._agents[0].name in world._entity_index_map
+        assert world._entity_index_map[world._agents[0].name] == 0
 
     def test_boundary_conditions(self, basic_world):
         # Test world with boundaries
