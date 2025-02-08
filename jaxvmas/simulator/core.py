@@ -12,7 +12,7 @@ from jaxtyping import Array, Float
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.dynamics.holonomic import Holonomic
-from jaxvmas.simulator.joints import Joint
+from jaxvmas.simulator.joints import Joint, JointConstraint
 from jaxvmas.simulator.physics import (
     _get_closest_box_box,
     _get_closest_line_box,
@@ -548,6 +548,7 @@ class Entity(JaxVectorizedObject, Observable):
             new_entity = self.state.replace(
                 **{prop_name: value.at[batch_index].set(new)}
             )
+        # there was a notify_observers call in the past, so we need to notify again
         return self.replace(state=new_entity)
 
     def render(self, env_index: int = 0) -> "list[Geom]":
@@ -853,8 +854,32 @@ class WorldDynamicState:
 
 # Multi-agent world
 class World(JaxVectorizedObject):
+
+    _agents: list[Agent]
+    _landmarks: list[Landmark]
+    _x_semidim: float
+    _y_semidim: float
+    _dim_p: int
+    _dim_c: int
+    _dt: float
+    _substeps: int
+    _sub_dt: float
+    _drag: float
+    _gravity: Array
+    _linear_friction: float
+    _angular_friction: float
+    _collision_force: float
+    _joint_force: float
+    _torque_constraint_force: float
+    _contact_margin: float
+    _torque_constraint_force: float
+    _joints: dict[frozenset[str], JointConstraint]
+    _collidable_pairs: list[tuple[Shape, Shape]]
+    _entity_index_map: dict[Entity, int]
+
+    @classmethod
     def __init__(
-        self,
+        cls,
         batch_dim: int,
         dt: float = 0.1,
         substeps: int = 1,  # if you use joints, higher this value to gain simulation stability
@@ -871,39 +896,37 @@ class World(JaxVectorizedObject):
         gravity: tuple[float, float] = (0.0, 0.0),
     ):
         assert batch_dim > 0, f"Batch dim must be greater than 0, got {batch_dim}"
-
-        super().__init__(batch_dim)
         # list of agents and entities static params(can change at execution-time!)
-        self._agents = []
-        self._landmarks = []
+        _agents = []
+        _landmarks = []
 
         # world dims: no boundaries if none
-        self._x_semidim = x_semidim
-        self._y_semidim = y_semidim
+        _x_semidim = x_semidim
+        _y_semidim = y_semidim
         # position dimensionality
-        self._dim_p = 2
+        _dim_p = 2
         # communication channel dimensionality
-        self._dim_c = dim_c
+        _dim_c = dim_c
         # simulation timestep
-        self._dt = dt
-        self._substeps = substeps
-        self._sub_dt = self._dt / self._substeps
+        _dt = dt
+        _substeps = substeps
+        _sub_dt = _dt / _substeps
         # drag coefficient
-        self._drag = drag
+        _drag = drag
         # gravity
-        self._gravity = jnp.asarray(gravity, dtype=jnp.float32)
+        _gravity = jnp.asarray(gravity, dtype=jnp.float32)
         # friction coefficients
-        self._linear_friction = linear_friction
-        self._angular_friction = angular_friction
+        _linear_friction = linear_friction
+        _angular_friction = angular_friction
         # constraint response parameters
-        self._collision_force = collision_force
-        self._joint_force = joint_force
-        self._contact_margin = contact_margin
-        self._torque_constraint_force = torque_constraint_force
+        _collision_force = collision_force
+        _joint_force = joint_force
+        _contact_margin = contact_margin
+        _torque_constraint_force = torque_constraint_force
         # joints
-        self._joints = {}
+        _joints = {}
         # Pairs of collidable shapes
-        self._collidable_pairs = [
+        _collidable_pairs = [
             {Sphere, Sphere},
             {Sphere, Box},
             {Sphere, Line},
@@ -912,69 +935,73 @@ class World(JaxVectorizedObject):
             {Box, Box},
         ]
         # Map to save entity indexes
-        self.entity_index_map = {}
+        entity_index_map = {}
 
-    # non static method; can't be jitted
+        return cls(
+            batch_dim,
+            _agents,
+            _landmarks,
+            _x_semidim,
+            _y_semidim,
+            _dim_p,
+            _dim_c,
+            _dt,
+            _substeps,
+            _sub_dt,
+            _drag,
+            _gravity,
+            _linear_friction,
+            _angular_friction,
+            _collision_force,
+            _joint_force,
+            _torque_constraint_force,
+            _contact_margin,
+            _joints,
+            _collidable_pairs,
+            entity_index_map,
+        )
+
     def add_agent(
         self,
         agent: Agent,
-        world_dynamic_state: WorldDynamicState,
     ):
         """Only way to add agents to the world"""
         agent.batch_dim = self._batch_dim
-        agent_dynamic_state = agent._spawn(dim_c=self._dim_c, dim_p=self.dim_p)
+        agent = agent._spawn(dim_c=self._dim_c, dim_p=self.dim_p)
 
-        world_dynamic_state = world_dynamic_state.replace(
-            agent_dynamic_states=(
-                *world_dynamic_state.agent_dynamic_states,
-                agent_dynamic_state,
-            )
-        )
-        self._agents.append(agent)
-        return world_dynamic_state
+        self = self.replace(_agents=self._agents + [agent])
+        return self
 
-    # non static method; can't be jitted
     def add_landmark(
         self,
         landmark: Landmark,
-        world_dynamic_state: WorldDynamicState,
     ):
         """Only way to add landmarks to the world"""
         landmark.batch_dim = self._batch_dim
+        landmark = landmark._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
+        self = self.replace(_landmarks=self._landmarks + [landmark])
+        return self
 
-        landmark_rl_state = landmark._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
-        world_dynamic_state = world_dynamic_state.replace(
-            landmark_rl_states=(
-                *world_dynamic_state.landmark_rl_states,
-                landmark_rl_state,
-            )
-        )
-        self._landmarks.append(landmark)
-        return world_dynamic_state
-
-    def add_joint(self, joint: Joint, world_dynamic_state: WorldDynamicState):
+    def add_joint(self, joint: Joint):
         assert self._substeps > 1, "For joints, world substeps needs to be more than 1"
         if joint.landmark is not None:
-            world_dynamic_state = self.add_landmark(joint.landmark, world_dynamic_state)
+            self = self.add_landmark(joint.landmark)
         for constraint in joint.joint_constraints:
-            self._joints.update(
-                {
+            self = self.replace(
+                _joints=self._joints
+                | {
                     frozenset(
                         {constraint.entity_a.name, constraint.entity_b.name}
                     ): constraint
                 }
             )
+        return self
 
-    def reset(self, env_index: int, world_dynamic_state: WorldDynamicState):
-        for i, a in enumerate(self.agents):
-            world_dynamic_state = a._reset(
-                world_dynamic_state.agent_dynamic_states[i], env_index
-            )
-        for i, l in enumerate(self.landmarks):
-            world_dynamic_state = l._reset(
-                world_dynamic_state.landmark_rl_states[i], env_index
-            )
-        return world_dynamic_state
+    def reset(self, env_index: int):
+        for e in self.entities:
+            self = e._reset(env_index)
+
+        return self
 
     @property
     def agents(self) -> list[Agent]:
@@ -1026,7 +1053,6 @@ class World(JaxVectorizedObject):
     def _cast_ray_to_box(
         self,
         box: Entity,
-        box_state: EntityState,
         ray_origin: Array,
         ray_direction: Array,
         max_range: float,
@@ -1040,12 +1066,12 @@ class World(JaxVectorizedObject):
         assert ray_origin.shape[0] == ray_direction.shape[0]
         assert isinstance(box.shape, Box)
 
-        pos_origin = ray_origin - box_state.pos
-        pos_aabb = JaxUtils.rotate_vector(pos_origin, -box_state.rot)
+        pos_origin = ray_origin - box.state.pos
+        pos_aabb = JaxUtils.rotate_vector(pos_origin, -box.state.rot)
         ray_dir_world = jnp.stack(
             [jnp.cos(ray_direction), jnp.sin(ray_direction)], dim=-1
         )
-        ray_dir_aabb = JaxUtils.rotate_vector(ray_dir_world, -box_state.rot)
+        ray_dir_aabb = JaxUtils.rotate_vector(ray_dir_world, -box.state.rot)
 
         tx1 = (-box.shape.length / 2 - pos_aabb[:, X]) / ray_dir_aabb[:, X]
         tx2 = (box.shape.length / 2 - pos_aabb[:, X]) / ray_dir_aabb[:, X]
@@ -1063,7 +1089,7 @@ class World(JaxVectorizedObject):
 
         intersect_aabb = tmin[:, None] * ray_dir_aabb + pos_aabb
         intersect_world = (
-            JaxUtils.rotate_vector(intersect_aabb, box_state.rot) + box_state.pos
+            JaxUtils.rotate_vector(intersect_aabb, box.state.rot) + box.state.pos
         )
 
         collision = (tmax >= tmin) & (tmin > 0.0)
@@ -1165,7 +1191,6 @@ class World(JaxVectorizedObject):
     def _cast_ray_to_sphere(
         self,
         sphere: Entity,
-        sphere_state: EntityState,
         ray_origin: Array,
         ray_direction: Array,
         max_range: float,
@@ -1173,7 +1198,7 @@ class World(JaxVectorizedObject):
         ray_dir_world = jnp.stack(
             [jnp.cos(ray_direction), jnp.sin(ray_direction)], dim=-1
         )
-        test_point_pos = sphere_state.pos
+        test_point_pos = sphere.state.pos
         line_rot = ray_direction
         line_length = max_range
         line_pos = ray_origin + ray_dir_world * (line_length / 2)
@@ -1282,7 +1307,6 @@ class World(JaxVectorizedObject):
     def _cast_ray_to_line(
         self,
         line: Entity,
-        line_state: EntityState,
         ray_origin: Array,
         ray_direction: Array,
         max_range: float,
@@ -1296,12 +1320,12 @@ class World(JaxVectorizedObject):
         assert ray_origin.shape[0] == ray_direction.shape[0]
         assert isinstance(line.shape, Line)
 
-        p = line_state.pos
+        p = line.state.pos
         r = (
             jnp.stack(
                 [
-                    jnp.cos(line_state.rot),
-                    jnp.sin(line_state.rot),
+                    jnp.cos(line.state.rot),
+                    jnp.sin(line.state.rot),
                 ],
                 dim=-1,
             )
@@ -1424,27 +1448,25 @@ class World(JaxVectorizedObject):
     def cast_ray(
         self,
         entity: Entity,
-        entity_state: EntityState,
-        world_dynamic_state: WorldDynamicState,
         angles: Array,
         max_range: float,
         entity_filter: Callable[[Entity], bool] = lambda _: False,
     ):
-        pos = entity_state.pos
+        pos = entity.state.pos
 
         assert pos.ndim == 2 and angles.ndim == 1
         assert pos.shape[0] == angles.shape[0]
 
         # Initialize with full max_range to avoid dists being empty when all entities are filtered
         dists = [jnp.full((self.batch_dim,), fill_value=max_range)]
-        n_agents = len(world_dynamic_state.agent_dynamic_states)
+        n_agents = len(self.agents)
         for i, e in enumerate(self.entities):
 
             e_state = None
             if i < n_agents:
-                e_state = world_dynamic_state.agent_dynamic_states[i]
+                e_state = self.agents[i].state
             else:
-                e_state = world_dynamic_state.landmark_rl_states[i - n_agents]
+                e_state = self.landmarks[i - n_agents].state
 
             if entity is e or not entity_filter(e):
                 continue
@@ -1466,13 +1488,11 @@ class World(JaxVectorizedObject):
     def cast_rays(
         self,
         entity: Entity,
-        entity_state: EntityState,
-        world_dynamic_state: WorldDynamicState,
         angles: Array,
         max_range: float,
         entity_filter: Callable[[Entity], bool] = lambda _: False,
     ):
-        pos = entity_state.pos
+        pos = entity.state.pos
 
         # Initialize with full max_range to avoid dists being empty when all entities are filtered
         dists = jnp.full_like(angles, fill_value=max_range)[..., None]
@@ -1482,13 +1502,13 @@ class World(JaxVectorizedObject):
         spheres_state: list[EntityState] = []
         lines: list[Line] = []
         lines_state: list[EntityState] = []
-        n_agents = len(world_dynamic_state.agent_dynamic_states)
+        n_agents = len(self.agents)
         for i, e in enumerate(self.entities):
             e_state = None
             if i < n_agents:
-                e_state = world_dynamic_state.agent_dynamic_states[i]
+                e_state = self.agents[i].state
             else:
-                e_state = world_dynamic_state.landmark_rl_states[i - n_agents]
+                e_state = self.landmarks[i - n_agents].state
             if entity is e or not entity_filter(e):
                 continue
             assert e.collides(entity) and entity.collides(
@@ -1586,20 +1606,19 @@ class World(JaxVectorizedObject):
     def get_distance_from_point(
         self,
         entity: Entity,
-        entity_state: EntityState,
         test_point_pos: Array,
         env_index: int = None,
     ):
         self._check_batch_index(env_index)
 
         if isinstance(entity.shape, Sphere):
-            delta_pos = entity_state.pos - test_point_pos
+            delta_pos = entity.state.pos - test_point_pos
             dist = jnp.linalg.vector_norm(delta_pos, axis=-1)
             return_value = dist - entity.shape.radius
         elif isinstance(entity.shape, Box):
             closest_point = _get_closest_point_box(
-                entity_state.pos,
-                entity_state.rot,
+                entity.state.pos,
+                entity.state.rot,
                 entity.shape.width,
                 entity.shape.length,
                 test_point_pos,
@@ -1608,8 +1627,8 @@ class World(JaxVectorizedObject):
             return_value = distance - LINE_MIN_DIST
         elif isinstance(entity.shape, Line):
             closest_point = _get_closest_point_line(
-                entity_state.pos,
-                entity_state.rot,
+                entity.state.pos,
+                entity.state.rot,
                 entity.shape.length,
                 test_point_pos,
             )
@@ -1625,17 +1644,13 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        entity_a_state: EntityState,
-        entity_b_state: EntityState,
         env_index: int = None,
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
 
         if isinstance(a_shape, Sphere) and isinstance(b_shape, Sphere):
-            dist = self.get_distance_from_point(
-                entity_a, entity_a_state, entity_b_state.pos, env_index
-            )
+            dist = self.get_distance_from_point(entity_a, entity_b.state.pos, env_index)
             return_value = dist - b_shape.radius
         elif (
             isinstance(entity_a.shape, Box)
@@ -1648,9 +1663,7 @@ class World(JaxVectorizedObject):
                 if isinstance(entity_b.shape, Sphere)
                 else (entity_b, entity_a)
             )
-            dist = self.get_distance_from_point(
-                box, entity_a_state, entity_b_state.pos, env_index
-            )
+            dist = self.get_distance_from_point(box, entity_b.state.pos, env_index)
             return_value = dist - sphere.shape.radius
             is_overlapping = self.is_overlapping(entity_a, entity_b)
             return_value[is_overlapping] = -1
@@ -1665,17 +1678,15 @@ class World(JaxVectorizedObject):
                 if isinstance(entity_b.shape, Sphere)
                 else (entity_b, entity_a)
             )
-            dist = self.get_distance_from_point(
-                line, entity_a_state, entity_b_state.pos, env_index
-            )
+            dist = self.get_distance_from_point(line, entity_b.state.pos, env_index)
             return_value = dist - sphere.shape.radius
         elif isinstance(entity_a.shape, Line) and isinstance(entity_b.shape, Line):
             point_a, point_b = _get_closest_points_line_line(
-                entity_a_state.pos,
-                entity_a_state.rot,
+                entity_a.state.pos,
+                entity_a.state.rot,
                 entity_a.shape.length,
-                entity_b_state.pos,
-                entity_b_state.rot,
+                entity_b.state.pos,
+                entity_b.state.rot,
                 entity_b.shape.length,
             )
             dist = jnp.linalg.vector_norm(point_a - point_b, axis=-1)
@@ -1687,9 +1698,9 @@ class World(JaxVectorizedObject):
             and isinstance(entity_a.shape, Line)
         ):
             box, box_state, line, line_state = (
-                (entity_a, entity_a_state, entity_b, entity_b_state)
+                (entity_a, entity_a.state, entity_b, entity_b.state)
                 if isinstance(entity_b.shape, Line)
-                else (entity_b, entity_b_state, entity_a, entity_a_state)
+                else (entity_b, entity_b.state, entity_a, entity_a.state)
             )
             point_box, point_line = _get_closest_line_box(
                 box_state.pos,
@@ -1704,12 +1715,12 @@ class World(JaxVectorizedObject):
             return_value = dist - LINE_MIN_DIST
         elif isinstance(entity_a.shape, Box) and isinstance(entity_b.shape, Box):
             point_a, point_b = _get_closest_box_box(
-                entity_a_state.pos,
-                entity_a_state.rot,
+                entity_a.state.pos,
+                entity_a.state.rot,
                 entity_a.shape.width,
                 entity_a.shape.length,
-                entity_b_state.pos,
-                entity_b_state.rot,
+                entity_b.state.pos,
+                entity_b.state.rot,
                 entity_b.shape.width,
                 entity_b.shape.length,
             )
@@ -1723,8 +1734,6 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        entity_a_state: EntityState,
-        entity_b_state: EntityState,
         env_index: int = None,
     ):
         a_shape = entity_a.shape
@@ -1759,26 +1768,26 @@ class World(JaxVectorizedObject):
             and isinstance(entity_a.shape, Sphere)
         ):
             box, box_state, sphere, sphere_state = (
-                (entity_a, entity_a_state, entity_b, entity_b_state)
+                (entity_a, entity_a.state, entity_b, entity_b.state)
                 if isinstance(entity_b.shape, Sphere)
-                else (entity_b, entity_b_state, entity_a, entity_a_state)
+                else (entity_b, entity_b.state, entity_a, entity_a.state)
             )
             closest_point = _get_closest_point_box(
-                box_state.pos,
-                box_state.rot,
+                box.state.pos,
+                box.state.rot,
                 box.shape.width,
                 box.shape.length,
-                sphere_state.pos,
+                sphere.state.pos,
             )
 
             distance_sphere_closest_point = jnp.linalg.vector_norm(
-                sphere_state.pos - closest_point, axis=-1
+                sphere.state.pos - closest_point, axis=-1
             )
             distance_sphere_box = jnp.linalg.vector_norm(
-                sphere_state.pos - box_state.pos, axis=-1
+                sphere.state.pos - box.state.pos, axis=-1
             )
             distance_closest_point_box = jnp.linalg.vector_norm(
-                box_state.pos - closest_point, axis=-1
+                box.state.pos - closest_point, axis=-1
             )
             dist_min = sphere.shape.radius + LINE_MIN_DIST
             return_value = (distance_sphere_box < distance_closest_point_box) + (
@@ -1791,9 +1800,8 @@ class World(JaxVectorizedObject):
         return return_value
 
     # update state of the world
-    def step(self, entities_states: list[EntityState]):
+    def step(self):
         self.entity_index_map = {e: i for i, e in enumerate(self.entities)}
-        entities_states = []
         for substep in range(self._substeps):
             forces_dict = {
                 e: jnp.zeros(
@@ -1811,77 +1819,87 @@ class World(JaxVectorizedObject):
                 )
                 for e in self.entities
             }
-
-            for entity, entity_state in zip(self.entities, entities_states):
+            entities = []
+            for entity in self.entities:
                 if isinstance(entity, Agent):
                     # apply agent force controls
-                    entity_state, forces_dict = self._apply_action_force(
-                        entity, entity_state, forces_dict
-                    )
+                    entity, forces_dict = self._apply_action_force(entity, forces_dict)
                     # apply agent torque controls
-                    entity_state, torques_dict = self._apply_action_torque(
-                        entity, entity_state, torques_dict
+                    entity, torques_dict = self._apply_action_torque(
+                        entity, torques_dict
                     )
                 # apply friction
-                entity_state, forces_dict, torques_dict = self._apply_friction_force(
-                    entity, entity_state, forces_dict, torques_dict
+                entity, forces_dict, torques_dict = self._apply_friction_force(
+                    entity, forces_dict, torques_dict
                 )
                 # apply gravity
-                entity_state, forces_dict = self._apply_gravity(
-                    entity, entity_state, forces_dict
-                )
+                entity, forces_dict = self._apply_gravity(entity, forces_dict)
+                entities.append(entity)
+
+            self = self.replace(entities=entities)
 
             self._apply_vectorized_enviornment_force()
 
-            for entity, entity_state in zip(self.entities, entities_states):
+            entities = []
+            for entity in self.entities:
                 # integrate physical state
-                entity_state = self._integrate_state(
-                    entity, entity_state, substep, forces_dict, torques_dict
+                entity = self._integrate_state(
+                    entity, substep, forces_dict, torques_dict
                 )
+                entities.append(entity)
+
+            self = self.replace(entities=entities)
 
         # update non-differentiable comm state
         if self._dim_c > 0:
             for agent in self._agents:
                 self._update_comm_state(agent)
 
+        return self
+
     # gather agent action forces
-    def _apply_action_force(
-        self, agent: Agent, agent_state: AgentState, forces_dict: dict[Agent, Array]
-    ):
+    def _apply_action_force(self, agent: Agent, forces_dict: dict[Agent, Array]):
         forces_dict = {**forces_dict}
         if agent.movable:
             if agent.max_f is not None:
-                agent_state = agent_state.replace(
-                    force=JaxUtils.clamp_with_norm(agent_state.force, agent.max_f)
+                agent = agent.replace(
+                    state=agent.state.replace(
+                        force=JaxUtils.clamp_with_norm(agent.state.force, agent.max_f)
+                    )
                 )
             if agent.f_range is not None:
-                agent_state = agent_state.replace(
-                    force=jnp.clip(agent_state.force, -agent.f_range, agent.f_range)
+                agent = agent.replace(
+                    state=agent.state.replace(
+                        force=jnp.clip(agent.state.force, -agent.f_range, agent.f_range)
+                    )
                 )
-            forces_dict[agent] = forces_dict[agent] + agent_state.force
-        return agent_state, forces_dict
+            forces_dict[agent] = forces_dict[agent] + agent.state.force
+        return agent, forces_dict
 
-    def _apply_action_torque(
-        self, agent: Agent, agent_state: AgentState, torques_dict: dict[Agent, Array]
-    ):
+    def _apply_action_torque(self, agent: Agent, torques_dict: dict[Agent, Array]):
         torques_dict = {**torques_dict}
         if agent.rotatable:
             if agent.max_t is not None:
-                agent_state = agent_state.replace(
-                    torque=JaxUtils.clamp_with_norm(agent_state.torque, agent.max_t)
+                agent = agent.replace(
+                    state=agent.state.replace(
+                        torque=JaxUtils.clamp_with_norm(agent.state.torque, agent.max_t)
+                    )
                 )
             if agent.t_range is not None:
-                agent_state = agent_state.replace(
-                    torque=jnp.clip(agent_state.torque, -agent.t_range, agent.t_range)
+                agent = agent.replace(
+                    state=agent.state.replace(
+                        torque=jnp.clip(
+                            agent.state.torque, -agent.t_range, agent.t_range
+                        )
+                    )
                 )
 
-            torques_dict[agent] = torques_dict[agent] + agent_state.torque
-        return agent_state, torques_dict
+            torques_dict[agent] = torques_dict[agent] + agent.state.torque
+        return agent, torques_dict
 
     def _apply_gravity(
         self,
         entity: Entity,
-        entity_state: EntityState,
         forces_dict: dict[Entity, Array],
     ):
         forces_dict = {**forces_dict}
@@ -1890,12 +1908,11 @@ class World(JaxVectorizedObject):
                 forces_dict[entity] = forces_dict[entity] + entity.mass * self._gravity
             if entity.gravity is not None:
                 forces_dict[entity] = forces_dict[entity] + entity.mass * entity.gravity
-        return entity_state, forces_dict
+        return entity, forces_dict
 
     def _apply_friction_force(
         self,
         entity: Entity,
-        entity_state: EntityState,
         forces_dict: dict[Entity, Array],
         torques_dict: dict[Entity, Array],
     ):
@@ -1923,34 +1940,34 @@ class World(JaxVectorizedObject):
         torques_dict = {**torques_dict}
         if entity.linear_friction is not None:
             forces_dict[entity] = forces_dict[entity] + get_friction_force(
-                entity_state.vel,
+                entity.state.vel,
                 entity.linear_friction,
                 forces_dict[entity],
                 entity.mass,
             )
         elif self._linear_friction > 0:
             forces_dict[entity] = forces_dict[entity] + get_friction_force(
-                entity_state.vel,
+                entity.state.vel,
                 self._linear_friction,
                 forces_dict[entity],
                 entity.mass,
             )
         if entity.angular_friction is not None:
             torques_dict[entity] = torques_dict[entity] + get_friction_force(
-                entity_state.ang_vel,
+                entity.state.ang_vel,
                 entity.angular_friction,
                 torques_dict[entity],
                 entity.moment_of_inertia,
             )
         elif self._angular_friction > 0:
             torques_dict[entity] = torques_dict[entity] + get_friction_force(
-                entity_state.ang_vel,
+                entity.state.ang_vel,
                 self._angular_friction,
                 torques_dict[entity],
                 entity.moment_of_inertia,
             )
 
-        return entity_state, forces_dict, torques_dict
+        return entity, forces_dict, torques_dict
 
     def _apply_vectorized_enviornment_force(self):
         s_s = []
@@ -2267,9 +2284,8 @@ class World(JaxVectorizedObject):
                 jnp.stack(
                     length_l_a,
                     dim=-1,
-                )
-                .unsqueeze(0)
-                .expand(self.batch_dim, -1)
+                )[None],
+                (self.batch_dim, -1),
             )
             length_l_b = jnp.broadcast_to(
                 jnp.stack(
@@ -2629,9 +2645,7 @@ class World(JaxVectorizedObject):
                     torque_b[:, i],
                 )
 
-    def collides(
-        self, a: Entity, b: Entity, a_state: EntityState, b_state: EntityState
-    ) -> bool:
+    def collides(self, a: Entity, b: Entity) -> bool:
         if (not a.collides(b)) or (not b.collides(a)) or a is b:
             return False
         a_shape = a.shape
@@ -2641,7 +2655,7 @@ class World(JaxVectorizedObject):
         if {a_shape.__class__, b_shape.__class__} not in self._collidable_pairs:
             return False
         if not (
-            jnp.linalg.vector_norm(a_state.pos - b_state.pos, axis=-1)
+            jnp.linalg.vector_norm(a.state.pos - b.state.pos, axis=-1)
             <= a.shape.circumscribed_radius() + b.shape.circumscribed_radius()
         ).any():
             return False
@@ -2708,7 +2722,6 @@ class World(JaxVectorizedObject):
     def _integrate_state(
         self,
         entity: Entity,
-        entity_state: EntityState,
         substep: int,
         forces_dict: dict[Entity, Array],
         torques_dict: dict[Entity, Array],
@@ -2717,41 +2730,51 @@ class World(JaxVectorizedObject):
             # Compute translation
             if substep == 0:
                 if entity.drag is not None:
-                    entity_state = entity_state.replace(
-                        vel=entity_state.vel * (1 - entity.drag)
+                    entity = entity.replace(
+                        state=entity.state.replace(
+                            vel=entity.state.vel * (1 - entity.drag)
+                        )
                     )
                 else:
-                    entity_state = entity_state.replace(
-                        vel=entity_state.vel * (1 - self._drag)
+                    entity = entity.replace(
+                        state=entity.state.replace(
+                            vel=entity.state.vel * (1 - self._drag)
+                        )
                     )
             accel = forces_dict[entity] / entity.mass
-            entity_state = entity_state.replace(
-                vel=entity_state.vel + accel * self._sub_dt
+            entity = entity.replace(
+                state=entity.state.replace(vel=entity.state.vel + accel * self._sub_dt)
             )
             if entity.max_speed is not None:
-                entity_state = entity_state.replace(
-                    vel=JaxUtils.clamp_with_norm(entity_state.vel, entity.max_speed)
+                entity = entity.replace(
+                    state=entity.state.replace(
+                        vel=JaxUtils.clamp_with_norm(entity.state.vel, entity.max_speed)
+                    )
                 )
             if entity.v_range is not None:
-                entity_state = entity_state.replace(
-                    vel=jnp.clip(entity_state.vel, -entity.v_range, entity.v_range)
+                entity = entity.replace(
+                    state=entity.state.replace(
+                        vel=jnp.clip(entity.state.vel, -entity.v_range, entity.v_range)
+                    )
                 )
-            new_pos = entity_state.pos + entity_state.vel * self._sub_dt
-            entity_state = entity_state.replace(
-                pos=jnp.stack(
-                    [
-                        (
-                            new_pos[..., X].clip(-self._x_semidim, self._x_semidim)
-                            if self._x_semidim is not None
-                            else new_pos[..., X]
-                        ),
-                        (
-                            new_pos[..., Y].clip(-self._y_semidim, self._y_semidim)
-                            if self._y_semidim is not None
-                            else new_pos[..., Y]
-                        ),
-                    ],
-                    axis=-1,
+            new_pos = entity.state.pos + entity.state.vel * self._sub_dt
+            entity = entity.replace(
+                state=entity.state.replace(
+                    pos=jnp.stack(
+                        [
+                            (
+                                new_pos[..., X].clip(-self._x_semidim, self._x_semidim)
+                                if self._x_semidim is not None
+                                else new_pos[..., X]
+                            ),
+                            (
+                                new_pos[..., Y].clip(-self._y_semidim, self._y_semidim)
+                                if self._y_semidim is not None
+                                else new_pos[..., Y]
+                            ),
+                        ],
+                        axis=-1,
+                    )
                 )
             )
 
@@ -2759,22 +2782,30 @@ class World(JaxVectorizedObject):
             # Compute rotation
             if substep == 0:
                 if entity.drag is not None:
-                    entity_state = entity_state.replace(
-                        ang_vel=entity_state.ang_vel * (1 - entity.drag)
+                    entity = entity.replace(
+                        state=entity.state.replace(
+                            ang_vel=entity.state.ang_vel * (1 - entity.drag)
+                        )
                     )
                 else:
-                    entity_state = entity_state.replace(
-                        ang_vel=entity_state.ang_vel * (1 - self._drag)
+                    entity = entity.replace(
+                        state=entity.state.replace(
+                            ang_vel=entity.state.ang_vel * (1 - self._drag)
+                        )
                     )
-            entity_state = entity_state.replace(
-                ang_vel=entity_state.ang_vel
-                + (torques_dict[entity] / entity.moment_of_inertia) * self._sub_dt
+            entity = entity.replace(
+                state=entity.state.replace(
+                    ang_vel=entity.state.ang_vel
+                    + (torques_dict[entity] / entity.moment_of_inertia) * self._sub_dt
+                )
             )
-            entity_state = entity_state.replace(
-                rot=entity_state.rot + entity_state.ang_vel * self._sub_dt
+            entity = entity.replace(
+                state=entity.state.replace(
+                    rot=entity.state.rot + entity.state.ang_vel * self._sub_dt
+                )
             )
 
-        return entity_state
+        return entity
 
     def _update_comm_state(self, agent: "Agent"):
         # set communication state (directly for now)

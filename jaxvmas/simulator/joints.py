@@ -6,14 +6,14 @@
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from flax import struct
 
+from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator import rendering
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Entity, EntityState
+    from jaxvmas.simulator.core import Entity
 from jaxvmas.simulator.rendering import Geom
-from jaxvmas.simulator.utils import Color, JaxUtils, Observer, X, Y
+from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
 
 # Type dimensions
 batch_dim = "batch"
@@ -22,15 +22,19 @@ pos_dim = "pos"
 UNCOLLIDABLE_JOINT_RENDERING_WIDTH = 1
 
 
-class JointDynamicState(struct.PyTreeNode):
-    entity_a: "EntityState"
-    entity_b: "EntityState"
-    landmark: "EntityState"
+class Joint(PyTreeNode):
+    entity_a: "Entity"
+    entity_b: "Entity"
+    rotate_a: bool
+    rotate_b: bool
+    fixed_rotation_a: float | None
+    fixed_rotation_b: float | None
+    landmark: "Entity"
+    joint_constraints: list["JointConstraint"]
 
-
-class Joint(Observer):
+    @classmethod
     def __init__(
-        self,
+        cls,
         entity_a: "Entity",
         entity_b: "Entity",
         anchor_a: tuple[float, float] = (0.0, 0.0),
@@ -68,17 +72,19 @@ class Joint(Observer):
         if width > 0:
             assert collidable
 
-        self.entity_a = entity_a
-        self.entity_b = entity_b
-        self.rotate_a = rotate_a
-        self.rotate_b = rotate_b
-        self.fixed_rotation_a = fixed_rotation_a
-        self.fixed_rotation_b = fixed_rotation_b
-        self.landmark = None
-        self.joint_constraints = []
-
+        self = cls(
+            entity_a=entity_a,
+            entity_b=entity_b,
+            rotate_a=rotate_a,
+            rotate_b=rotate_b,
+            fixed_rotation_a=fixed_rotation_a,
+            fixed_rotation_b=fixed_rotation_b,
+            landmark=None,
+            joint_constraints=[],
+        )
+        joint_constraints = []
         if dist == 0:
-            self.joint_constraints.append(
+            joint_constraints.append(
                 JointConstraint(
                     entity_a,
                     entity_b,
@@ -90,23 +96,25 @@ class Joint(Observer):
                 ),
             )
         else:
-            entity_a.subscribe(self)
-            entity_b.subscribe(self)
             from jaxvmas.simulator.core import Box, Landmark, Line
 
-            self.landmark = Landmark(
-                name=f"joint {entity_a.name} {entity_b.name}",
-                collide=collidable,
-                movable=True,
-                rotatable=True,
-                mass=mass,
-                shape=(
-                    Box(length=dist, width=width) if width != 0 else Line(length=dist)
+            self = self.replace(
+                landmark=Landmark(
+                    name=f"joint {entity_a.name} {entity_b.name}",
+                    collide=collidable,
+                    movable=True,
+                    rotatable=True,
+                    mass=mass,
+                    shape=(
+                        Box(length=dist, width=width)
+                        if width != 0
+                        else Line(length=dist)
+                    ),
+                    color=Color.BLACK,
+                    is_joint=True,
                 ),
-                color=Color.BLACK,
-                is_joint=True,
             )
-            self.joint_constraints += [
+            joint_constraints += [
                 JointConstraint(
                     self.landmark,
                     entity_a,
@@ -127,15 +135,15 @@ class Joint(Observer):
                 ),
             ]
 
-    def notify(
-        self, joint_dynamic_state: JointDynamicState, observable, *args, **kwargs
-    ):
+        return self.replace(joint_constraints=joint_constraints)
+
+    def notify(self, *args, **kwargs):
         pos_a = self.joint_constraints[0].pos_point(self.entity_a)
         pos_b = self.joint_constraints[1].pos_point(self.entity_b)
 
-        joint_dynamic_state = joint_dynamic_state.replace(
+        self = self.replace(
             landmark=self.landmark.set_pos(
-                joint_dynamic_state.landmark,
+                self.landmark,
                 (pos_a + pos_b) / 2,
                 batch_index=None,
             )
@@ -146,9 +154,9 @@ class Joint(Observer):
             pos_b[:, X] - pos_a[:, X],
         )[..., None]
 
-        joint_dynamic_state = joint_dynamic_state.replace(
+        self = self.replace(
             landmark=self.landmark.set_rot(
-                joint_dynamic_state.landmark,
+                self.landmark,
                 angle,
                 batch_index=None,
             )
@@ -156,20 +164,11 @@ class Joint(Observer):
 
         # If we do not allow rotation, and we did not provide a fixed rotation value, we infer it
         if not self.rotate_a and self.fixed_rotation_a is None:
-            self.joint_constraints[0].fixed_rotation = (
-                angle - joint_dynamic_state.entity_a.rot
-            )
+            self.joint_constraints[0].fixed_rotation = angle - self.entity_a.rot
         if not self.rotate_b and self.fixed_rotation_b is None:
-            self.joint_constraints[1].fixed_rotation = (
-                angle - joint_dynamic_state.entity_b.rot
-            )
+            self.joint_constraints[1].fixed_rotation = angle - self.entity_b.rot
 
-        return joint_dynamic_state
-
-
-class JointConstraintDynamicState(struct.PyTreeNode):
-    entity_a: "EntityState"
-    entity_b: "EntityState"
+        return self
 
 
 # Private class: do not instantiate directly
@@ -178,8 +177,17 @@ class JointConstraint:
     This is an uncollidable constraint that bounds two entities in the specified anchor points at the specified distance
     """
 
-    def __init__(
-        self,
+    entity_a: "Entity"
+    entity_b: "Entity"
+    anchor_a: tuple[float, float]
+    anchor_b: tuple[float, float]
+    dist: float
+    rotate: bool
+    _delta_anchor_tensor_map: dict["Entity", jnp.ndarray]
+
+    @classmethod
+    def create(
+        cls,
         entity_a: "Entity",
         entity_b: "Entity",
         anchor_a: tuple[float, float] = (0.0, 0.0),
@@ -202,14 +210,17 @@ class JointConstraint:
             ), "If you provide a fixed rotation, rotate should be False"
             fixed_rotation = 0.0
 
-        self.entity_a = entity_a
-        self.entity_b = entity_b
-        self.anchor_a = anchor_a
-        self.anchor_b = anchor_b
-        self.dist = dist
-        self.fixed_rotation = fixed_rotation
-        self.rotate = rotate
-        self._delta_anchor_tensor_map = {}
+        self = cls(
+            entity_a=entity_a,
+            entity_b=entity_b,
+            anchor_a=anchor_a,
+            anchor_b=anchor_b,
+            dist=dist,
+            fixed_rotation=fixed_rotation,
+            rotate=rotate,
+            _delta_anchor_tensor_map={},
+        )
+        return self
 
     def _delta_anchor_tensor(self, entity):
         if entity not in self._delta_anchor_tensor_map:
@@ -223,11 +234,13 @@ class JointConstraint:
             delta_anchor_tensor = jnp.array(
                 entity.shape.get_delta_from_anchor(anchor),
             ).reshape(entity.state.pos.shape)
-            self._delta_anchor_tensor_map[entity] = delta_anchor_tensor
-        self._delta_anchor_tensor_map[entity] = self._delta_anchor_tensor_map[
-            entity
-        ].to(entity.state.pos.device)
-        return self._delta_anchor_tensor_map[entity]
+            self = self.replace(
+                _delta_anchor_tensor_map=self._delta_anchor_tensor_map
+                | {
+                    entity: delta_anchor_tensor,
+                },
+            )
+        return self, self._delta_anchor_tensor_map[entity]
 
     def get_delta_anchor(self, entity: "Entity"):
         return JaxUtils.rotate_vector(
@@ -238,9 +251,8 @@ class JointConstraint:
     def pos_point(
         self,
         entity: "Entity",
-        entity_state: "EntityState",
     ):
-        return entity_state.pos + self.get_delta_anchor(entity)
+        return entity.state.pos + self.get_delta_anchor(entity)
 
     def render(
         self,
