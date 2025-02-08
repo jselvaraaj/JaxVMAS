@@ -509,6 +509,10 @@ class Entity(JaxVectorizedObject, Observable):
     def is_rendering(self):
         return self._render
 
+    @property
+    def moment_of_inertia(self):
+        return self.shape.moment_of_inertia(self.mass)
+
     def reset_render(self):
         return self.replace(_render=jnp.full((self.batch_dim,), True))
 
@@ -1006,12 +1010,7 @@ class World(JaxVectorizedObject):
         for e in self.entities:
             entities.append(e._reset(env_index))
 
-        num_agents = len(self._agents)
-
-        self = self.replace(
-            _agents=entities[:num_agents],
-            _landmarks=entities[num_agents:],
-        )
+        self = self.replace(entities=entities)
 
         return self
 
@@ -1810,25 +1809,24 @@ class World(JaxVectorizedObject):
             return_value = return_value[env_index]
         return return_value
 
+    def replace(self, **kwargs):
+        if "entities" in kwargs:
+            num_agents = len(self._agents)
+            entities = kwargs.pop("entities")
+            kwargs["_agents"] = entities[:num_agents]
+            kwargs["_landmarks"] = entities[num_agents:]
+        return super().replace(**kwargs)
+
     # update state of the world
     def step(self):
-        self.entity_index_map = {e: i for i, e in enumerate(self.entities)}
+        _entity_index_map = {e.name: i for i, e in enumerate(self.entities)}
+        self = self.replace(_entity_index_map=_entity_index_map)
         for substep in range(self._substeps):
             forces_dict = {
-                e: jnp.zeros(
-                    self._batch_dim,
-                    self._dim_p,
-                    dtype=jnp.float32,
-                )
-                for e in self.entities
+                e.name: jnp.zeros((self.batch_dim, self._dim_p)) for e in self.entities
             }
             torques_dict = {
-                e: jnp.zeros(
-                    self._batch_dim,
-                    1,
-                    dtype=jnp.float32,
-                )
-                for e in self.entities
+                e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities
             }
             entities = []
             for entity in self.entities:
@@ -1884,7 +1882,7 @@ class World(JaxVectorizedObject):
                         force=jnp.clip(agent.state.force, -agent.f_range, agent.f_range)
                     )
                 )
-            forces_dict[agent] = forces_dict[agent] + agent.state.force
+            forces_dict[agent.name] = forces_dict[agent.name] + agent.state.force
         return agent, forces_dict
 
     def _apply_action_torque(self, agent: Agent, torques_dict: dict[Agent, Array]):
@@ -1905,7 +1903,7 @@ class World(JaxVectorizedObject):
                     )
                 )
 
-            torques_dict[agent] = torques_dict[agent] + agent.state.torque
+            torques_dict[agent.name] = torques_dict[agent.name] + agent.state.torque
         return agent, torques_dict
 
     def _apply_gravity(
@@ -1916,9 +1914,13 @@ class World(JaxVectorizedObject):
         forces_dict = {**forces_dict}
         if entity.movable:
             if not (self._gravity == 0.0).all():
-                forces_dict[entity] = forces_dict[entity] + entity.mass * self._gravity
+                forces_dict[entity.name] = (
+                    forces_dict[entity.name] + entity.mass * self._gravity
+                )
             if entity.gravity is not None:
-                forces_dict[entity] = forces_dict[entity] + entity.mass * entity.gravity
+                forces_dict[entity.name] = (
+                    forces_dict[entity.name] + entity.mass * entity.gravity
+                )
         return entity, forces_dict
 
     def _apply_friction_force(
@@ -1950,31 +1952,31 @@ class World(JaxVectorizedObject):
         forces_dict = {**forces_dict}
         torques_dict = {**torques_dict}
         if entity.linear_friction is not None:
-            forces_dict[entity] = forces_dict[entity] + get_friction_force(
+            forces_dict[entity.name] = forces_dict[entity.name] + get_friction_force(
                 entity.state.vel,
                 entity.linear_friction,
-                forces_dict[entity],
+                forces_dict[entity.name],
                 entity.mass,
             )
         elif self._linear_friction > 0:
-            forces_dict[entity] = forces_dict[entity] + get_friction_force(
+            forces_dict[entity.name] = forces_dict[entity.name] + get_friction_force(
                 entity.state.vel,
                 self._linear_friction,
-                forces_dict[entity],
+                forces_dict[entity.name],
                 entity.mass,
             )
         if entity.angular_friction is not None:
-            torques_dict[entity] = torques_dict[entity] + get_friction_force(
+            torques_dict[entity.name] = torques_dict[entity.name] + get_friction_force(
                 entity.state.ang_vel,
                 entity.angular_friction,
-                torques_dict[entity],
+                torques_dict[entity.name],
                 entity.moment_of_inertia,
             )
         elif self._angular_friction > 0:
-            torques_dict[entity] = torques_dict[entity] + get_friction_force(
+            torques_dict[entity.name] = torques_dict[entity.name] + get_friction_force(
                 entity.state.ang_vel,
                 self._angular_friction,
-                torques_dict[entity],
+                torques_dict[entity.name],
                 entity.moment_of_inertia,
             )
 
@@ -2067,15 +2069,15 @@ class World(JaxVectorizedObject):
         # Box and box
         self._box_box_vectorized_collision(b_b)
 
-    def update_env_forces(self, entity_a, f_a, t_a, entity_b, f_b, t_b):
+    def update_env_forces(self, entity_a: Entity, f_a, t_a, entity_b: Entity, f_b, t_b):
         if entity_a.movable:
-            self.forces_dict[entity_a] = self.forces_dict[entity_a] + f_a
+            self.forces_dict[entity_a.name] = self.forces_dict[entity_a.name] + f_a
         if entity_a.rotatable:
-            self.torques_dict[entity_a] = self.torques_dict[entity_a] + t_a
+            self.torques_dict[entity_a.name] = self.torques_dict[entity_a.name] + t_a
         if entity_b.movable:
-            self.forces_dict[entity_b] = self.forces_dict[entity_b] + f_b
+            self.forces_dict[entity_b.name] = self.forces_dict[entity_b.name] + f_b
         if entity_b.rotatable:
-            self.torques_dict[entity_b] = self.torques_dict[entity_b] + t_b
+            self.torques_dict[entity_b.name] = self.torques_dict[entity_b.name] + t_b
 
     def _vectorized_joint_constraints(self, joints):
         if len(joints):
@@ -2752,7 +2754,7 @@ class World(JaxVectorizedObject):
                             vel=entity.state.vel * (1 - self._drag)
                         )
                     )
-            accel = forces_dict[entity] / entity.mass
+            accel = forces_dict[entity.name] / entity.mass
             entity = entity.replace(
                 state=entity.state.replace(vel=entity.state.vel + accel * self._sub_dt)
             )
@@ -2807,7 +2809,8 @@ class World(JaxVectorizedObject):
             entity = entity.replace(
                 state=entity.state.replace(
                     ang_vel=entity.state.ang_vel
-                    + (torques_dict[entity] / entity.moment_of_inertia) * self._sub_dt
+                    + (torques_dict[entity.name] / entity.moment_of_inertia)
+                    * self._sub_dt
                 )
             )
             entity = entity.replace(
