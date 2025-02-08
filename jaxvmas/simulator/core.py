@@ -202,6 +202,7 @@ class EntityState(JaxVectorizedObject):
         return cls(batch_dim, pos, vel, rot, ang_vel)
 
     def _reset(self, env_index: int | None = None) -> "EntityState":
+        print()
         if env_index is None:
             return self.replace(
                 pos=jnp.zeros_like(self.pos),
@@ -266,7 +267,7 @@ class AgentState(EntityState):
                 force=jnp.zeros_like(self.force),
                 torque=jnp.zeros_like(self.torque),
             )
-        return self.replace(
+        self = self.replace(
             c=JaxUtils.where_from_index(env_index, jnp.zeros_like(self.c), self.c),
             force=JaxUtils.where_from_index(
                 env_index, jnp.zeros_like(self.force), self.force
@@ -275,6 +276,10 @@ class AgentState(EntityState):
                 env_index, jnp.zeros_like(self.torque), self.torque
             ),
         )
+
+        self = super(AgentState, self)._reset(env_index)
+
+        return self
 
     def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
         self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
@@ -573,8 +578,10 @@ class Entity(JaxVectorizedObject, Observable):
 
 # properties of landmark entities
 class Landmark(Entity):
-    def __init__(
-        self,
+    @classmethod
+    def create(
+        cls,
+        batch_dim: int,
         name: str,
         shape: Shape = None,
         movable: bool = False,
@@ -592,7 +599,8 @@ class Landmark(Entity):
         gravity: float = None,
         collision_filter: Callable[[Entity], bool] = lambda _: True,
     ):
-        super().__init__(
+        return super(Landmark, cls).create(
+            batch_dim,
             name,
             movable,
             rotatable,
@@ -848,10 +856,6 @@ class Agent(Entity):
         return geoms
 
 
-class WorldDynamicState:
-    pass
-
-
 # Multi-agent world
 class World(JaxVectorizedObject):
 
@@ -878,7 +882,7 @@ class World(JaxVectorizedObject):
     _entity_index_map: dict[Entity, int]
 
     @classmethod
-    def __init__(
+    def create(
         cls,
         batch_dim: int,
         dt: float = 0.1,
@@ -966,8 +970,8 @@ class World(JaxVectorizedObject):
         agent: Agent,
     ):
         """Only way to add agents to the world"""
-        agent.batch_dim = self._batch_dim
-        agent = agent._spawn(dim_c=self._dim_c, dim_p=self.dim_p)
+        agent = agent.replace(batch_dim=self.batch_dim)
+        agent = agent._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
 
         self = self.replace(_agents=self._agents + [agent])
         return self
@@ -977,7 +981,7 @@ class World(JaxVectorizedObject):
         landmark: Landmark,
     ):
         """Only way to add landmarks to the world"""
-        landmark.batch_dim = self._batch_dim
+        landmark = landmark.replace(batch_dim=self.batch_dim)
         landmark = landmark._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
         self = self.replace(_landmarks=self._landmarks + [landmark])
         return self
@@ -998,8 +1002,16 @@ class World(JaxVectorizedObject):
         return self
 
     def reset(self, env_index: int):
+        entities = []
         for e in self.entities:
-            self = e._reset(env_index)
+            entities.append(e._reset(env_index))
+
+        num_agents = len(self._agents)
+
+        self = self.replace(
+            _agents=entities[:num_agents],
+            _landmarks=entities[num_agents:],
+        )
 
         return self
 

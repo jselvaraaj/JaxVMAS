@@ -4,7 +4,16 @@ import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
-from jaxvmas.simulator.core import Action, Agent, AgentState, Entity, EntityState
+from jaxvmas.simulator.core import (
+    DRAG,
+    Action,
+    Agent,
+    AgentState,
+    Entity,
+    EntityState,
+    Landmark,
+    World,
+)
 
 
 class TestEntityState:
@@ -415,3 +424,183 @@ class TestAgent:
             return agent._reset(env_index=0)
 
         f2(basic_agent)
+
+
+class TestWorld:
+    @pytest.fixture
+    def basic_world(self):
+        # Create a basic world with minimal configuration
+        return World.create(batch_dim=2)
+
+    @pytest.fixture
+    def agent(self):
+        return Agent.create(
+            batch_dim=2,
+            name="test_agent",
+            dim_c=3,
+            dim_p=2,
+            movable=True,
+            rotatable=True,
+        )
+
+    @pytest.fixture
+    def landmark(self):
+        return Landmark.create(batch_dim=2, name="test_landmark")
+
+    @pytest.fixture
+    def world_with_agent(self, basic_world, agent):
+        return basic_world.add_agent(agent)
+
+    def test_create(self, basic_world):
+        # Test basic properties
+        assert basic_world.batch_dim == 2
+        assert basic_world._dt == 0.1
+        assert basic_world._substeps == 1
+        assert basic_world._drag == DRAG
+        assert len(basic_world._agents) == 0
+        assert len(basic_world._landmarks) == 0
+        assert isinstance(basic_world._joints, dict)
+        assert isinstance(basic_world._collidable_pairs, list)
+
+    def test_add_agent(self, basic_world, agent):
+        world = basic_world.add_agent(agent)
+        assert len(world._agents) == 1
+        assert world._agents[0].name == "test_agent"
+        assert world._agents[0].batch_dim == 2
+
+    def test_add_landmark(self, basic_world, landmark):
+        world = basic_world.add_landmark(landmark)
+        assert len(world._landmarks) == 1
+        assert world._landmarks[0].name == "test_landmark"
+        assert world._landmarks[0].batch_dim == 2
+
+    def test_reset(self, world_with_agent):
+        # Modify agent state
+        agent = world_with_agent._agents[0]
+        agent = agent.replace(state=agent.state.replace(pos=jnp.ones((2, 2))))
+        world = world_with_agent.replace(_agents=[agent])
+
+        # Test reset
+        world = world.reset(env_index=0)
+        assert jnp.all(world._agents[0].state.pos[0] == 0)
+        assert jnp.all(world._agents[0].state.pos[1] == 1)
+
+    def test_step(self, world_with_agent):
+        # Test basic stepping without forces
+        world = world_with_agent.step()
+        assert isinstance(world, World)
+
+        # Test stepping with forces
+        agent = world._agents[0]
+        agent = agent.replace(state=agent.state.replace(force=jnp.ones((2, 2))))
+        world = world.replace(_agents=[agent])
+        world = world.step()
+        assert isinstance(world, World)
+        # Velocity should have changed due to force
+        assert not jnp.all(world._agents[0].state.vel == 0)
+
+    def test_collisions(self, basic_world):
+        # Create two overlapping spherical agents
+        # Create two overlapping spherical agents
+        agent1 = Agent.create(
+            batch_dim=2,
+            name="agent1",
+            dim_c=0,
+            dim_p=2,
+            movable=True,
+        )
+        agent2 = Agent.create(
+            batch_dim=2,
+            name="agent2",
+            dim_c=0,
+            dim_p=2,
+            movable=True,
+        )
+
+        world = basic_world.add_agent(agent1).add_agent(agent2)
+
+        # Test collision detection
+        assert world.collides(agent1, agent2)
+
+        # Test no collision with non-collidable entity
+        landmark = Landmark.create(batch_dim=2, name="landmark", collide=False)
+        world = world.add_landmark(landmark)
+        assert not world.collides(agent1, landmark)
+
+    def test_communication(self, basic_world):
+        # Create world with communication
+        world = World.create(batch_dim=2, dim_c=3)
+        agent = Agent.create(batch_dim=2, name="agent", dim_c=3, dim_p=2, silent=False)
+        world = world.add_agent(agent)
+
+        # Set communication action
+        agent = world._agents[0]
+        agent = agent.replace(action=agent.action.replace(c=jnp.ones((2, 3))))
+        world = world.replace(_agents=[agent])
+
+        # Step world and check communication state
+        world = world.step()
+        assert jnp.all(world._agents[0].state.c == 1)
+
+    def test_joints(self, basic_world):
+        from jaxvmas.simulator.joints import Joint, JointConstraint
+
+        # Create world with higher substeps for joint stability
+        world = World.create(batch_dim=2, substeps=5)
+
+        # Create two agents to be joined
+        agent1 = Agent.create(
+            batch_dim=2,
+            name="agent1",
+            dim_c=0,
+            dim_p=2,
+            movable=True,
+        )
+        agent2 = Agent.create(
+            batch_dim=2,
+            name="agent2",
+            dim_c=0,
+            dim_p=2,
+            movable=True,
+        )
+
+        world = world.add_agent(agent1).add_agent(agent2)
+
+        # Create and add joint
+        joint = Joint(
+            entity_a=agent1, entity_b=agent2, anchor_a=(0, 0), anchor_b=(0, 0), dist=1.0
+        )
+        world = world.add_joint(joint)
+
+        assert len(world._joints) == 1
+        assert isinstance(list(world._joints.values())[0], JointConstraint)
+
+    def test_entity_index_map(self, world_with_agent):
+        # Test entity index map is properly updated
+        world = world_with_agent.step()
+        assert len(world._entity_index_map) == 1
+        assert world._agents[0] in world._entity_index_map
+        assert world._entity_index_map[world._agents[0]] == 0
+
+    def test_boundary_conditions(self, basic_world):
+        # Test world with boundaries
+        world = World.create(batch_dim=2, x_semidim=1.0, y_semidim=1.0)
+        agent = Agent.create(
+            batch_dim=2,
+            name="agent",
+            dim_c=0,
+            dim_p=2,
+            movable=True,
+        )
+        world = world.add_agent(agent)
+
+        # Move agent beyond boundary
+        agent = world._agents[0]
+        agent = agent.replace(
+            state=agent.state.replace(pos=jnp.array([[2.0, 0.0], [0.0, 2.0]]))
+        )
+        world = world.replace(_agents=[agent])
+
+        # Step world and check if position is constrained
+        world = world.step()
+        assert jnp.all(jnp.abs(world._agents[0].state.pos) <= 1.0)
