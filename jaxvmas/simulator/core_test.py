@@ -99,15 +99,15 @@ class TestAgentState:
 
     def test_spawn(self, agent_state: AgentState):
         # Test spawn with non-zero dim_c
-        spawned_state = agent_state._spawn(dim_c=2, dim_p=3)
+        spawned_state = agent_state._spawn(dim_c=2, dim_p=4)
         assert spawned_state.c.shape == (2, 2)
-        assert spawned_state.force.shape == (2, 3)
+        assert spawned_state.force.shape == (2, 4)
         assert spawned_state.torque.shape == (2, 1)
 
         # Test spawn with zero dim_c
-        spawned_state_zero_c = agent_state._spawn(dim_c=0, dim_p=3)
+        spawned_state_zero_c = agent_state._spawn(dim_c=0, dim_p=4)
         assert spawned_state_zero_c.c.shape == (2, 0)
-        assert spawned_state_zero_c.force.shape == (2, 3)
+        assert spawned_state_zero_c.force.shape == (2, 4)
         assert spawned_state_zero_c.torque.shape == (2, 1)
 
     def test_is_jittable(self, agent_state: AgentState):
@@ -284,9 +284,9 @@ class TestEntity:
 
     def test_spawn_and_reset(self, basic_entity):
         # Test spawn
-        spawned_entity = basic_entity._spawn(dim_c=3, dim_p=4)
-        assert spawned_entity.state.pos.shape == (2, 4)
-        assert spawned_entity.state.vel.shape == (2, 4)
+        spawned_entity = basic_entity._spawn(dim_c=3, dim_p=2)
+        assert spawned_entity.state.pos.shape == (2, 2)
+        assert spawned_entity.state.vel.shape == (2, 2)
         assert spawned_entity.state.rot.shape == (2, 1)
 
         # Test reset
@@ -380,13 +380,13 @@ class TestAgent:
 
     def test_reset_and_spawn(self, basic_agent):
         # Test spawn
-        spawned_agent = basic_agent._spawn(dim_c=4, dim_p=3)
-        assert spawned_agent.state.pos.shape == (2, 3)
-        assert spawned_agent.state.vel.shape == (2, 3)
+        spawned_agent = basic_agent._spawn(dim_c=4, dim_p=2)
+        assert spawned_agent.state.pos.shape == (2, 2)
+        assert spawned_agent.state.vel.shape == (2, 2)
 
         # Test spawn with silent agent
         silent_agent = basic_agent.replace(silent=True)
-        spawned_silent = silent_agent._spawn(dim_c=4, dim_p=3)
+        spawned_silent = silent_agent._spawn(dim_c=4, dim_p=2)
         assert spawned_silent.state.c.shape[1] == 0  # No communication dimension
 
         # Test reset
@@ -610,3 +610,85 @@ class TestWorld:
         # Step world and check if position is constrained
         world = world.step()
         assert jnp.all(jnp.abs(world._agents[0].state.pos) <= 1.0)
+
+    def test_collision_response(self):
+        # Create two colliding agents
+        agent1 = Agent.create(
+            batch_dim=1,
+            name="collider1",
+            dim_p=2,
+            dim_c=0,
+            mass=1.0,
+        )
+        agent1 = agent1.replace(state=agent1.state.replace(pos=jnp.array([[0.0, 0.0]])))
+
+        agent2 = Agent.create(
+            batch_dim=1,
+            name="collider2",
+            dim_p=2,
+            dim_c=0,
+            mass=1.0,
+        )
+        agent2 = agent2.replace(state=agent2.state.replace(pos=jnp.array([[0.1, 0.0]])))
+
+        world = World.create(batch_dim=1)
+        world = world.add_agent(agent1)
+        world = world.add_agent(agent2)
+
+        # Step and verify collision response
+        stepped_world = world.step()
+        dist = jnp.linalg.norm(
+            stepped_world._agents[0].state.pos - stepped_world._agents[1].state.pos
+        )
+        # Agents should move apart due to collision
+        assert dist > 0.1
+
+    def test_joint_constraint_satisfaction(self):
+        # Create joined agents
+        agent1 = Agent.create(batch_dim=1, name="joint1", dim_p=2, dim_c=0)
+        agent1 = agent1.replace(state=agent1.state.replace(pos=jnp.array([[0.0, 0.0]])))
+
+        agent2 = Agent.create(batch_dim=1, name="joint2", dim_p=2, dim_c=0)
+        agent2 = agent2.replace(state=agent2.state.replace(pos=jnp.array([[1.0, 0.0]])))
+
+        world = World.create(
+            batch_dim=1, substeps=10
+        )  # Higher substeps for joint stability
+        world = world.add_agent(agent1)
+        world = world.add_agent(agent2)
+
+        # Add joint constraint
+        from jaxvmas.simulator.joints import Joint
+
+        joint = Joint.create(
+            batch_dim=1,
+            entity_a=agent1,
+            entity_b=agent2,
+            anchor_a=(0, 0),
+            anchor_b=(0, 0),
+            dist=0.5,
+        )
+        world = world.add_joint(joint)
+
+        # Step and verify joint constraint
+        stepped_world = world.step()
+
+        # Distance between agents should approach joint distance
+        final_dist = jnp.linalg.norm(
+            stepped_world._agents[0].state.pos - stepped_world._agents[1].state.pos
+        )
+        assert jnp.abs(final_dist - 0.5) < 0.1
+
+    def test_extreme_boundary_conditions(self):
+        # Test negative boundaries
+        world = World.create(batch_dim=1, x_semidim=-1.0, y_semidim=-0.5)
+        agent = Agent.create(batch_dim=1, name="boundary_test", dim_p=2, dim_c=0)
+        agent = agent.replace(state=agent.state.replace(pos=jnp.array([[2.0, 1.0]])))
+        world = world.add_agent(agent)
+
+        # Step and verify boundary handling
+        stepped_world = world.step()
+
+        # Agent should be constrained by boundaries
+        final_pos = stepped_world._agents[0].state.pos[0]
+        assert jnp.all(jnp.abs(final_pos) <= jnp.array([1.0, 0.5]))

@@ -223,24 +223,11 @@ class JointConstraint(PyTreeNode):
         )
 
     def _delta_anchor_tensor(self, entity):
-        if entity not in self._delta_anchor_tensor_map:
-            if entity == self.entity_a:
-                anchor = self.anchor_a
-            elif entity == self.entity_b:
-                anchor = self.anchor_b
-            else:
-                raise AssertionError()
-
-            delta_anchor_tensor = jnp.array(
-                entity.shape.get_delta_from_anchor(anchor),
-            ).reshape(entity.state.pos.shape)
-            self = self.replace(
-                _delta_anchor_tensor_map=self._delta_anchor_tensor_map
-                | {
-                    entity: delta_anchor_tensor,
-                },
-            )
-        return self, self._delta_anchor_tensor_map[entity]
+        if entity.name not in self._delta_anchor_tensor_map:
+            anchor = self.anchor_a if entity is self.entity_a else self.anchor_b
+            delta = jnp.array(entity.shape.get_delta_from_anchor(anchor))
+            self._delta_anchor_tensor_map[entity.name] = delta
+        return self._delta_anchor_tensor_map[entity.name]
 
     def get_delta_anchor(self, entity: "Entity"):
         return JaxUtils.rotate_vector(
