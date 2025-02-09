@@ -2225,21 +2225,22 @@ class World(JaxVectorizedObject):
             pos_joint_b = jnp.stack(pos_joint_b, axis=-2)
             rot_a = jnp.stack(rot_a, axis=-2)
             rot_b = jnp.stack(rot_b, axis=-2)
+            dist = jnp.stack(
+                dist,
+                axis=-1,
+            )[None]
             dist = jnp.broadcast_to(
-                jnp.stack(
-                    dist,
-                    axis=-1,
-                )[None],
-                (self.batch_dim, -1),
+                dist,
+                (self.batch_dim, dist.shape[-1]),
             )
             rotate_prior = jnp.stack(
                 rotate,
                 axis=-1,
-            )
+            )[None]
             rotate = jnp.broadcast_to(
-                jnp.expand_dims(rotate_prior, 0),
-                (self.batch_dim, -1, 1),
-            )
+                rotate_prior,
+                (self.batch_dim, rotate_prior.shape[-1]),
+            )[..., None]
             joint_rot = jnp.stack(joint_rot, axis=-2)
 
             (
@@ -2268,7 +2269,9 @@ class World(JaxVectorizedObject):
             torque_b_rotate = JaxUtils.compute_torque(force_b, r_b)
 
             torque_a_fixed, torque_b_fixed = self._get_constraint_torques(
-                rot_a, rot_b + joint_rot, force_multiplier=self._torque_constraint_force
+                rot_a,
+                rot_b + joint_rot,
+                force_multiplier=self._torque_constraint_force,
             )
 
             torque_a = jnp.where(
@@ -2808,11 +2811,7 @@ class World(JaxVectorizedObject):
         sign = -1 if attractive else 1
 
         # Handle zero-distance cases
-        safe_delta = jnp.where(
-            dist < min_dist,
-            jnp.asarray([[1.0, 0.0]]),  # Maintain 2D shape [batch, 2]
-            delta_pos / jnp.maximum(dist, min_dist),
-        )
+        safe_delta = delta_pos / jnp.where(dist > 0, dist, 1e-8)[..., None]
 
         # Calculate penetration using safe distance
         penetration = (
@@ -2825,6 +2824,12 @@ class World(JaxVectorizedObject):
 
         # Calculate force using safe direction vector
         force = sign * force_multiplier * safe_delta * penetration
+
+        force = jnp.where(
+            (dist < min_dist)[..., None],
+            jnp.zeros_like(force),
+            force,
+        )
 
         # Apply force only when needed
         force = jnp.where(
@@ -2853,7 +2858,7 @@ class World(JaxVectorizedObject):
         k = 1
         penetration = k * (jnp.exp(abs_delta_rot / k) - 1)
 
-        torque = force_multiplier * delta_rot.sign() * penetration
+        torque = force_multiplier * jnp.sign(delta_rot) * penetration
         torque = jnp.where((abs_delta_rot < min_delta_rot), 0.0, torque)
 
         return -torque, torque

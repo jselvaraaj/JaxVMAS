@@ -35,9 +35,9 @@ class Joint(PyTreeNode):
     @classmethod
     def create(
         cls,
+        batch_dim: int,
         entity_a: "Entity",
         entity_b: "Entity",
-        batch_dim: int = 1,
         anchor_a: tuple[float, float] = (0.0, 0.0),
         anchor_b: tuple[float, float] = (0.0, 0.0),
         rotate_a: bool = True,
@@ -185,6 +185,7 @@ class JointConstraint(PyTreeNode):
     anchor_b: tuple[float, float]
     dist: float
     rotate: bool
+    fixed_rotation: float | None
     _delta_anchor_tensor_map: dict["Entity", jnp.ndarray]
 
     @classmethod
@@ -219,27 +220,43 @@ class JointConstraint(PyTreeNode):
             anchor_b=anchor_b,
             dist=dist,
             rotate=rotate,
+            fixed_rotation=fixed_rotation,
             _delta_anchor_tensor_map={},
         )
 
-    def _delta_anchor_tensor(self, entity):
-        if entity.name not in self._delta_anchor_tensor_map:
-            anchor = self.anchor_a if entity is self.entity_a else self.anchor_b
-            delta = jnp.array(entity.shape.get_delta_from_anchor(anchor))
-            self._delta_anchor_tensor_map[entity.name] = delta
-        return self._delta_anchor_tensor_map[entity.name]
+    def _delta_anchor_jax_array(self, entity: "Entity"):
+        _delta_anchor_tensor_map = {**self._delta_anchor_tensor_map}
+
+        if entity is self.entity_a:
+            anchor = self.anchor_a
+        elif entity is self.entity_b:
+            anchor = self.anchor_b
+        else:
+            raise ValueError(
+                f"Entity {entity.name} is not part of joint {self.entity_a.name} {self.entity_b.name}"
+            )
+
+        delta = jnp.broadcast_to(
+            jnp.asarray(entity.shape.get_delta_from_anchor(anchor))[None],
+            entity.state.pos.shape,
+        )
+        _delta_anchor_tensor_map[entity.name] = delta
+
+        return _delta_anchor_tensor_map[entity.name]
 
     def get_delta_anchor(self, entity: "Entity"):
+        delta_anchor = self._delta_anchor_jax_array(entity)
         return JaxUtils.rotate_vector(
-            self._delta_anchor_tensor(entity),
+            delta_anchor,
             entity.state.rot,
         )
 
     def pos_point(
         self,
         entity: "Entity",
-    ):
-        return entity.state.pos + self.get_delta_anchor(entity)
+    ) -> tuple[jnp.ndarray, "JointConstraint"]:
+        pos_point = self.get_delta_anchor(entity)
+        return entity.state.pos + pos_point
 
     def render(
         self,
@@ -254,8 +271,12 @@ class JointConstraint(PyTreeNode):
             (self.dist / 2, 0),
             width=UNCOLLIDABLE_JOINT_RENDERING_WIDTH,
         )
-        pos_point_a = self.pos_point(self.entity_a)[env_index]
-        pos_point_b = self.pos_point(self.entity_b)[env_index]
+        pos_point_a = self.pos_point(self.entity_a)
+        pos_point_b = self.pos_point(self.entity_b)
+
+        pos_point_a = pos_point_a[env_index]
+        pos_point_b = pos_point_b[env_index]
+
         angle = jnp.atan2(
             pos_point_b[Y] - pos_point_a[Y],
             pos_point_b[X] - pos_point_a[X],

@@ -164,6 +164,12 @@ class JaxUtils:
     def rotate_vector(
         vector: Float[Array, f"{batch} {vector}"], angle: Float[Array, f"{batch}"]
     ) -> Float[Array, f"{batch} {vector}"]:
+        if len(angle.shape) == len(vector.shape):
+            angle = angle.squeeze(-1)
+
+        assert vector.shape[:-1] == angle.shape
+        assert vector.shape[-1] == 2
+
         cos = jnp.cos(angle)
         sin = jnp.sin(angle)
         return jnp.stack(

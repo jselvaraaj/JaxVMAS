@@ -669,8 +669,8 @@ class TestWorld:
         world = World.create(
             batch_dim=1, substeps=10
         )  # Higher substeps for joint stability
-        world = world.add_agent(agent1)
-        world = world.add_agent(agent2)
+
+        world = world.replace(_agents=[agent1, agent2])
 
         # Add joint constraint
         from jaxvmas.simulator.joints import Joint
@@ -688,11 +688,17 @@ class TestWorld:
         # Step and verify joint constraint
         stepped_world = world.step()
 
-        # Distance between agents should approach joint distance
+        # Distance between agents should be close to joint distance
         final_dist = jnp.linalg.norm(
             stepped_world._agents[0].state.pos - stepped_world._agents[1].state.pos
         )
-        assert jnp.abs(final_dist - 0.5) < 0.1
+        print(f"Final distance: {final_dist}, Target distance: 0.5")
+
+        # Check if final distance is reasonably close to desired distance
+        assert jnp.abs(final_dist - 0.5) < 0.1, (
+            f"Joint constraint not satisfied. Expected distance close to 0.5, "
+            f"but got {final_dist:.3f}"
+        )
 
     def test_extreme_boundary_conditions(self):
         # Test negative boundaries
