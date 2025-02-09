@@ -80,6 +80,8 @@ class BaseScenario(ABC):
         self.world.reset(env_index)
         self.reset_world_at(env_index)
 
+        return self
+
     def env_process_action(self, agent: Agent):
         # Do not override
         if agent.action_script is not None:

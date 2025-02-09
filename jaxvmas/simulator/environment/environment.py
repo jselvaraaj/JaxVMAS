@@ -35,6 +35,7 @@ from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
 # environment for all agents in the multiagent world
 # currently code assumes that no agents will be created/destroyed at runtime!
 class Environment(JaxVectorizedObject):
+    PRNG_key: jax.random.PRNGKey
     metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
@@ -56,6 +57,8 @@ class Environment(JaxVectorizedObject):
     visible_display: bool | None
     text_lines: list[TextLine] | None
 
+    steps: Array
+
     @classmethod
     def create(
         cls,
@@ -75,6 +78,10 @@ class Environment(JaxVectorizedObject):
             "render.modes": ["human", "rgb_array"],
             "runtime.vectorized": True,
         }
+        if seed is None:
+            PRNG_key = jax.random.PRNGKey(0)
+        else:
+            PRNG_key = jax.random.PRNGKey(seed)
         if multidiscrete_actions:
             assert (
                 not continuous_actions
@@ -101,6 +108,7 @@ class Environment(JaxVectorizedObject):
 
         self = cls(
             batch_dim=num_envs,
+            PRNG_key=PRNG_key,
             metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
@@ -122,7 +130,7 @@ class Environment(JaxVectorizedObject):
             text_lines=text_lines,
         )
 
-        observations = self.reset(seed=seed)
+        observations = self.reset()
 
         # configure spaces
         multidiscrete_actions = multidiscrete_actions
@@ -138,7 +146,6 @@ class Environment(JaxVectorizedObject):
 
     def reset(
         self,
-        seed: int | None = None,
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
@@ -147,11 +154,10 @@ class Environment(JaxVectorizedObject):
         Resets the environment in a vectorized way
         Returns observations for all envs and agents
         """
-        if seed is not None:
-            self.seed(seed)
         # reset world
-        self = self.scenario.env_reset_world_at(env_index=None)
-        self.steps = jnp.zeros(self.num_envs)
+        scenario = self.scenario.env_reset_world_at(env_index=None)
+        self = self.replace(scenario=scenario)
+        self = self.replace(steps=jnp.zeros(self.num_envs))
 
         result = self.get_from_scenario(
             get_observations=return_observations,
@@ -159,7 +165,7 @@ class Environment(JaxVectorizedObject):
             get_rewards=False,
             get_dones=return_dones,
         )
-        return result[0] if result and len(result) == 1 else result
+        return result[0] if result and len(result) == 1 else result, self
 
     def reset_at(
         self,
@@ -173,8 +179,9 @@ class Environment(JaxVectorizedObject):
         Returns observations for all agents in that environment
         """
         self._check_batch_index(index)
-        self.scenario.env_reset_world_at(index)
-        self.steps[index] = 0
+        scenario = self.scenario.env_reset_world_at(index)
+        self = self.replace(scenario=scenario)
+        self = self.replace(steps=self.steps.at[index].set(0))
 
         result = self.get_from_scenario(
             get_observations=return_observations,
@@ -183,7 +190,7 @@ class Environment(JaxVectorizedObject):
             get_dones=return_dones,
         )
 
-        return result[0] if result and len(result) == 1 else result
+        return result[0] if result and len(result) == 1 else result, self
 
     def get_from_scenario(
         self,
@@ -239,11 +246,6 @@ class Environment(JaxVectorizedObject):
             result = [obs, rewards, dones, infos]
 
         return [data for data in result if data is not None]
-
-    def seed(self, seed=None):
-        if seed is None:
-            seed = 0
-        return [jax.random.PRNGKey(seed)]
 
     def step(self, actions: list | dict):
         """Performs a vectorized step on all sub environments using `actions`.
@@ -304,16 +306,22 @@ class Environment(JaxVectorizedObject):
             )
 
         # set action for each agent
+        agents = []
         for i, agent in enumerate(self.agents):
-            self._set_action(actions[i], agent)
+            agent, self = self._set_action(actions[i], agent)
+            agents.append(agent)
+        self = self.replace(agents=agents)
         # Scenarios can define a custom action processor. This step takes care also of scripted agents automatically
         for agent in self.world.agents:
-            self.scenario.env_process_action(agent)
+            scenario = self.scenario.env_process_action(agent)
+            self = self.replace(scenario=scenario)
 
         # advance world state
-        self.scenario.pre_step()
+        scenario = self.scenario.pre_step()
+        self = self.replace(scenario=scenario)
         self.world.step()
-        self.scenario.post_step()
+        scenario = self.scenario.post_step()
+        self = self.replace(scenario=scenario)
 
         self.steps += 1
 
@@ -325,7 +333,7 @@ class Environment(JaxVectorizedObject):
         )
 
     def done(self):
-        terminated = self.scenario.done().clone()
+        terminated = self.scenario.done().copy()
 
         if self.max_steps is not None:
             truncated = self.steps >= self.max_steps
@@ -386,11 +394,11 @@ class Environment(JaxVectorizedObject):
         if self.continuous_actions:
             return Box(
                 low=jnp.array(
-                    (-agent.action.u_range_tensor).tolist()
+                    (-agent.action.u_range_jax_array).tolist()
                     + [0] * (self.world.dim_c if not agent.silent else 0),
                 ),
                 high=jnp.array(
-                    agent.action.u_range_tensor.tolist()
+                    agent.action.u_range_jax_array.tolist()
                     + [1] * (self.world.dim_c if not agent.silent else 0),
                 ),
                 shape=(self.get_agent_action_size(agent),),
@@ -447,40 +455,47 @@ class Environment(JaxVectorizedObject):
                     jnp.zeros(
                         agent.batch_dim,
                     ).uniform(
-                        -agent.action.u_range_tensor[action_index],
-                        agent.action.u_range_tensor[action_index],
+                        -agent.action.u_range_jax_array[action_index],
+                        agent.action.u_range_jax_array[action_index],
                     )
                 )
             if self.world.dim_c != 0 and not agent.silent:
                 # If the agent needs to communicate
                 for _ in range(self.world.dim_c):
+                    key, subkey = jax.random.split(self.PRNG_key)
+                    self = self.replace(PRNG_key=key)
                     actions.append(
-                        jnp.zeros(
-                            agent.batch_dim,
-                        ).uniform(
-                            0,
-                            1,
+                        jax.random.uniform(
+                            key=subkey,
+                            shape=(agent.batch_dim,),
+                            minval=0,
+                            maxval=1,
                         )
                     )
             action = jnp.stack(actions, axis=-1)
         else:
             action_space = self.get_agent_action_space(agent)
             if self.multidiscrete_actions:
+                key = jax.random.split(self.PRNG_key, action_space.shape[0] + 1)
+                self = self.replace(PRNG_key=key[-1])
                 actions = [
-                    jnp.random.randint(
+                    jax.random.randint(
+                        key=key[action_index],
                         low=0,
                         high=action_space.nvec[action_index],
-                        size=(agent.batch_dim,),
-                        device=agent.device,
+                        shape=(agent.batch_dim,),
                     )
                     for action_index in range(action_space.shape[0])
                 ]
                 action = jnp.stack(actions, axis=-1)
             else:
-                action = jnp.random.randint(
+                key, subkey = jax.random.split(self.PRNG_key)
+                self = self.replace(PRNG_key=key)
+                action = jax.random.randint(
+                    key=subkey,
                     low=0,
                     high=action_space.n,
-                    size=(agent.batch_dim,),
+                    shape=(agent.batch_dim,),
                 )
         return action
 
@@ -510,21 +525,17 @@ class Environment(JaxVectorizedObject):
 
     def _check_discrete_action(self, action: Array, low: int, high: int, type: str):
         assert jnp.all(
-            (action >= jnp.array(low, self.device))
-            * (action < jnp.array(high, self.device))
+            (action >= jnp.array(low)) * (action < jnp.array(high))
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
 
     # set env action for a particular agent
-    def _set_action(self, action, agent):
-        action = action.clone()
-        if not self.grad_enabled:
-            action = action.detach()
-        action = action.to(self.device)
-        assert not action.isnan().any()
-        agent.action.u = jnp.zeros(
-            self.batch_dim,
-            agent.action_size,
+    def _set_action(self, action: Array, agent: Agent):
+        action = action.copy()
+
+        u = jnp.zeros(
+            (self.batch_dim, agent.action_size),
         )
+        agent = agent.replace(action=action.replace(u=u))
 
         assert action.shape[1] == self.get_agent_action_size(agent), (
             f"Agent {agent.name} has wrong action size, got {action.shape[1]}, "
@@ -532,15 +543,16 @@ class Environment(JaxVectorizedObject):
         )
         if self.clamp_action and self.continuous_actions:
             physical_action = action[..., : agent.action_size]
-            a_range = agent.action.u_range_tensor.unsqueeze(0).expand(
-                physical_action.shape
+            a_range = jnp.broadcast_to(
+                agent.action.u_range_jax_array[None],
+                physical_action.shape,
             )
-            physical_action = physical_action.clamp(-a_range, a_range)
+            physical_action = jnp.clip(physical_action, -a_range, a_range)
 
             if self.world.dim_c > 0 and not agent.silent:  # If comms
                 comm_action = action[..., agent.action_size :]
                 action = jnp.concatenate(
-                    [physical_action, comm_action.clamp(0, 1)], axis=-1
+                    [physical_action, comm_action.clip(0, 1)], axis=-1
                 )
             else:
                 action = physical_action
@@ -551,10 +563,11 @@ class Environment(JaxVectorizedObject):
             physical_action = action[:, action_index : action_index + agent.action_size]
             action_index += self.world.dim_p
             assert not jnp.any(
-                jnp.abs(physical_action) > agent.action.u_range_tensor
+                jnp.abs(physical_action) > agent.action.u_range_jax_array
             ), f"Physical actions of agent {agent.name} are out of its range {agent.u_range}"
 
-            agent.action.u = physical_action.astype(jnp.float32)
+            u = physical_action.astype(jnp.float32)
+            agent = agent.replace(action=agent.action.replace(u=u))
 
         else:
             if not self.multidiscrete_actions:
@@ -588,7 +601,7 @@ class Environment(JaxVectorizedObject):
                     high=n,
                     type="physical",
                 )
-                u_max = agent.action.u_range_tensor[action_index]
+                u_max = agent.action.u_range_jax_array[action_index]
                 # For odd n we want the first action to always map to u=0, so
                 # we swap 0 values with the middle value, and shift the first
                 # half of the remaining values by -1.
@@ -600,50 +613,60 @@ class Environment(JaxVectorizedObject):
                 # We know u must be in [-u_max, u_max], and we know action is
                 # in [0, n-1]. Conversion steps: [0, n-1] -> [0, 1] -> [0, 2*u_max] -> [-u_max, u_max]
                 # E.g. action 0 -> -u_max, action n-1 -> u_max, action 1 -> -u_max + 2*u_max/(n-1)
-                agent.action.u[:, action_index] = (physical_action / (n - 1)) * (
-                    2 * u_max
-                ) - u_max
+                u = u.at[:, action_index].set(
+                    (physical_action / (n - 1)) * (2 * u_max) - u_max
+                )
+                agent = agent.replace(action=agent.action.replace(u=u))
 
                 action_index += 1
 
-        agent.action.u *= agent.action.u_multiplier_tensor
+        u = agent.action.u * agent.action.u_multiplier_jax_array
+        agent = agent.replace(action=agent.action.replace(u=u))
 
         if agent.action.u_noise > 0:
+            key, subkey = jax.random.split(self.PRNG_key)
+            self = self.replace(PRNG_key=key)
             noise = (
-                jnp.random.normal(
-                    *agent.action.u.shape,
+                jax.random.normal(
+                    key=subkey,
+                    shape=agent.action.u.shape,
                 )
                 * agent.u_noise
             )
-            agent.action.u += noise
+            agent = agent.replace(action=agent.action.replace(u=agent.action.u + noise))
         if self.world.dim_c > 0 and not agent.silent:
             if not self.continuous_actions:
                 comm_action = action[:, action_index:]
                 self._check_discrete_action(
                     comm_action, 0, self.world.dim_c, "communication"
                 )
-                comm_action = comm_action.long()
-                agent.action.c = jnp.zeros(
-                    self.num_envs,
-                    self.world.dim_c,
+                comm_action = comm_action.astype(jnp.int32)
+                c = jnp.zeros(
+                    (self.num_envs, self.world.dim_c),
                     dtype=jnp.float32,
                 )
-                # Discrete to one-hot
-                agent.action.c.scatter_(1, comm_action, 1)
+                c = c.at[:, comm_action].set(1)
+                agent = agent.replace(action=agent.action.replace(c=c))
             else:
                 comm_action = action[:, action_index:]
                 assert not jnp.any(comm_action > 1) and not jnp.any(
                     comm_action < 0
                 ), "Comm actions are out of range [0,1]"
-                agent.action.c = comm_action
+                agent = agent.replace(action=agent.action.replace(c=comm_action))
             if agent.c_noise > 0:
+                key, subkey = jax.random.split(self.PRNG_key)
+                self = self.replace(PRNG_key=key)
                 noise = (
-                    jnp.random.normal(
-                        *agent.action.c.shape,
+                    jax.random.normal(
+                        key=subkey,
+                        shape=agent.action.c.shape,
                     )
                     * agent.c_noise
                 )
-                agent.action.c += noise
+                agent = agent.replace(
+                    action=agent.action.replace(c=agent.action.c + noise)
+                )
+        return agent, self
 
     def render(
         self,
