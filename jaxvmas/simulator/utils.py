@@ -3,7 +3,6 @@
 #  All rights reserved.
 import os
 import warnings
-from abc import ABC, abstractmethod
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -61,27 +60,6 @@ def _init_pyglet_device():
             if len(available_devices) > 1
             else available_devices
         )
-
-
-class Observable:
-    def __init__(self):
-        self._observers = []
-
-    def subscribe(self, observer: "Observer"):
-        self._observers.append(observer)
-
-    def notify_observers(self, *args, **kwargs):
-        for obs in self._observers:
-            obs.notify(self, *args, **kwargs)
-
-    def unsubscribe(self, observer: "Observer"):
-        self._observers.remove(observer)
-
-
-class Observer(ABC):
-    @abstractmethod
-    def notify(self, observable, *args, **kwargs):
-        raise NotImplementedError
 
 
 def save_video(name: str, frame_list: list[Array], fps: int):

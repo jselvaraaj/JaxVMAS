@@ -33,7 +33,6 @@ from jaxvmas.simulator.utils import (
     TORQUE_CONSTRAINT_FORCE,
     Color,
     JaxUtils,
-    Observable,
     X,
     Y,
 )
@@ -484,7 +483,7 @@ class Action(JaxVectorizedObject):
         return super().replace(**kwargs)
 
 
-class Entity(JaxVectorizedObject, Observable):
+class Entity(JaxVectorizedObject):
     state: EntityState
 
     gravity: Array
