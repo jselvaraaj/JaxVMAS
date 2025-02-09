@@ -8,68 +8,62 @@ This version separates static (stored in self) and dynamic (stored in Environmen
 variables and threads the RNG key through every functional call.
 """
 
-import chex
+
+import math
+from ctypes import byref
+from typing import Callable
+
 import jax
-import jax.numpy as jnp
-from flax import struct
-from jaxtyping import Array, Int
+from jax import numpy as jnp
+from jaxtyping import Array
 
-from jaxvmas.simulator.core import Agent, World
+import jaxvmas
+from jaxvmas.simulator.core import Agent, JaxVectorizedObject, World
+from jaxvmas.simulator.environment.jaxgym.spaces import (
+    Box,
+    Dict,
+    Discrete,
+    MultiDiscrete,
+    Space,
+    Tuple,
+)
+from jaxvmas.simulator.rendering import TextLine, Viewer
 from jaxvmas.simulator.scenario import BaseScenario
-
-# Type definitions for dimensions
-batch = "batch"  # Batch dimension for vectorized environments
-agents = "agents"  # Number of agents dimension
-action = "action"  # Action dimension
-obs = "obs"  # Observation dimension
-comm = "comm"  # Communication dimension
-physical = "physical"  # Physical action dimension
-discrete = "discrete"  # Discrete action dimension
+from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
 
 
-class EnvironmentState(struct.PyTreeNode):
-    """Dynamic environment state (a PyTree) that is updated during episodes."""
+# environment for all agents in the multiagent world
+# currently code assumes that no agents will be created/destroyed at runtime!
+class Environment(JaxVectorizedObject):
+    metadata: dict[str, list[str] | bool]
+    scenario: BaseScenario
+    num_envs: int
+    world: World
+    agents: list[Agent]
+    n_agents: int
+    max_steps: int | None
+    continuous_actions: bool
+    dict_spaces: bool
+    clamp_action: bool
+    grad_enabled: bool
+    terminated_truncated: bool
+    multidiscrete_actions: bool
+    action_space: Space
+    observation_space: Space
 
-    batch_size: int = struct.field(pytree_node=False)  # Static field (never changes)
-    steps: Int[Array, f"{batch}"]
-    world_state: World  # The world state maintained by the scenario
-    rng: chex.PRNGKey  # RNG key
+    viewer: Viewer | None
+    headless: bool | None
+    visible_display: bool | None
+    text_lines: list[TextLine] | None
 
     @classmethod
     def create(
-        cls, batch_size: int, world_state: World, seed: int = 0
-    ) -> "EnvironmentState":
-        """Create an initial environment state."""
-        return cls(
-            batch_size=batch_size,
-            steps=jnp.zeros(batch_size, dtype=jnp.int32),
-            world_state=world_state,
-            rng=jax.random.PRNGKey(seed),
-        )
-
-    def reset(self, env_index: int | None = None) -> "EnvironmentState":
-        """Reset step counters for the entire batch or a specific environment index."""
-        if env_index is None:
-            return self.replace(steps=jnp.zeros_like(self.steps))
-        # Reset specific environment index only.
-        mask = jnp.arange(self.batch_size) == env_index
-        return self.replace(steps=jnp.where(mask, 0, self.steps))
-
-
-class Environment:
-    """JAX-based vectorized multi-agent environment.
-
-    The static values (scenario, number of environments, configuration, etc.)
-    are stored in the instance, while the dynamic values (world state, steps, RNG)
-    are stored in an EnvironmentState instance that must be passed into step/reset.
-    """
-
-    def __init__(
-        self,
+        cls,
         scenario: BaseScenario,
         num_envs: int = 32,
         max_steps: int | None = None,
         continuous_actions: bool = True,
+        seed: int | None = None,
         dict_spaces: bool = False,
         multidiscrete_actions: bool = False,
         clamp_actions: bool = False,
@@ -77,316 +71,881 @@ class Environment:
         terminated_truncated: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the environment with static parameters.
-        Note: The dynamic state (world state, steps, rng) should be created separately,
-        e.g., via a helper like EnvironmentState.create(...) once the world is available.
-        """
+        metadata = {
+            "render.modes": ["human", "rgb_array"],
+            "runtime.vectorized": True,
+        }
         if multidiscrete_actions:
             assert (
                 not continuous_actions
-            ), "Multidiscrete actions require discrete actions"
+            ), "When asking for multidiscrete_actions, make sure continuous_actions=False"
 
-        # Static parameters.
-        self.scenario = scenario
-        self.num_envs = num_envs
-        self.max_steps = max_steps
-        self.continuous_actions = continuous_actions
-        self.dict_spaces = dict_spaces
-        self.multidiscrete_actions = multidiscrete_actions
-        self.clamp_actions = clamp_actions
-        self.grad_enabled = grad_enabled
-        self.terminated_truncated = terminated_truncated
+        scenario = scenario
+        num_envs = num_envs
+        world = scenario.env_make_world(num_envs, **kwargs)
 
-    # Optional: helper to create the initial state.
-    def init_state(self, seed: int = 0, **world_kwargs) -> EnvironmentState:
-        """
-        Create an initial dynamic state. For example, if your scenario
-        provides an `env_make_world` method, you might use it here.
-        """
-        # This assumes that your scenario has a method for creating the world state.
-        # Replace the following with your scenario's actual initializer.
-        world_state = self.scenario.env_make_world(self.num_envs, **world_kwargs)
-        return EnvironmentState.create(
-            batch_size=self.num_envs, world_state=world_state, seed=seed
+        agents = world.policy_agents
+        n_agents = len(agents)
+        max_steps = max_steps
+        continuous_actions = continuous_actions
+        dict_spaces = dict_spaces
+        clamp_action = clamp_actions
+        grad_enabled = grad_enabled
+        terminated_truncated = terminated_truncated
+
+        # rendering
+        viewer = None
+        headless = None
+        visible_display = None
+        text_lines = None
+
+        self = cls(
+            batch_dim=num_envs,
+            metadata=metadata,
+            scenario=scenario,
+            num_envs=num_envs,
+            world=world,
+            agents=agents,
+            n_agents=n_agents,
+            max_steps=max_steps,
+            continuous_actions=continuous_actions,
+            dict_spaces=dict_spaces,
+            clamp_action=clamp_action,
+            grad_enabled=grad_enabled,
+            terminated_truncated=terminated_truncated,
+            multidiscrete_actions=multidiscrete_actions,
+            action_space=None,
+            observation_space=None,
+            viewer=viewer,
+            headless=headless,
+            visible_display=visible_display,
+            text_lines=text_lines,
         )
+
+        observations = self.reset(seed=seed)
+
+        # configure spaces
+        multidiscrete_actions = multidiscrete_actions
+        action_space = self.get_action_space()
+        observation_space = self.get_observation_space(observations)
+
+        self = self.replace(
+            action_space=action_space,
+            observation_space=observation_space,
+        )
+
+        return self
 
     def reset(
         self,
-        state: EnvironmentState,
-        env_index: int | None = None,
+        seed: int | None = None,
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
-    ) -> tuple[EnvironmentState, list | dict | None]:
-        """Reset the environment and return the new state and (optionally) observations/info."""
-        # Reset the world state via the scenario.
-        new_world_state = self.scenario.reset_world(state.world_state, env_index)
-        new_state = state.replace(world_state=new_world_state).reset(env_index)
+    ):
+        """
+        Resets the environment in a vectorized way
+        Returns observations for all envs and agents
+        """
+        if seed is not None:
+            self.seed(seed)
+        # reset world
+        self = self.scenario.env_reset_world_at(env_index=None)
+        self.steps = jnp.zeros(self.num_envs)
 
-        result = self._get_from_scenario(
-            new_state,
+        result = self.get_from_scenario(
             get_observations=return_observations,
             get_infos=return_info,
             get_rewards=False,
             get_dones=return_dones,
         )
-        # Return a single item if only one element is requested.
-        return new_state, result[0] if result and len(result) == 1 else result
+        return result[0] if result and len(result) == 1 else result
 
-    def step(
-        self, state: EnvironmentState, actions: list[Array] | dict[str, Array]
-    ) -> tuple[EnvironmentState, list]:
-        """
-        Step the environment forward given actions.
-        Returns a tuple containing the new state and a list of scenario outputs (e.g. observations, rewards, dones, infos).
-        """
-        # If actions are provided as a dict, convert to list (based on agent order).
-        if isinstance(actions, dict):
-            actions_list = []
-            for agent in self.scenario.agents:
-                try:
-                    actions_list.append(actions[agent.name])
-                except KeyError:
-                    raise AssertionError(f"Agent '{agent.name}' not in action dict")
-            actions = actions_list
-
-        assert len(actions) == len(
-            self.scenario.agents
-        ), f"Expected {len(self.scenario.agents)} actions, got {len(actions)}"
-
-        # Process the raw actions (while threading the RNG key).
-        processed_actions, new_rng = self._process_actions(state, actions)
-        # Advance the world state.
-        new_world_state = self.scenario.step_world(state.world_state, processed_actions)
-        new_state = state.replace(
-            world_state=new_world_state,
-            steps=state.steps + 1,
-            rng=new_rng,
-        )
-
-        # Get and return the outputs from the scenario.
-        scenario_outputs = self._get_from_scenario(
-            new_state,
-            get_observations=True,
-            get_infos=True,
-            get_rewards=True,
-            get_dones=True,
-        )
-        return (new_state,) + tuple(scenario_outputs)
-
-    def _get_from_scenario(
+    def reset_at(
         self,
-        state: EnvironmentState,
+        index: int,
+        return_observations: bool = True,
+        return_info: bool = False,
+        return_dones: bool = False,
+    ):
+        """
+        Resets the environment at index
+        Returns observations for all agents in that environment
+        """
+        self._check_batch_index(index)
+        self.scenario.env_reset_world_at(index)
+        self.steps[index] = 0
+
+        result = self.get_from_scenario(
+            get_observations=return_observations,
+            get_infos=return_info,
+            get_rewards=False,
+            get_dones=return_dones,
+        )
+
+        return result[0] if result and len(result) == 1 else result
+
+    def get_from_scenario(
+        self,
         get_observations: bool,
         get_rewards: bool,
         get_infos: bool,
         get_dones: bool,
         dict_agent_names: bool | None = None,
-    ) -> list:
-        """Extract information from the scenario (observations, rewards, dones, infos)."""
-        if not any([get_observations, get_rewards, get_infos, get_dones]):
-            return []
-
+    ):
+        if not get_infos and not get_dones and not get_rewards and not get_observations:
+            return
         if dict_agent_names is None:
             dict_agent_names = self.dict_spaces
 
-        result = []
+        obs = rewards = infos = terminated = truncated = dones = None
 
         if get_observations:
-            obs = self.scenario.get_obs(state.world_state)
-            if dict_agent_names:
-                obs = {agent.name: o for agent, o in zip(self.scenario.agents, obs)}
-            result.append(obs)
+            obs = {} if dict_agent_names else []
+        if get_rewards:
+            rewards = {} if dict_agent_names else []
+        if get_infos:
+            infos = {} if dict_agent_names else []
 
         if get_rewards:
-            rewards = self.scenario.get_rewards(state.world_state)
-            if dict_agent_names:
-                rewards = {
-                    agent.name: r for agent, r in zip(self.scenario.agents, rewards)
-                }
-            result.append(rewards)
-
-        if get_dones:
-            done = self.scenario.get_done(state.world_state)
-            if self.max_steps:
-                if self.terminated_truncated:
-                    # If terminated_truncated, compute truncated separately.
-                    truncated = state.steps >= self.max_steps
-                    result.extend([done, truncated])
+            for agent in self.agents:
+                reward = self.scenario.reward(agent).clone()
+                if dict_agent_names:
+                    rewards.update({agent.name: reward})
                 else:
-                    done = jnp.logical_or(done, state.steps >= self.max_steps)
-                    result.append(done)
-            else:
-                result.append(done)
-
+                    rewards.append(reward)
+        if get_observations:
+            for agent in self.agents:
+                observation = JaxUtils.recursive_clone(self.scenario.observation(agent))
+                if dict_agent_names:
+                    obs.update({agent.name: observation})
+                else:
+                    obs.append(observation)
         if get_infos:
-            infos = self.scenario.get_info(state.world_state)
-            if dict_agent_names:
-                infos = {agent.name: i for agent, i in zip(self.scenario.agents, infos)}
-            result.append(infos)
+            for agent in self.agents:
+                info = JaxUtils.recursive_clone(self.scenario.info(agent))
+                if dict_agent_names:
+                    infos.update({agent.name: info})
+                else:
+                    infos.append(info)
 
-        return result
+        if self.terminated_truncated:
+            if get_dones:
+                terminated, truncated = self.done()
+            result = [obs, rewards, terminated, truncated, infos]
+        else:
+            if get_dones:
+                dones = self.done()
+            result = [obs, rewards, dones, infos]
 
-    def _process_actions(
-        self,
-        state: EnvironmentState,
-        actions: list[Array],
-    ) -> tuple[list[Array], chex.PRNGKey]:
+        return [data for data in result if data is not None]
+
+    def seed(self, seed=None):
+        if seed is None:
+            seed = 0
+        return [jax.random.PRNGKey(seed)]
+
+    def step(self, actions: list | dict):
+        """Performs a vectorized step on all sub environments using `actions`.
+        Args:
+            actions: Is a list on len 'self.n_agents' of which each element is a torch.Tensor of shape
+            '(self.num_envs, action_size_of_agent)'.
+        Returns:
+            obs: List on len 'self.n_agents' of which each element is a torch.Tensor
+                 of shape '(self.num_envs, obs_size_of_agent)'
+            rewards: List on len 'self.n_agents' of which each element is a torch.Tensor of shape '(self.num_envs)'
+            dones: Tensor of len 'self.num_envs' of which each element is a bool
+            infos : List on len 'self.n_agents' of which each element is a dictionary for which each key is a metric
+                    and the value is a tensor of shape '(self.num_envs, metric_size_per_agent)'
+
+        Examples:
+            >>> import vmas
+            >>> env = vmas.make_env(
+            ...     scenario="waterfall",  # can be scenario name or BaseScenario class
+            ...     num_envs=32,
+            ...     device="cpu",  # Or "cuda" for GPU
+            ...     continuous_actions=True,
+            ...     max_steps=None,  # Defines the horizon. None is infinite horizon.
+            ...     seed=None,  # Seed of the environment
+            ...     n_agents=3,  # Additional arguments you want to pass to the scenario
+            ... )
+            >>> obs = env.reset()
+            >>> for _ in range(10):
+            ...     obs, rews, dones, info = env.step(env.get_random_actions())
         """
-        Process raw actions for all agents, ensuring proper shape and applying any noise/clamping.
-        Threads and returns an updated RNG key.
-        """
-        rng = state.rng
-        processed = []
-        for agent_idx, action in enumerate(actions):
-            if not isinstance(action, jnp.ndarray):
-                action = jnp.array(action)
-            # Ensure the action has a trailing dimension (e.g. (num_envs, action_dim))
-            if len(action.shape) == 1:
-                action = jnp.expand_dims(action, -1)
-
-            # Validate action dimensions.
-            expected_action_size = self._get_agent_action_size(
-                self.scenario.agents[agent_idx]
-            )
+        if isinstance(actions, dict):
+            actions_dict = actions
+            actions = []
+            for agent in self.agents:
+                try:
+                    actions.append(actions_dict[agent.name])
+                except KeyError:
+                    raise AssertionError(
+                        f"Agent '{agent.name}' not contained in action dict"
+                    )
             assert (
-                action.shape[0] == self.num_envs
-            ), f"Actions must have batch dim {self.num_envs}"
-            assert action.shape[1] == expected_action_size, (
-                f"Agent {self.scenario.agents[agent_idx].name}: Expected action shape "
-                f"(num_envs, {expected_action_size}), got {action.shape}"
+                len(actions_dict) == self.n_agents
+            ), f"Expecting actions for {self.n_agents}, got {len(actions_dict)} actions"
+
+        assert (
+            len(actions) == self.n_agents
+        ), f"Expecting actions for {self.n_agents}, got {len(actions)} actions"
+        for i in range(len(actions)):
+            if not isinstance(actions[i], Array):
+                actions[i] = jnp.array(actions[i])
+            if len(actions[i].shape) == 1:
+                actions[i] = actions[i][..., None]
+            assert (
+                actions[i].shape[0] == self.num_envs
+            ), f"Actions used in input of env must be of len {self.num_envs}, got {actions[i].shape[0]}"
+            assert actions[i].shape[1] == self.get_agent_action_size(self.agents[i]), (
+                f"Action for agent {self.agents[i].name} has shape {actions[i].shape[1]},"
+                f" but should have shape {self.get_agent_action_size(self.agents[i])}"
             )
 
-            # Process the action based on its type.
-            agent = self.scenario.agents[agent_idx]
-            if self.continuous_actions:
-                processed_action, rng = self._process_continuous_action(
-                    rng, action, agent
-                )
-            elif self.multidiscrete_actions:
-                processed_action, rng = self._process_multidiscrete_action(
-                    rng, action, agent
-                )
-            else:
-                processed_action, rng = self._process_discrete_action(
-                    rng, action, agent
-                )
+        # set action for each agent
+        for i, agent in enumerate(self.agents):
+            self._set_action(actions[i], agent)
+        # Scenarios can define a custom action processor. This step takes care also of scripted agents automatically
+        for agent in self.world.agents:
+            self.scenario.env_process_action(agent)
 
-            processed.append(processed_action)
+        # advance world state
+        self.scenario.pre_step()
+        self.world.step()
+        self.scenario.post_step()
 
-        return processed, rng
+        self.steps += 1
 
-    def _get_agent_action_size(self, agent: Agent) -> int:
-        """Determine the expected action size for the given agent."""
+        return self.get_from_scenario(
+            get_observations=True,
+            get_infos=True,
+            get_rewards=True,
+            get_dones=True,
+        )
+
+    def done(self):
+        terminated = self.scenario.done().clone()
+
+        if self.max_steps is not None:
+            truncated = self.steps >= self.max_steps
+        else:
+            truncated = None
+
+        if self.terminated_truncated:
+            if truncated is None:
+                truncated = jnp.zeros_like(terminated)
+            return terminated, truncated
+        else:
+            if truncated is None:
+                return terminated
+            return terminated + truncated
+
+    def get_action_space(self):
+        if not self.dict_spaces:
+            return Tuple([self.get_agent_action_space(agent) for agent in self.agents])
+        else:
+            return Dict(
+                {
+                    agent.name: self.get_agent_action_space(agent)
+                    for agent in self.agents
+                }
+            )
+
+    def get_observation_space(self, observations: list | dict):
+        if not self.dict_spaces:
+            return Tuple(
+                [
+                    self.get_agent_observation_space(agent, observations[i])
+                    for i, agent in enumerate(self.agents)
+                ]
+            )
+        else:
+            return Dict(
+                {
+                    agent.name: self.get_agent_observation_space(
+                        agent, observations[agent.name]
+                    )
+                    for agent in self.agents
+                }
+            )
+
+    def get_agent_action_size(self, agent: Agent):
         if self.continuous_actions:
-            return agent.action_size + (agent.world.dim_c if not agent.silent else 0)
+            return agent.action.action_size + (
+                self.world.dim_c if not agent.silent else 0
+            )
         elif self.multidiscrete_actions:
             return agent.action_size + (
-                1 if not agent.silent and agent.world.dim_c != 0 else 0
+                1 if not agent.silent and self.world.dim_c != 0 else 0
             )
         else:
             return 1
 
-    def _process_continuous_action(
-        self,
-        rng: chex.PRNGKey,
-        action: Array,
-        agent: Agent,
-    ) -> tuple[Array, chex.PRNGKey]:
-        """Process continuous actions, including clamping and optional noise addition."""
-        physical_action = action[..., : agent.action_size]
-
-        if self.clamp_actions:
-            physical_action = jnp.clip(
-                physical_action, -agent.action_range, agent.action_range
+    def get_agent_action_space(self, agent: Agent):
+        if self.continuous_actions:
+            return Box(
+                low=jnp.array(
+                    (-agent.action.u_range_tensor).tolist()
+                    + [0] * (self.world.dim_c if not agent.silent else 0),
+                ),
+                high=jnp.array(
+                    agent.action.u_range_tensor.tolist()
+                    + [1] * (self.world.dim_c if not agent.silent else 0),
+                ),
+                shape=(self.get_agent_action_size(agent),),
             )
-
-        if agent.action_noise > 0:
-            rng, subkey = jax.random.split(rng)
-            noise = (
-                jax.random.normal(subkey, physical_action.shape) * agent.action_noise
+        elif self.multidiscrete_actions:
+            actions = agent.discrete_action_nvec + (
+                [self.world.dim_c] if not agent.silent and self.world.dim_c != 0 else []
             )
-            physical_action = physical_action + noise
-
-        return physical_action * agent.action_multiplier, rng
-
-    def _process_discrete_action(
-        self,
-        rng: chex.PRNGKey,
-        action: Array,
-        agent: Agent,
-    ) -> tuple[Array, chex.PRNGKey]:
-        """Process discrete actions by converting them to one-hot and adding optional noise."""
-        physical_action = jax.nn.one_hot(action, agent.action_size)
-
-        if agent.action_noise > 0:
-            rng, subkey = jax.random.split(rng)
-            noise = (
-                jax.random.normal(subkey, physical_action.shape) * agent.action_noise
-            )
-            physical_action = physical_action + noise
-
-        return physical_action * agent.action_multiplier, rng
-
-    def _process_multidiscrete_action(
-        self,
-        rng: chex.PRNGKey,
-        action: Array,
-        agent: Agent,
-    ) -> tuple[Array, chex.PRNGKey]:
-        """
-        Process multidiscrete actions by converting each discrete action into one-hot and concatenating.
-        """
-        physical_actions = []
-        for i, size in enumerate(agent.action_nvec):
-            physical_action = jax.nn.one_hot(action[..., i], size)
-            if agent.action_noise > 0:
-                rng, subkey = jax.random.split(rng)
-                noise = (
-                    jax.random.normal(subkey, physical_action.shape)
-                    * agent.action_noise
+            return MultiDiscrete(actions)
+        else:
+            return Discrete(
+                math.prod(agent.discrete_action_nvec)
+                * (
+                    self.world.dim_c
+                    if not agent.silent and self.world.dim_c != 0
+                    else 1
                 )
-                physical_action = physical_action + noise
-            physical_actions.append(physical_action * agent.action_multiplier)
+            )
 
-        return jnp.concatenate(physical_actions, axis=-1), rng
+    def get_agent_observation_space(self, agent: Agent, obs: AGENT_OBS_TYPE):
+        if isinstance(obs, Array):
+            return Box(
+                low=-jnp.float32("inf"),
+                high=jnp.float32("inf"),
+                shape=obs.shape[1:],
+                dtype=jnp.float32,
+            )
+        elif isinstance(obs, dict):
+            return Dict(
+                {
+                    key: self.get_agent_observation_space(agent, value)
+                    for key, value in obs.items()
+                }
+            )
+        else:
+            raise NotImplementedError(
+                f"Invalid type of observation {obs} for agent {agent.name}"
+            )
 
-    def get_random_actions(
-        self,
-        state: EnvironmentState,
-    ) -> tuple[EnvironmentState, list[Array] | dict[str, Array]]:
+    def get_random_action(self, agent: Agent) -> Array:
+        """Returns a random action for the given agent.
+
+        Args:
+            agent (Agent): The agent to get the action for
+
+        Returns:
+            torch.tensor: the random actions tensor with shape ``(agent.batch_dim, agent.action_size)``
+
         """
-        Generate random actions for all agents.
-        Returns a tuple (new_state, actions) where new_state includes the updated RNG key.
+        if self.continuous_actions:
+            actions = []
+            for action_index in range(agent.action_size):
+                actions.append(
+                    jnp.zeros(
+                        agent.batch_dim,
+                    ).uniform(
+                        -agent.action.u_range_tensor[action_index],
+                        agent.action.u_range_tensor[action_index],
+                    )
+                )
+            if self.world.dim_c != 0 and not agent.silent:
+                # If the agent needs to communicate
+                for _ in range(self.world.dim_c):
+                    actions.append(
+                        jnp.zeros(
+                            agent.batch_dim,
+                        ).uniform(
+                            0,
+                            1,
+                        )
+                    )
+            action = jnp.stack(actions, axis=-1)
+        else:
+            action_space = self.get_agent_action_space(agent)
+            if self.multidiscrete_actions:
+                actions = [
+                    jnp.random.randint(
+                        low=0,
+                        high=action_space.nvec[action_index],
+                        size=(agent.batch_dim,),
+                        device=agent.device,
+                    )
+                    for action_index in range(action_space.shape[0])
+                ]
+                action = jnp.stack(actions, axis=-1)
+            else:
+                action = jnp.random.randint(
+                    low=0,
+                    high=action_space.n,
+                    size=(agent.batch_dim,),
+                )
+        return action
+
+    def get_random_actions(self) -> list[Array]:
+        """Returns random actions for all agents that you can feed to :class:`step`
+
+        Returns:
+            list[Array]: the random actions for the agents
+
+        Examples:
+            >>> import vmas
+            >>> env = vmas.make_env(
+            ...     scenario="waterfall",  # can be scenario name or BaseScenario class
+            ...     num_envs=32,
+            ...     device="cpu",  # Or "cuda" for GPU
+            ...     continuous_actions=True,
+            ...     max_steps=None,  # Defines the horizon. None is infinite horizon.
+            ...     seed=None,  # Seed of the environment
+            ...     n_agents=3,  # Additional arguments you want to pass to the scenario
+            ... )
+            >>> obs = env.reset()
+            >>> for _ in range(10):
+            ...     obs, rews, dones, info = env.step(env.get_random_actions())
+
         """
-        rng = state.rng
-        actions = []
-        for agent in self.scenario.agents:
-            rng, subkey = jax.random.split(rng)
-            if self.continuous_actions:
-                action = jax.random.uniform(
-                    subkey,
-                    shape=(self.num_envs, self._get_agent_action_size(agent)),
-                    minval=-agent.action_range,
-                    maxval=agent.action_range,
+        return [self.get_random_action(agent) for agent in self.agents]
+
+    def _check_discrete_action(self, action: Array, low: int, high: int, type: str):
+        assert jnp.all(
+            (action >= jnp.array(low, self.device))
+            * (action < jnp.array(high, self.device))
+        ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
+
+    # set env action for a particular agent
+    def _set_action(self, action, agent):
+        action = action.clone()
+        if not self.grad_enabled:
+            action = action.detach()
+        action = action.to(self.device)
+        assert not action.isnan().any()
+        agent.action.u = jnp.zeros(
+            self.batch_dim,
+            agent.action_size,
+        )
+
+        assert action.shape[1] == self.get_agent_action_size(agent), (
+            f"Agent {agent.name} has wrong action size, got {action.shape[1]}, "
+            f"expected {self.get_agent_action_size(agent)}"
+        )
+        if self.clamp_action and self.continuous_actions:
+            physical_action = action[..., : agent.action_size]
+            a_range = agent.action.u_range_tensor.unsqueeze(0).expand(
+                physical_action.shape
+            )
+            physical_action = physical_action.clamp(-a_range, a_range)
+
+            if self.world.dim_c > 0 and not agent.silent:  # If comms
+                comm_action = action[..., agent.action_size :]
+                action = jnp.concatenate(
+                    [physical_action, comm_action.clamp(0, 1)], axis=-1
                 )
             else:
-                action = jax.random.randint(
-                    subkey,
-                    shape=(self.num_envs,),
-                    minval=0,
-                    maxval=self._get_agent_action_size(agent),
+                action = physical_action
+
+        action_index = 0
+
+        if self.continuous_actions:
+            physical_action = action[:, action_index : action_index + agent.action_size]
+            action_index += self.world.dim_p
+            assert not jnp.any(
+                jnp.abs(physical_action) > agent.action.u_range_tensor
+            ), f"Physical actions of agent {agent.name} are out of its range {agent.u_range}"
+
+            agent.action.u = physical_action.astype(jnp.float32)
+
+        else:
+            if not self.multidiscrete_actions:
+                # This bit of code translates the discrete action (taken from a space that
+                # is the cartesian product of all action spaces) into a multi discrete action.
+                # This is done by iteratively taking the modulo of the action and dividing by the
+                # number of actions in the current action space, which treats the action as if
+                # it was the "flat index" of the multi-discrete actions. E.g. if we have
+                # nvec = [3,2], action 0 corresponds to the actions [0,0],
+                # action 1 corresponds to the action [0,1], action 2 corresponds
+                # to the action [1,0], action 3 corresponds to the action [1,1], etc.
+                flat_action = action.squeeze(-1)
+                actions = []
+                nvec = list(agent.discrete_action_nvec) + (
+                    [self.world.dim_c]
+                    if not agent.silent and self.world.dim_c != 0
+                    else []
                 )
-            actions.append(action)
+                for i in range(len(nvec)):
+                    n = math.prod(nvec[i + 1 :])
+                    actions.append(flat_action // n)
+                    flat_action = flat_action % n
+                action = jnp.stack(actions, axis=-1)
 
-        new_state = state.replace(rng=rng)
-        if self.dict_spaces:
-            return new_state, {
-                agent.name: act for agent, act in zip(self.scenario.agents, actions)
-            }
-        return new_state, actions
+            # Now we have an action with shape [n_envs, action_size+comms_actions]
+            for n in agent.discrete_action_nvec:
+                physical_action = action[:, action_index]
+                self._check_discrete_action(
+                    physical_action[..., None],
+                    low=0,
+                    high=n,
+                    type="physical",
+                )
+                u_max = agent.action.u_range_tensor[action_index]
+                # For odd n we want the first action to always map to u=0, so
+                # we swap 0 values with the middle value, and shift the first
+                # half of the remaining values by -1.
+                if n % 2 != 0:
+                    stay = physical_action == 0
+                    decrement = (physical_action > 0) & (physical_action <= n // 2)
+                    physical_action[stay] = n // 2
+                    physical_action[decrement] -= 1
+                # We know u must be in [-u_max, u_max], and we know action is
+                # in [0, n-1]. Conversion steps: [0, n-1] -> [0, 1] -> [0, 2*u_max] -> [-u_max, u_max]
+                # E.g. action 0 -> -u_max, action n-1 -> u_max, action 1 -> -u_max + 2*u_max/(n-1)
+                agent.action.u[:, action_index] = (physical_action / (n - 1)) * (
+                    2 * u_max
+                ) - u_max
 
-    def render(self, mode="human"):
-        """Render the environment (to be implemented for your specific needs)."""
-        raise NotImplementedError("Rendering not implemented for JAX environment")
+                action_index += 1
+
+        agent.action.u *= agent.action.u_multiplier_tensor
+
+        if agent.action.u_noise > 0:
+            noise = (
+                jnp.random.normal(
+                    *agent.action.u.shape,
+                )
+                * agent.u_noise
+            )
+            agent.action.u += noise
+        if self.world.dim_c > 0 and not agent.silent:
+            if not self.continuous_actions:
+                comm_action = action[:, action_index:]
+                self._check_discrete_action(
+                    comm_action, 0, self.world.dim_c, "communication"
+                )
+                comm_action = comm_action.long()
+                agent.action.c = jnp.zeros(
+                    self.num_envs,
+                    self.world.dim_c,
+                    dtype=jnp.float32,
+                )
+                # Discrete to one-hot
+                agent.action.c.scatter_(1, comm_action, 1)
+            else:
+                comm_action = action[:, action_index:]
+                assert not jnp.any(comm_action > 1) and not jnp.any(
+                    comm_action < 0
+                ), "Comm actions are out of range [0,1]"
+                agent.action.c = comm_action
+            if agent.c_noise > 0:
+                noise = (
+                    jnp.random.normal(
+                        *agent.action.c.shape,
+                    )
+                    * agent.c_noise
+                )
+                agent.action.c += noise
+
+    def render(
+        self,
+        mode="human",
+        env_index=0,
+        agent_index_focus: int = None,
+        visualize_when_rgb: bool = False,
+        plot_position_function: Callable = None,
+        plot_position_function_precision: float = 0.01,
+        plot_position_function_range: (
+            float
+            | tuple[float, float]
+            | tuple[tuple[float, float], tuple[float, float]]
+            | None
+        ) = None,
+        plot_position_function_cmap_range: tuple[float, float] | None = None,
+        plot_position_function_cmap_alpha: float = 1.0,
+        plot_position_function_cmap_name: str | None = "viridis",
+    ):
+        """
+        Render function for environment using pyglet
+
+        On servers use mode="rgb_array" and set
+        ```
+        export DISPLAY=':99.0'
+        Xvfb :99 -screen 0 1400x900x24 > /dev/null 2>&1 &
+        ```
+
+        :param mode: One of human or rgb_array
+        :param env_index: Index of the environment to render
+        :param agent_index_focus: If specified the camera will stay on the agent with this index.
+                                  If None, the camera will stay in the center and zoom out to contain all agents
+        :param visualize_when_rgb: Also run human visualization when mode=="rgb_array"
+        :param plot_position_function: A function to plot under the rendering.
+        The function takes a numpy array with shape (n_points, 2), which represents a set of x,y values to evaluate f over and plot it
+        It should output either an array with shape (n_points, 1) which will be plotted as a colormap
+        or an array with shape (n_points, 4), which will be plotted as RGBA values
+        :param plot_position_function_precision: The precision to use for plotting the function
+        :param plot_position_function_range: The position range to plot the function in.
+        If float, the range for x and y is (-function_range, function_range)
+        If Tuple[float, float], the range for x is (-function_range[0], function_range[0]) and y is (-function_range[1], function_range[1])
+        If Tuple[Tuple[float, float], Tuple[float, float]], the first tuple is the x range and the second tuple is the y range
+        :param plot_position_function_cmap_range: The range of the cmap in case plot_position_function outputs a single value
+        :param plot_position_function_cmap_alpha: The alpha of the cmap in case plot_position_function outputs a single value
+        :return: Rgb array or None, depending on the mode
+        """
+        self._check_batch_index(env_index)
+        assert (
+            mode in self.metadata["render.modes"]
+        ), f"Invalid mode {mode} received, allowed modes: {self.metadata['render.modes']}"
+        if agent_index_focus is not None:
+            assert 0 <= agent_index_focus < self.n_agents, (
+                f"Agent focus in rendering should be a valid agent index"
+                f" between 0 and {self.n_agents}, got {agent_index_focus}"
+            )
+        shared_viewer = agent_index_focus is None
+        aspect_ratio = self.scenario.viewer_size[X] / self.scenario.viewer_size[Y]
+
+        headless = mode == "rgb_array" and not visualize_when_rgb
+        # First time rendering
+        if self.visible_display is None:
+            self.visible_display = not headless
+            self.headless = headless
+        # All other times headless should be the same
+        else:
+            assert self.visible_display is not headless
+
+        # First time rendering
+        if self.viewer is None:
+            try:
+                import pyglet
+            except ImportError:
+                raise ImportError(
+                    "Cannot import pyg;et: you can install pyglet directly via 'pip install pyglet'."
+                )
+
+            try:
+                # Try to use EGL
+                pyglet.lib.load_library("EGL")
+
+                # Only if we have GPUs
+                from pyglet.libs.egl import egl, eglext
+
+                num_devices = egl.EGLint()
+                eglext.eglQueryDevicesEXT(0, None, byref(num_devices))
+                assert num_devices.value > 0
+
+            except (ImportError, AssertionError):
+                self.headless = False
+            pyglet.options["headless"] = self.headless
+
+            self._init_rendering()
+
+        if self.scenario.viewer_zoom <= 0:
+            raise ValueError("Scenario viewer zoom must be > 0")
+        zoom = self.scenario.viewer_zoom
+
+        if aspect_ratio < 1:
+            cam_range = jnp.asarray([zoom, zoom / aspect_ratio])
+        else:
+            cam_range = jnp.asarray([zoom * aspect_ratio, zoom])
+
+        if shared_viewer:
+            # zoom out to fit everyone
+            all_poses = jnp.stack(
+                [agent.state.pos[env_index] for agent in self.world.agents],
+                axis=0,
+            )
+            max_agent_radius = max(
+                [agent.shape.circumscribed_radius() for agent in self.world.agents]
+            )
+            viewer_size_fit = (
+                jnp.stack(
+                    [
+                        jnp.max(
+                            jnp.abs(all_poses[:, X] - self.scenario.render_origin[X])
+                        ),
+                        jnp.max(
+                            jnp.abs(all_poses[:, Y] - self.scenario.render_origin[Y])
+                        ),
+                    ]
+                )
+                + 2 * max_agent_radius
+            )
+
+            viewer_size = jnp.maximum(
+                viewer_size_fit / cam_range,
+                jnp.asarray(zoom),
+            )
+            cam_range *= jnp.max(viewer_size)
+            self.viewer.set_bounds(
+                -cam_range[X] + self.scenario.render_origin[X],
+                cam_range[X] + self.scenario.render_origin[X],
+                -cam_range[Y] + self.scenario.render_origin[Y],
+                cam_range[Y] + self.scenario.render_origin[Y],
+            )
+        else:
+            # update bounds to center around agent
+            pos = self.agents[agent_index_focus].state.pos[env_index]
+            self.viewer.set_bounds(
+                pos[X] - cam_range[X],
+                pos[X] + cam_range[X],
+                pos[Y] - cam_range[Y],
+                pos[Y] + cam_range[Y],
+            )
+
+        # Render
+        if self.scenario.visualize_semidims:
+            self.plot_boundary()
+
+        self._set_agent_comm_messages(env_index)
+
+        if plot_position_function is not None:
+            self.viewer.add_onetime(
+                self.plot_function(
+                    plot_position_function,
+                    precision=plot_position_function_precision,
+                    plot_range=plot_position_function_range,
+                    cmap_range=plot_position_function_cmap_range,
+                    cmap_alpha=plot_position_function_cmap_alpha,
+                    cmap_name=plot_position_function_cmap_name,
+                )
+            )
+
+        from jaxvmas.simulator.rendering import Grid
+
+        if self.scenario.plot_grid:
+            grid = Grid(spacing=self.scenario.grid_spacing)
+            grid.set_color(*jaxvmas.simulator.utils.Color.BLACK.value, alpha=0.3)
+            self.viewer.add_onetime(grid)
+
+        self.viewer.add_onetime_list(self.scenario.extra_render(env_index))
+
+        for entity in self.world.entities:
+            self.viewer.add_onetime_list(entity.render(env_index=env_index))
+
+        # render to display or array
+        return self.viewer.render(return_rgb_array=mode == "rgb_array")
+
+    def plot_boundary(self):
+        # include boundaries in the rendering if the environment is dimension-limited
+        if self.world.x_semidim is not None or self.world.y_semidim is not None:
+            from jaxvmas.simulator.rendering import Line
+            from jaxvmas.simulator.utils import Color
+
+            # set a big value for the cases where the environment is dimension-limited only in one coordinate
+            infinite_value = 100
+
+            x_semi = (
+                self.world.x_semidim
+                if self.world.x_semidim is not None
+                else infinite_value
+            )
+            y_semi = (
+                self.world.y_semidim
+                if self.world.y_semidim is not None
+                else infinite_value
+            )
+
+            # set the color for the boundary line
+            color = Color.GRAY.value
+
+            # Define boundary points based on whether world semidims are provided
+            if (
+                self.world.x_semidim is not None and self.world.y_semidim is not None
+            ) or self.world.y_semidim is not None:
+                boundary_points = [
+                    (-x_semi, y_semi),
+                    (x_semi, y_semi),
+                    (x_semi, -y_semi),
+                    (-x_semi, -y_semi),
+                ]
+            else:
+                boundary_points = [
+                    (-x_semi, y_semi),
+                    (-x_semi, -y_semi),
+                    (x_semi, y_semi),
+                    (x_semi, -y_semi),
+                ]
+
+            # Create lines by connecting points
+            for i in range(
+                0,
+                len(boundary_points),
+                (
+                    1
+                    if (
+                        self.world.x_semidim is not None
+                        and self.world.y_semidim is not None
+                    )
+                    else 2
+                ),
+            ):
+                start = boundary_points[i]
+                end = boundary_points[(i + 1) % len(boundary_points)]
+                line = Line(start, end, width=0.7)
+                line.set_color(*color)
+                self.viewer.add_onetime(line)
+
+    def plot_function(
+        self, f, precision, plot_range, cmap_range, cmap_alpha, cmap_name
+    ):
+        from jaxvmas.simulator.rendering import render_function_util
+
+        if plot_range is None:
+            assert self.viewer.bounds is not None, "Set viewer bounds before plotting"
+            x_min, x_max, y_min, y_max = self.viewer.bounds.tolist()
+            plot_range = (
+                [x_min - precision, x_max - precision],
+                [
+                    y_min - precision,
+                    y_max + precision,
+                ],
+            )
+
+        geom = render_function_util(
+            f=f,
+            precision=precision,
+            plot_range=plot_range,
+            cmap_range=cmap_range,
+            cmap_alpha=cmap_alpha,
+            cmap_name=cmap_name,
+        )
+        return geom
+
+    def _init_rendering(self):
+        from jaxvmas.simulator import rendering
+
+        self.viewer = rendering.Viewer(
+            *self.scenario.viewer_size, visible=self.visible_display
+        )
+
+        self.text_lines = []
+        idx = 0
+        if self.world.dim_c > 0:
+            for agent in self.world.agents:
+                if not agent.silent:
+                    text_line = rendering.TextLine(y=idx * 40)
+                    self.viewer.geoms.append(text_line)
+                    self.text_lines.append(text_line)
+                    idx += 1
+
+    def _set_agent_comm_messages(self, env_index: int):
+        # Render comm messages
+        if self.world.dim_c > 0:
+            idx = 0
+            for agent in self.world.agents:
+                if not agent.silent:
+                    assert (
+                        agent.state.c is not None
+                    ), "Agent has no comm state but it should"
+                    if self.continuous_actions:
+                        word = (
+                            "["
+                            + ",".join(
+                                [f"{comm:.2f}" for comm in agent.state.c[env_index]]
+                            )
+                            + "]"
+                        )
+                    else:
+                        word = ALPHABET[jnp.argmax(agent.state.c[env_index]).item()]
+
+                    message = agent.name + " sends " + word + "   "
+                    self.text_lines[idx].set_text(message)
+                    idx += 1

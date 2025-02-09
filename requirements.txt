@@ -1,6 +1,7 @@
 jax
 jaxtyping
 flax
+gymnax
 
 pyglet<=1.5.27
 cv2
