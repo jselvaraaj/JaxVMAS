@@ -139,38 +139,52 @@ class Joint(PyTreeNode):
 
         return self.replace(joint_constraints=joint_constraints)
 
-    def notify(self, *args, **kwargs):
-        pos_a = self.joint_constraints[0].pos_point(self.entity_a)
-        pos_b = self.joint_constraints[1].pos_point(self.entity_b)
+    def update_joint_state(self, entity_a: "Entity", entity_b: "Entity") -> "Joint":
+        """Pure function to update joint state based on entity states"""
 
-        self = self.replace(
-            landmark=self.landmark.set_pos(
-                self.landmark,
-                (pos_a + pos_b) / 2,
-                batch_index=None,
-            )
-        )
+        assert (
+            entity_a.name == self.entity_a.name
+        ), f"Entity a name mismatch: {entity_a.name} != {self.entity_a.name}"
+        assert (
+            entity_b.name == self.entity_b.name
+        ), f"Entity b name mismatch: {entity_b.name} != {self.entity_b.name}"
 
+        self = self.replace(entity_a=entity_a, entity_b=entity_b)
+
+        # Get positions of joint points
+        pos_a = self.joint_constraints[0].pos_point(entity_a)
+        pos_b = self.joint_constraints[1].pos_point(entity_b)
+
+        # Calculate new landmark position and rotation
+        new_pos = (pos_a + pos_b) / 2
         angle = jnp.atan2(
             pos_b[:, Y] - pos_a[:, Y],
             pos_b[:, X] - pos_a[:, X],
         )[..., None]
 
-        self = self.replace(
-            landmark=self.landmark.set_rot(
-                self.landmark,
-                angle,
-                batch_index=None,
-            )
-        )
+        # Create new landmark with updated position and rotation
+        new_landmark = self.landmark.set_pos(self.landmark, new_pos, batch_index=None)
+        new_landmark = new_landmark.set_rot(new_landmark, angle, batch_index=None)
 
-        # If we do not allow rotation, and we did not provide a fixed rotation value, we infer it
+        # Create new joint constraints with updated fixed rotations if needed
+        new_joint_constraints = list(self.joint_constraints)
+
         if not self.rotate_a and self.fixed_rotation_a is None:
-            self.joint_constraints[0].fixed_rotation = angle - self.entity_a.rot
-        if not self.rotate_b and self.fixed_rotation_b is None:
-            self.joint_constraints[1].fixed_rotation = angle - self.entity_b.rot
+            new_constraint = new_joint_constraints[0].replace(
+                fixed_rotation=angle - self.entity_a.state.rot
+            )
+            new_joint_constraints[0] = new_constraint
 
-        return self
+        if not self.rotate_b and self.fixed_rotation_b is None:
+            new_constraint = new_joint_constraints[1].replace(
+                fixed_rotation=angle - self.entity_b.state.rot
+            )
+            new_joint_constraints[1] = new_constraint
+
+        # Return new joint instance with updated state
+        return self.replace(
+            landmark=new_landmark, joint_constraints=new_joint_constraints
+        )
 
 
 # Private class: do not instantiate directly
@@ -223,6 +237,11 @@ class JointConstraint(PyTreeNode):
             fixed_rotation=fixed_rotation,
             _delta_anchor_tensor_map={},
         )
+
+    def update_joint_state(self, entity_a: "Entity", entity_b: "Entity"):
+        self = self.replace(entity_a=entity_a, entity_b=entity_b)
+
+        return self
 
     def _delta_anchor_jax_array(self, entity: "Entity"):
         _delta_anchor_tensor_map = {**self._delta_anchor_tensor_map}

@@ -667,8 +667,12 @@ class TestWorld:
         agent2 = agent2.replace(state=agent2.state.replace(pos=jnp.array([[1.0, 0.0]])))
 
         world = World.create(
-            batch_dim=1, substeps=10
-        )  # Higher substeps for joint stability
+            batch_dim=1,
+            substeps=10,  # Higher substeps for joint stability
+            joint_force=500.0,  # Increase joint force for stronger constraint
+            linear_friction=0.0,  # Remove friction to allow easier movement
+            drag=0.1,  # Reduce drag for smoother motion
+        )
 
         world = world.replace(_agents=[agent1, agent2])
 

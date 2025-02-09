@@ -1958,6 +1958,15 @@ class World(JaxVectorizedObject):
 
             self = self.replace(entities=entities)
 
+            # Update joint states after entity states have been updated
+            new_joints = {}
+            for joint_key, joint in self._joints.items():
+                entity_a = self.entities[_entity_index_map[joint.entity_a.name]]
+                entity_b = self.entities[_entity_index_map[joint.entity_b.name]]
+                updated_joint = joint.update_joint_state(entity_a, entity_b)
+                new_joints[joint_key] = updated_joint
+            self = self.replace(_joints=new_joints)
+
         # update non-differentiable comm state
         if self._dim_c > 0:
             agents = []
