@@ -69,7 +69,7 @@ class Shape(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
+    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -98,8 +98,8 @@ class Box(Shape):
     def width(self):
         return self._width
 
-    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
-        return anchor[X] * self.length / 2, anchor[Y] * self.width / 2
+    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
+        return jnp.asarray([anchor[X] * self.length / 2, anchor[Y] * self.width / 2])
 
     def moment_of_inertia(self, mass: float):
         return (1 / 12) * mass * (self.length**2 + self.width**2)
@@ -129,12 +129,14 @@ class Sphere(Shape):
     def radius(self):
         return self._radius
 
-    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
+    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
         delta = jnp.array([anchor[X] * self.radius, anchor[Y] * self.radius])
         delta_norm = jnp.linalg.vector_norm(delta)
-        if delta_norm > self.radius:
-            delta /= delta_norm * self.radius
-        return tuple(delta.tolist())
+        # Use jnp.where instead of if statement for jit compatibility
+        delta = jnp.where(
+            delta_norm > self.radius, delta / (delta_norm * self.radius), delta
+        )
+        return delta
 
     def moment_of_inertia(self, mass: float):
         return (1 / 2) * mass * self.radius**2
@@ -169,8 +171,8 @@ class Line(Shape):
     def circumscribed_radius(self) -> float:
         return self.length / 2
 
-    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> tuple[float, float]:
-        return anchor[X] * self.length / 2, 0.0
+    def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
+        return jnp.asarray([anchor[X] * self.length / 2, 0.0])
 
     def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
@@ -974,7 +976,7 @@ class World(JaxVectorizedObject):
     _contact_margin: float
     _torque_constraint_force: float
     _joints: dict[frozenset[str], JointConstraint]
-    _collidable_pairs: list[tuple[Shape, Shape]]
+    _collidable_pairs: list[tuple[type[Shape], type[Shape]]]
     _entity_index_map: dict[Entity, int]
 
     _force_dict: dict[str, Array]
@@ -1030,12 +1032,12 @@ class World(JaxVectorizedObject):
         _joints = {}
         # Pairs of collidable shapes
         _collidable_pairs = [
-            {Sphere, Sphere},
-            {Sphere, Box},
-            {Sphere, Line},
-            {Line, Line},
-            {Line, Box},
-            {Box, Box},
+            (Sphere, Sphere),
+            (Sphere, Box),
+            (Sphere, Line),
+            (Line, Line),
+            (Line, Box),
+            (Box, Box),
         ]
         # Map to save entity indexes
         entity_index_map = {}
@@ -2015,10 +2017,8 @@ class World(JaxVectorizedObject):
     ):
         forces_dict = {**self._force_dict}
         if entity.movable:
-            if not (self._gravity == 0.0).all():
-                forces_dict[entity.name] = (
-                    forces_dict[entity.name] + entity.mass * self._gravity
-                )
+            gravity_force = entity.mass * self._gravity
+            forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
             if entity.gravity is not None:
                 forces_dict[entity.name] = (
                     forces_dict[entity.name] + entity.mass * entity.gravity
@@ -2153,6 +2153,7 @@ class World(JaxVectorizedObject):
                     b_b.append((entity_a, entity_b))
                 else:
                     raise AssertionError()
+
         # Joints
         self = self._vectorized_joint_constraints(joints)
 
@@ -2789,21 +2790,38 @@ class World(JaxVectorizedObject):
         return self
 
     def collides(self, a: Entity, b: Entity) -> bool:
-        if (not a.collides(b)) or (not b.collides(a)) or a is b:
-            return False
-        a_shape = a.shape
-        b_shape = b.shape
-        if not a.movable and not a.rotatable and not b.movable and not b.rotatable:
-            return False
-        if {a_shape.__class__, b_shape.__class__} not in self._collidable_pairs:
-            return False
-        if not (
-            jnp.linalg.vector_norm(a.state.pos - b.state.pos, axis=-1)
-            <= a.shape.circumscribed_radius() + b.shape.circumscribed_radius()
-        ).any():
-            return False
+        # Early exit conditions
+        collides_check = jnp.logical_and(a.collides(b), b.collides(a))
+        same_entity = jnp.asarray(a.name == b.name)
+        movable_check = jnp.logical_or(
+            jnp.logical_or(a.movable, a.rotatable),
+            jnp.logical_or(b.movable, b.rotatable),
+        )
 
-        return True
+        # Shape collision check
+        shape_pair = (a.shape.__class__, b.shape.__class__)
+        shape_check = jnp.any(
+            jnp.asarray([p == shape_pair for p in self._collidable_pairs])
+        )
+
+        # Distance check
+        dist = jnp.linalg.norm(a.state.pos - b.state.pos, axis=-1)
+        radius_sum = a.shape.circumscribed_radius() + b.shape.circumscribed_radius()
+        dist_check = jnp.any(dist <= radius_sum)
+
+        # Convert list of conditions to JAX array before reducing
+        conditions = jnp.asarray(
+            [
+                collides_check,
+                ~same_entity,
+                movable_check,
+                shape_check,
+                dist_check,
+            ]
+        )
+
+        # Combine all checks
+        return jnp.all(conditions)  # Using all instead of logical_and.reduce
 
     def _get_constraint_forces(
         self,

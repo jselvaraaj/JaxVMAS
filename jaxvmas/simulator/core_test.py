@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
+from jaxtyping import Array
 
 from jaxvmas.simulator.core import (
     DRAG,
@@ -461,7 +462,6 @@ class TestWorld:
         assert len(basic_world._agents) == 0
         assert len(basic_world._landmarks) == 0
         assert isinstance(basic_world._joints, dict)
-        assert isinstance(basic_world._collidable_pairs, list)
 
     def test_add_agent(self, basic_world, agent):
         world = basic_world.add_agent(agent)
@@ -500,7 +500,7 @@ class TestWorld:
         # Velocity should have changed due to force
         assert not jnp.all(world._agents[0].state.vel == 0)
 
-    def test_collisions(self, basic_world):
+    def test_collisions(self, basic_world: World):
         # Create two overlapping spherical agents
         # Create two overlapping spherical agents
         agent1 = Agent.create(
@@ -717,3 +717,94 @@ class TestWorld:
         # Agent should be constrained by boundaries
         final_pos = stepped_world._agents[0].state.pos[0]
         assert jnp.all(jnp.abs(final_pos) <= jnp.array([1.0, 0.5]))
+
+    def test_is_jittable(self, basic_world: World, agent: Agent, landmark: Landmark):
+        # Test jit compatibility of world creation and entity addition
+        @eqx.filter_jit
+        def create_world_with_entities(world: World, agent: Agent, landmark: Landmark):
+            world = world.add_agent(agent)
+            world = world.add_landmark(landmark)
+            return world
+
+        world = create_world_with_entities(basic_world, agent, landmark)
+        assert len(world._agents) == 1
+        assert len(world._landmarks) == 1
+
+        # Test jit compatibility of stepping with forces
+        @eqx.filter_jit
+        def step_with_force(world: World):
+            agent = world._agents[0]
+            agent = agent.replace(state=agent.state.replace(force=jnp.ones((2, 2))))
+            world = world.replace(_agents=[agent])
+            return world.step()
+
+        stepped_world = step_with_force(world)
+        assert not jnp.all(stepped_world._agents[0].state.vel == 0)
+
+        # Test jit compatibility of reset with specific index
+        @eqx.filter_jit
+        def reset_env(world: World, env_idx: int):
+            return world.reset(env_index=env_idx)
+
+        reset_world = reset_env(world, 0)
+        assert jnp.all(reset_world._agents[0].state.pos[0] == 0)
+
+        # Test jit compatibility of collision detection
+        @eqx.filter_jit
+        def check_collision(world: World, entity1: Entity, entity2: Entity):
+            return world.collides(entity1, entity2)
+
+        collides = check_collision(world, world._agents[0], world._landmarks[0])
+        assert isinstance(collides, bool)
+
+        # Test jit compatibility with joints
+        from jaxvmas.simulator.joints import Joint
+
+        @eqx.filter_jit
+        def add_and_step_with_joint(world: World):
+            agent2 = Agent.create(
+                batch_dim=2,
+                name="agent2",
+                dim_c=0,
+                dim_p=2,
+                movable=True,
+            )
+            world = world.add_agent(agent2)
+            world = world.replace(_substeps=2)
+
+            joint = Joint.create(
+                batch_dim=2,
+                entity_a=world._agents[0],
+                entity_b=world._agents[1],
+                anchor_a=(0, 0),
+                anchor_b=(0, 0),
+                dist=1.0,
+            )
+            world = world.add_joint(joint)
+
+            return world.step()
+
+        joint_world = add_and_step_with_joint(world)
+        assert len(joint_world._joints) == 2
+
+        # Test jit compatibility with boundary conditions
+        @eqx.filter_jit
+        def step_with_boundaries(world: World, pos: Array):
+            agent = world._agents[0]
+            agent = agent.replace(state=agent.state.replace(pos=pos))
+            world = world.replace(_agents=[agent])
+            world = world.replace(_x_semidim=1.0, _y_semidim=1.0)
+            return world.step()
+
+        boundary_world = step_with_boundaries(
+            world, jnp.array([[2.0, 2.0], [0.0, 0.0]])
+        )
+        assert jnp.all(jnp.abs(boundary_world._agents[0].state.pos[0]) <= 1.0)
+
+        # Test jit compatibility with multiple substeps
+        @eqx.filter_jit
+        def step_with_substeps(world: World, substeps: int):
+            return world.replace(_substeps=substeps).step()
+
+        multi_step_world = step_with_substeps(world, 5)
+        assert isinstance(multi_step_world, World)

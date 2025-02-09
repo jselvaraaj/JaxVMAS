@@ -256,7 +256,7 @@ class JointConstraint(PyTreeNode):
             )
 
         delta = jnp.broadcast_to(
-            jnp.asarray(entity.shape.get_delta_from_anchor(anchor))[None],
+            entity.shape.get_delta_from_anchor(anchor)[None],
             entity.state.pos.shape,
         )
         _delta_anchor_tensor_map[entity.name] = delta
