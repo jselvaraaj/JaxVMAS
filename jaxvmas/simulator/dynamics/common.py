@@ -23,9 +23,6 @@ class Dynamics(PyTreeNode, ABC):
     def reset(self, index: Array | int = None):
         return
 
-    def zero_grad(self):
-        return
-
     def check_and_process_action(self):
         action = self.agent.action.u
         if action.shape[1] < self.needed_action_size:

@@ -1,0 +1,3 @@
+every object that is used to create the world will not be updated.(Like Joints, Agents, Dynamics, etc)
+
+only the properties within the world will be updated. To access Agents and Dynamics, you can use the world.agents and world.dynamics attributes.
