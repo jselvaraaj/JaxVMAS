@@ -12,6 +12,7 @@ from jaxvmas.simulator.core import (
     Entity,
     EntityState,
     Landmark,
+    Sphere,
     World,
 )
 
@@ -612,7 +613,7 @@ class TestWorld:
         assert jnp.all(jnp.abs(world._agents[0].state.pos) <= 1.0)
 
     def test_collision_response(self):
-        # Create two colliding agents
+        # Create two colliding agents with no initial forces
         agent1 = Agent.create(
             batch_dim=1,
             name="collider1",
@@ -620,7 +621,12 @@ class TestWorld:
             dim_c=0,
             mass=1.0,
         )
-        agent1 = agent1.replace(state=agent1.state.replace(pos=jnp.array([[0.0, 0.0]])))
+        agent1 = agent1.replace(
+            state=agent1.state.replace(
+                pos=jnp.array([[0.0, 0.0]]),
+            ),
+            shape=Sphere(radius=0.1),
+        )
 
         agent2 = Agent.create(
             batch_dim=1,
@@ -629,19 +635,28 @@ class TestWorld:
             dim_c=0,
             mass=1.0,
         )
-        agent2 = agent2.replace(state=agent2.state.replace(pos=jnp.array([[0.1, 0.0]])))
+        agent2 = agent2.replace(
+            state=agent2.state.replace(
+                pos=jnp.array([[0.15, 0.0]]),
+            ),
+            shape=Sphere(radius=0.1),
+        )
 
-        world = World.create(batch_dim=1)
-        world = world.add_agent(agent1)
-        world = world.add_agent(agent2)
+        world = World.create(batch_dim=1, substeps=10)
+        world = world.replace(_agents=[agent1, agent2])
+        initial_dist = jnp.linalg.norm(
+            world._agents[0].state.pos - world._agents[1].state.pos
+        )
 
         # Step and verify collision response
-        stepped_world = world.step()
-        dist = jnp.linalg.norm(
-            stepped_world._agents[0].state.pos - stepped_world._agents[1].state.pos
+        world = world.step()
+        # Calculate final distance
+        final_dist = jnp.linalg.norm(
+            world._agents[0].state.pos - world._agents[1].state.pos
         )
-        # Agents should move apart due to collision
-        assert dist > 0.1
+        assert (
+            final_dist > initial_dist
+        ), f"Agents moved closer together (from {initial_dist} to {final_dist})"
 
     def test_joint_constraint_satisfaction(self):
         # Create joined agents

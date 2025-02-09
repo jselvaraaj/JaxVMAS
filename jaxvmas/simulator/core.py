@@ -202,7 +202,6 @@ class EntityState(JaxVectorizedObject):
         return cls(batch_dim, pos, vel, rot, ang_vel)
 
     def _reset(self, env_index: int | None = None) -> "EntityState":
-        print()
         if env_index is None:
             return self.replace(
                 pos=jnp.zeros_like(self.pos),
@@ -1922,7 +1921,9 @@ class World(JaxVectorizedObject):
     def step(self):
         _entity_index_map = {e.name: i for i, e in enumerate(self.entities)}
         self = self.replace(_entity_index_map=_entity_index_map)
+
         for substep in range(self._substeps):
+            # Initialize force and torque dictionaries
             forces_dict = {
                 e.name: jnp.zeros((self.batch_dim, self._dim_p)) for e in self.entities
             }
@@ -1930,6 +1931,8 @@ class World(JaxVectorizedObject):
                 e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities
             }
             self = self.replace(_force_dict=forces_dict, _torque_dict=torques_dict)
+
+            # Apply forces from actions and environment
             entities = []
             for entity in self.entities:
                 if isinstance(entity, Agent):
@@ -2299,24 +2302,15 @@ class World(JaxVectorizedObject):
                 radius_s_a.append(s_a.shape.radius)
                 radius_s_b.append(s_b.shape.radius)
 
-            pos_s_a = jnp.stack(pos_s_a, axis=-2)
-            pos_s_b = jnp.stack(pos_s_b, axis=-2)
-            x = jnp.stack(
-                radius_s_a,
-                axis=-1,
-            )[None]
+            pos_s_a = jnp.stack(pos_s_a, axis=-2)  # [batch_dim, n_pairs, 2]
+            pos_s_b = jnp.stack(pos_s_b, axis=-2)  # [batch_dim, n_pairs, 2]
             radius_s_a = jnp.broadcast_to(
-                x,
-                (self.batch_dim, x.shape[1]),
-            )
-            x = jnp.stack(
-                radius_s_b,
-                axis=-1,
-            )[None]
+                jnp.expand_dims(jnp.asarray(radius_s_a), 0), (self.batch_dim, len(s_s))
+            )  # [batch_dim, n_pairs]
             radius_s_b = jnp.broadcast_to(
-                x,
-                (self.batch_dim, x.shape[1]),
-            )
+                jnp.expand_dims(jnp.asarray(radius_s_b), 0), (self.batch_dim, len(s_s))
+            )  # [batch_dim, n_pairs]
+
             force_a, force_b = self._get_constraint_forces(
                 pos_s_a,
                 pos_s_b,
@@ -2813,27 +2807,36 @@ class World(JaxVectorizedObject):
         dist = jnp.linalg.vector_norm(delta_pos, axis=-1)
         sign = -1 if attractive else 1
 
-        # softmax penetration
-        k = self._contact_margin
+        # Handle zero-distance cases
+        safe_delta = jnp.where(
+            dist < min_dist,
+            jnp.asarray([[1.0, 0.0]]),  # Maintain 2D shape [batch, 2]
+            delta_pos / jnp.maximum(dist, min_dist),
+        )
+
+        # Calculate penetration using safe distance
         penetration = (
             jnp.logaddexp(
-                jnp.array(0.0, dtype=jnp.float32),
-                (dist_min - dist) * sign / k,
+                jnp.array(0.0),
+                (dist_min - dist) * sign / self._contact_margin,
             )
-            * k
+            * self._contact_margin
         )
-        force = (
-            sign
-            * force_multiplier
-            * delta_pos
-            / jnp.where(dist > 0, dist, 1e-8)[..., None]
-            * penetration[..., None]
+
+        # Calculate force using safe direction vector
+        force = sign * force_multiplier * safe_delta * penetration
+
+        # Apply force only when needed
+        force = jnp.where(
+            (
+                (dist > dist_min)[..., None]
+                if attractive
+                else (dist < dist_min)[..., None]
+            ),
+            force,
+            0.0,
         )
-        force = jnp.where((dist < min_dist)[..., None], 0.0, force)
-        if not attractive:
-            force = jnp.where((dist > dist_min)[..., None], 0.0, force)
-        else:
-            force = jnp.where((dist < dist_min)[..., None], 0.0, force)
+
         return force, -force
 
     def _get_constraint_torques(
@@ -2894,25 +2897,24 @@ class World(JaxVectorizedObject):
                     )
                 )
             new_pos = entity.state.pos + entity.state.vel * self._sub_dt
-            entity = entity.replace(
-                state=entity.state.replace(
-                    pos=jnp.stack(
-                        [
-                            (
-                                new_pos[..., X].clip(-self._x_semidim, self._x_semidim)
-                                if self._x_semidim is not None
-                                else new_pos[..., X]
-                            ),
-                            (
-                                new_pos[..., Y].clip(-self._y_semidim, self._y_semidim)
-                                if self._y_semidim is not None
-                                else new_pos[..., Y]
-                            ),
-                        ],
-                        axis=-1,
-                    )
+            # Apply boundary conditions
+            if self._x_semidim is not None or self._y_semidim is not None:
+                new_pos = jnp.stack(
+                    [
+                        (
+                            jnp.clip(new_pos[..., X], -self._x_semidim, self._x_semidim)
+                            if self._x_semidim is not None
+                            else new_pos[..., X]
+                        ),
+                        (
+                            jnp.clip(new_pos[..., Y], -self._y_semidim, self._y_semidim)
+                            if self._y_semidim is not None
+                            else new_pos[..., Y]
+                        ),
+                    ],
+                    axis=-1,
                 )
-            )
+            entity = entity.replace(state=entity.state.replace(pos=new_pos))
 
         if entity.rotatable:
             # Compute rotation
@@ -2929,18 +2931,14 @@ class World(JaxVectorizedObject):
                             ang_vel=entity.state.ang_vel * (1 - self._drag)
                         )
                     )
+            ang_accel = self._torque_dict[entity.name] / entity.moment_of_inertia
             entity = entity.replace(
                 state=entity.state.replace(
-                    ang_vel=entity.state.ang_vel
-                    + (self._torque_dict[entity.name] / entity.moment_of_inertia)
-                    * self._sub_dt
+                    ang_vel=entity.state.ang_vel + ang_accel * self._sub_dt
                 )
             )
-            entity = entity.replace(
-                state=entity.state.replace(
-                    rot=entity.state.rot + entity.state.ang_vel * self._sub_dt
-                )
-            )
+            new_rot = entity.state.rot + entity.state.ang_vel * self._sub_dt
+            entity = entity.replace(state=entity.state.replace(rot=new_rot))
 
         return entity
 
