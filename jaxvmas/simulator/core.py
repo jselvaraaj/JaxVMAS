@@ -2090,6 +2090,12 @@ class World(JaxVectorizedObject):
         b_l = []
         b_b = []
         joints = []
+        collision_mask_s_s = []
+        collision_mask_l_s = []
+        collision_mask_l_l = []
+        collision_mask_b_s = []
+        collision_mask_b_l = []
+        collision_mask_b_b = []
         for a, entity_a in enumerate(self.entities):
             for b, entity_b in enumerate(self.entities):
                 if b <= a:
@@ -2101,12 +2107,12 @@ class World(JaxVectorizedObject):
                     joints.append(joint)
                     if joint.dist == 0:
                         continue
-                if not self.collides(entity_a, entity_b):
-                    continue
+                _collision = self.collides(entity_a, entity_b)
                 if isinstance(entity_a.shape, Sphere) and isinstance(
                     entity_b.shape, Sphere
                 ):
                     s_s.append((entity_a, entity_b))
+                    collision_mask_s_s.append(_collision)
                 elif (
                     isinstance(entity_a.shape, Line)
                     and isinstance(entity_b.shape, Sphere)
@@ -2119,10 +2125,12 @@ class World(JaxVectorizedObject):
                         else (entity_b, entity_a)
                     )
                     l_s.append((line, sphere))
+                    collision_mask_l_s.append(_collision)
                 elif isinstance(entity_a.shape, Line) and isinstance(
                     entity_b.shape, Line
                 ):
                     l_l.append((entity_a, entity_b))
+                    collision_mask_l_l.append(_collision)
                 elif (
                     isinstance(entity_a.shape, Box)
                     and isinstance(entity_b.shape, Sphere)
@@ -2135,6 +2143,7 @@ class World(JaxVectorizedObject):
                         else (entity_b, entity_a)
                     )
                     b_s.append((box, sphere))
+                    collision_mask_b_s.append(_collision)
                 elif (
                     isinstance(entity_a.shape, Box)
                     and isinstance(entity_b.shape, Line)
@@ -2147,28 +2156,36 @@ class World(JaxVectorizedObject):
                         else (entity_b, entity_a)
                     )
                     b_l.append((box, line))
+                    collision_mask_b_l.append(_collision)
                 elif isinstance(entity_a.shape, Box) and isinstance(
                     entity_b.shape, Box
                 ):
                     b_b.append((entity_a, entity_b))
+                    collision_mask_b_b.append(_collision)
                 else:
                     raise AssertionError()
 
+        collision_mask_s_s = jnp.asarray(collision_mask_s_s)
+        collision_mask_l_s = jnp.asarray(collision_mask_l_s)
+        collision_mask_l_l = jnp.asarray(collision_mask_l_l)
+        collision_mask_b_s = jnp.asarray(collision_mask_b_s)
+        collision_mask_b_l = jnp.asarray(collision_mask_b_l)
+        collision_mask_b_b = jnp.asarray(collision_mask_b_b)
         # Joints
         self = self._vectorized_joint_constraints(joints)
 
         # Sphere and sphere
-        self = self._sphere_sphere_vectorized_collision(s_s)
+        self = self._sphere_sphere_vectorized_collision(s_s, collision_mask_s_s)
         # Line and sphere
-        self = self._sphere_line_vectorized_collision(l_s)
+        self = self._sphere_line_vectorized_collision(l_s, collision_mask_l_s)
         # Line and line
-        self = self._line_line_vectorized_collision(l_l)
+        self = self._line_line_vectorized_collision(l_l, collision_mask_l_l)
         # Box and sphere
-        self = self._box_sphere_vectorized_collision(b_s)
+        self = self._box_sphere_vectorized_collision(b_s, collision_mask_b_s)
         # Box and line
-        self = self._box_line_vectorized_collision(b_l)
+        self = self._box_line_vectorized_collision(b_l, collision_mask_b_l)
         # Box and box
-        self = self._box_box_vectorized_collision(b_b)
+        self = self._box_box_vectorized_collision(b_b, collision_mask_b_b)
 
         return self
 
@@ -2302,7 +2319,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _sphere_sphere_vectorized_collision(self, s_s):
+    def _sphere_sphere_vectorized_collision(self, s_s, collision_mask):
         if len(s_s):
             pos_s_a = []
             pos_s_b = []
@@ -2316,6 +2333,7 @@ class World(JaxVectorizedObject):
 
             pos_s_a = jnp.stack(pos_s_a, axis=-2)  # [batch_dim, n_pairs, 2]
             pos_s_b = jnp.stack(pos_s_b, axis=-2)  # [batch_dim, n_pairs, 2]
+            collision_mask = collision_mask[None, :, None]
             radius_s_a = jnp.broadcast_to(
                 jnp.expand_dims(jnp.asarray(radius_s_a), 0), (self.batch_dim, len(s_s))
             )  # [batch_dim, n_pairs]
@@ -2323,11 +2341,12 @@ class World(JaxVectorizedObject):
                 jnp.expand_dims(jnp.asarray(radius_s_b), 0), (self.batch_dim, len(s_s))
             )  # [batch_dim, n_pairs]
 
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 pos_s_a,
                 pos_s_b,
                 dist_min=radius_s_a + radius_s_b,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
 
             for i, (entity_a, entity_b) in enumerate(s_s):
@@ -2342,7 +2361,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _sphere_line_vectorized_collision(self, l_s):
+    def _sphere_line_vectorized_collision(self, l_s, collision_mask):
         if len(l_s):
             pos_l = []
             pos_s = []
@@ -2358,27 +2377,30 @@ class World(JaxVectorizedObject):
             pos_l = jnp.stack(pos_l, axis=-2)
             pos_s = jnp.stack(pos_s, axis=-2)
             rot_l = jnp.stack(rot_l, axis=-2)
+            collision_mask = collision_mask[None, :, None]
+
             radius_s = jnp.broadcast_to(
                 jnp.stack(
                     radius_s,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(l_s)),
             )
             length_l = jnp.broadcast_to(
                 jnp.stack(
                     length_l,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(l_s)),
             )
 
             closest_point = _get_closest_point_line(pos_l, rot_l, length_l, pos_s)
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_sphere, force_line = self._get_constraint_forces(
                 pos_s,
                 closest_point,
                 dist_min=radius_s + LINE_MIN_DIST,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
             r = closest_point - pos_l
             torque_line = JaxUtils.compute_torque(force_line, r)
@@ -2395,7 +2417,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _line_line_vectorized_collision(self, l_l):
+    def _line_line_vectorized_collision(self, l_l, collision_mask):
         if len(l_l):
             pos_l_a = []
             pos_l_b = []
@@ -2414,19 +2436,21 @@ class World(JaxVectorizedObject):
             pos_l_b = jnp.stack(pos_l_b, axis=-2)
             rot_l_a = jnp.stack(rot_l_a, axis=-2)
             rot_l_b = jnp.stack(rot_l_b, axis=-2)
+            collision_mask = collision_mask[None, :, None]
+
             length_l_a = jnp.broadcast_to(
                 jnp.stack(
                     length_l_a,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(l_l)),
             )
             length_l_b = jnp.broadcast_to(
                 jnp.stack(
                     length_l_b,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(l_l)),
             )
 
             point_a, point_b = _get_closest_points_line_line(
@@ -2437,11 +2461,12 @@ class World(JaxVectorizedObject):
                 rot_l_b,
                 length_l_b,
             )
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 point_a,
                 point_b,
                 dist_min=LINE_MIN_DIST,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
             r_a = point_a - pos_l_a
             r_b = point_b - pos_l_b
@@ -2460,7 +2485,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_sphere_vectorized_collision(self, b_s):
+    def _box_sphere_vectorized_collision(self, b_s, collision_mask):
         if len(b_s):
             pos_box = []
             pos_sphere = []
@@ -2480,19 +2505,21 @@ class World(JaxVectorizedObject):
             pos_box = jnp.stack(pos_box, axis=-2)
             pos_sphere = jnp.stack(pos_sphere, axis=-2)
             rot_box = jnp.stack(rot_box, axis=-2)
+            collision_mask = collision_mask[None, :, None]
+
             length_box = jnp.broadcast_to(
                 jnp.stack(
                     length_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_s)),
             )
             width_box = jnp.broadcast_to(
                 jnp.stack(
                     width_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_s)),
             )
             not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
@@ -2500,14 +2527,14 @@ class World(JaxVectorizedObject):
             )
             not_hollow_box = jnp.broadcast_to(
                 not_hollow_box_prior[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_s)),
             )
             radius_sphere = jnp.broadcast_to(
                 jnp.stack(
                     radius_sphere,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_s)),
             )
 
             closest_point_box = _get_closest_point_box(
@@ -2533,11 +2560,12 @@ class World(JaxVectorizedObject):
                 )
                 d = jnp.where(not_hollow_box, d_hollow, d)
 
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_sphere, force_box = self._get_constraint_forces(
                 pos_sphere,
                 inner_point_box,
                 dist_min=radius_sphere + LINE_MIN_DIST + d,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
             r = closest_point_box - pos_box
             torque_box = JaxUtils.compute_torque(force_box, r)
@@ -2554,7 +2582,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_line_vectorized_collision(self, b_l):
+    def _box_line_vectorized_collision(self, b_l, collision_mask):
         if len(b_l):
             pos_box = []
             pos_line = []
@@ -2577,19 +2605,21 @@ class World(JaxVectorizedObject):
             pos_line = jnp.stack(pos_line, axis=-2)
             rot_box = jnp.stack(rot_box, axis=-2)
             rot_line = jnp.stack(rot_line, axis=-2)
+            collision_mask = collision_mask[None, :, None]
+
             length_box = jnp.broadcast_to(
                 jnp.stack(
                     length_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_l)),
             )
             width_box = jnp.broadcast_to(
                 jnp.stack(
                     width_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_l)),
             )
             not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
@@ -2597,14 +2627,14 @@ class World(JaxVectorizedObject):
             )
             not_hollow_box = jnp.broadcast_to(
                 not_hollow_box_prior[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_l)),
             )
             length_line = jnp.broadcast_to(
                 jnp.stack(
                     length_line,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_l)),
             )
 
             point_box, point_line = _get_closest_line_box(
@@ -2631,12 +2661,12 @@ class World(JaxVectorizedObject):
                     cond, inner_point_box_hollow, inner_point_box
                 )
                 d = jnp.where(not_hollow_box, d_hollow, d)
-
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_box, force_line = self._get_constraint_forces(
                 inner_point_box,
                 point_line,
                 dist_min=LINE_MIN_DIST + d,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
             r_box = point_box - pos_box
             r_line = point_line - pos_line
@@ -2656,7 +2686,7 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_box_vectorized_collision(self, b_b):
+    def _box_box_vectorized_collision(self, b_b, collision_mask):
         if len(b_b):
             pos_box = []
             pos_box2 = []
@@ -2682,19 +2712,20 @@ class World(JaxVectorizedObject):
 
             pos_box = jnp.stack(pos_box, axis=-2)
             rot_box = jnp.stack(rot_box, axis=-2)
+            collision_mask = collision_mask[None, :, None]
             length_box = jnp.broadcast_to(
                 jnp.stack(
                     length_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
             width_box = jnp.broadcast_to(
                 jnp.stack(
                     width_box,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
             not_hollow_box_prior = jnp.stack(
                 not_hollow_box,
@@ -2702,7 +2733,7 @@ class World(JaxVectorizedObject):
             )
             not_hollow_box = jnp.broadcast_to(
                 jnp.expand_dims(not_hollow_box_prior, 0),
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
             pos_box2 = jnp.stack(pos_box2, axis=-2)
             rot_box2 = jnp.stack(rot_box2, axis=-2)
@@ -2711,14 +2742,14 @@ class World(JaxVectorizedObject):
                     length_box2,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
             width_box2 = jnp.broadcast_to(
                 jnp.stack(
                     width_box2,
                     axis=-1,
                 )[None],
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
             not_hollow_box2_prior = jnp.stack(
                 not_hollow_box2,
@@ -2726,7 +2757,7 @@ class World(JaxVectorizedObject):
             )
             not_hollow_box2 = jnp.broadcast_to(
                 jnp.expand_dims(not_hollow_box2_prior, 0),
-                (self.batch_dim, -1),
+                (self.batch_dim, len(b_b)),
             )
 
             point_a, point_b = _get_closest_box_box(
@@ -2766,11 +2797,12 @@ class World(JaxVectorizedObject):
                 inner_point_b = jnp.where(cond, inner_point_box2_hollow, inner_point_b)
                 d_b = jnp.where(not_hollow_box2, d_hollow2, d_b)
 
+            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 inner_point_a,
                 inner_point_b,
                 dist_min=d_a + d_b + LINE_MIN_DIST,
-                force_multiplier=self._collision_force,
+                force_multiplier=force_multiplier,
             )
             r_a = point_a - pos_box
             r_b = point_b - pos_box2
@@ -2828,7 +2860,7 @@ class World(JaxVectorizedObject):
         pos_a: Array,
         pos_b: Array,
         dist_min: float,
-        force_multiplier: float,
+        force_multiplier: Array | float,
         attractive: bool = False,
     ) -> tuple[Array, Array]:
         min_dist = 1e-6
@@ -2849,7 +2881,7 @@ class World(JaxVectorizedObject):
         )
 
         # Calculate force using safe direction vector
-        force = sign * force_multiplier * safe_delta * penetration
+        force = sign * force_multiplier * safe_delta * penetration[..., None]
 
         force = jnp.where(
             (dist < min_dist)[..., None],

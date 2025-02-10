@@ -246,9 +246,9 @@ class JointConstraint(PyTreeNode):
     def _delta_anchor_jax_array(self, entity: "Entity"):
         _delta_anchor_tensor_map = {**self._delta_anchor_tensor_map}
 
-        if entity is self.entity_a:
+        if entity.name == self.entity_a.name:
             anchor = self.anchor_a
-        elif entity is self.entity_b:
+        elif entity.name == self.entity_b.name:
             anchor = self.anchor_b
         else:
             raise ValueError(
