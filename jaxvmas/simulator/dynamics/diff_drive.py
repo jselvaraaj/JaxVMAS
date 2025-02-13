@@ -3,37 +3,47 @@
 #  All rights reserved.
 
 
-import jax.numpy as jnp
+from typing import TYPE_CHECKING
 
-from jaxvmas.simulator.core import World
+import jax.numpy as jnp
+from jaxtyping import Array
+
+if TYPE_CHECKING:
+    from jaxvmas.simulator.core import Agent, World
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import X, Y
 
 
 class DiffDrive(Dynamics):
-    def __init__(
-        self,
-        world: World,
+    dt: float
+    integration: str
+
+    @classmethod
+    def create(
+        cls,
+        world: "World",
         integration: str = "rk4",  # one of "euler", "rk4"
     ):
         super().__init__()
         assert integration == "rk4" or integration == "euler"
 
-        self.dt = world.dt
-        self.integration = integration
-        self.world = world
+        dt = world.dt
+        integration = integration
+        return cls(dt, integration)
 
-    def f(self, state, u_command, ang_vel_command):
+    def f(self, state: Array, u_command: Array, ang_vel_command: Array) -> Array:
         theta = state[:, 2]
         dx = u_command * jnp.cos(theta)
         dy = u_command * jnp.sin(theta)
         dtheta = ang_vel_command
-        return jnp.stack((dx, dy, dtheta), dim=-1)  # [batch_size,3]
+        return jnp.stack((dx, dy, dtheta), axis=-1)  # [batch_size,3]
 
-    def euler(self, state, u_command, ang_vel_command):
+    def euler(self, state: Array, u_command: Array, ang_vel_command: Array) -> Array:
         return self.dt * self.f(state, u_command, ang_vel_command)
 
-    def runge_kutta(self, state, u_command, ang_vel_command):
+    def runge_kutta(
+        self, state: Array, u_command: Array, ang_vel_command: Array
+    ) -> Array:
         k1 = self.f(state, u_command, ang_vel_command)
         k2 = self.f(state + self.dt * k1 / 2, u_command, ang_vel_command)
         k3 = self.f(state + self.dt * k2 / 2, u_command, ang_vel_command)
@@ -44,16 +54,16 @@ class DiffDrive(Dynamics):
     def needed_action_size(self) -> int:
         return 2
 
-    def process_action(self):
-        u_command = self.agent.action.u[:, 0]  # Forward velocity
-        ang_vel_command = self.agent.action.u[:, 1]  # Angular velocity
+    def process_action(self, agent: "Agent") -> tuple["DiffDrive", "Agent"]:
+        u_command = agent.action.u[:, 0]  # Forward velocity
+        ang_vel_command = agent.action.u[:, 1]  # Angular velocity
 
         # Current state of the agent
-        state = jnp.cat((self.agent.state.pos, self.agent.state.rot), dim=1)
+        state = jnp.concatenate((agent.state.pos, agent.state.rot), axis=1)
 
-        v_cur_x = self.agent.state.vel[:, 0]  # Current velocity in x-direction
-        v_cur_y = self.agent.state.vel[:, 1]  # Current velocity in y-direction
-        v_cur_angular = self.agent.state.ang_vel[:, 0]  # Current angular velocity
+        v_cur_x = agent.state.vel[:, 0]  # Current velocity in x-direction
+        v_cur_y = agent.state.vel[:, 1]  # Current velocity in y-direction
+        v_cur_angular = agent.state.ang_vel[:, 0]  # Current angular velocity
 
         # Select the integration method to calculate the change in state
         if self.integration == "euler":
@@ -69,13 +79,22 @@ class DiffDrive(Dynamics):
         ) / self.dt**2
 
         # Calculate the forces required for the linear accelerations
-        force_x = self.agent.mass * acceleration_x
-        force_y = self.agent.mass * acceleration_y
+        force_x = agent.mass * acceleration_x
+        force_y = agent.mass * acceleration_y
 
         # Calculate the torque required for the angular acceleration
-        torque = self.agent.moment_of_inertia * acceleration_angular
+        torque = agent.moment_of_inertia * acceleration_angular
 
         # Update the physical force and torque required for the user inputs
-        self.agent.state.force[:, X] = force_x
-        self.agent.state.force[:, Y] = force_y
-        self.agent.state.torque = torque.unsqueeze(-1)
+        force = agent.state.force.at[:, X].set(force_x)
+        force = force.at[:, Y].set(force_y)
+        torque = torque[..., None]
+
+        agent = agent.replace(
+            state=agent.state.replace(
+                force=force,
+                torque=torque,
+            )
+        )
+
+        return self, agent

@@ -2,19 +2,31 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 from jaxtyping import Array
 
-import jaxvmas.simulator.core
-import jaxvmas.simulator.utils
+if TYPE_CHECKING:
+    from jaxvmas.simulator.core import Agent, World
 from jaxvmas.simulator.dynamics.common import Dynamics
-from jaxvmas.simulator.utils import JaxUtils
+from jaxvmas.simulator.utils import JaxUtils, X, Y
 
 
 class Drone(Dynamics):
-    def __init__(
-        self,
-        world: jaxvmas.simulator.core.World,
+    integration: str
+    I_xx: float
+    I_yy: float
+    I_zz: float
+    g: float
+    dt: float
+    batch_dim: int
+    drone_state: Array
+
+    @classmethod
+    def create(
+        cls,
+        world: "World",
         I_xx: float = 8.1e-3,
         I_yy: float = 8.1e-3,
         I_zz: float = 14.2e-3,
@@ -27,32 +39,39 @@ class Drone(Dynamics):
             "euler",
         )
 
-        self.integration = integration
-        self.I_xx = I_xx
-        self.I_yy = I_yy
-        self.I_zz = I_zz
-        self.world = world
-        self.g = 9.81
-        self.dt = world.dt
-        self.reset()
+        integration = integration
+        I_xx = I_xx
+        I_yy = I_yy
+        I_zz = I_zz
+        g = 9.81
+        dt = world.dt
+        batch_dim = world.batch_dim
+        drone_state = jnp.zeros((batch_dim, 12))
+        return cls(integration, I_xx, I_yy, I_zz, g, dt, batch_dim, drone_state)
 
-    def reset(self, index: Array | int = None):
+    def reset(self, index: Array | int | None = None) -> "Drone":
         if index is None:
             # Drone state: phi(roll), theta (pitch), psi (yaw),
             #              p (roll_rate), q (pitch_rate), r (yaw_rate),
             #              x_dot (vel_x), y_dot (vel_y), z_dot (vel_z),
             #              x (pos_x), y (pos_y), z (pos_z)
-            self.drone_state = jnp.zeros(
-                self.world.batch_dim,
+            drone_state = jnp.zeros(
+                self.batch_dim,
                 12,
             )
+            self.drone_state = drone_state
         else:
-            self.drone_state = JaxUtils.where_from_index(index, 0.0, self.drone_state)
+            drone_state = JaxUtils.where_from_index(index, 0.0, self.drone_state)
+            self.drone_state = drone_state
+        return self
 
-    def zero_grad(self):
-        self.drone_state = self.drone_state.detach()
-
-    def f(self, state, thrust_command, torque_command):
+    def f(
+        self,
+        agent: "Agent",
+        state: Array,
+        thrust_command: Array,
+        torque_command: Array,
+    ) -> Array:
         phi = state[:, 0]
         theta = state[:, 1]
         psi = state[:, 2]
@@ -71,13 +90,9 @@ class Drone(Dynamics):
         s_psi = jnp.sin(psi)
 
         # Postion Dynamics
-        x_ddot = (
-            (c_phi * s_theta * c_psi + s_phi * s_psi) * thrust_command / self.agent.mass
-        )
-        y_ddot = (
-            (c_phi * s_theta * s_psi - s_phi * c_psi) * thrust_command / self.agent.mass
-        )
-        z_ddot = (c_phi * c_theta) * thrust_command / self.agent.mass - self.g
+        x_ddot = (c_phi * s_theta * c_psi + s_phi * s_psi) * thrust_command / agent.mass
+        y_ddot = (c_phi * s_theta * s_psi - s_phi * c_psi) * thrust_command / agent.mass
+        z_ddot = (c_phi * c_theta) * thrust_command / agent.mass - self.g
         # Angular velocity dynamics
         p_dot = (torque_command[:, 0] - (self.I_yy - self.I_zz) * q * r) / self.I_xx
         q_dot = (torque_command[:, 1] - (self.I_zz - self.I_xx) * p * r) / self.I_yy
@@ -105,42 +120,56 @@ class Drone(Dynamics):
         # Constraint roll and pitch within +-30 degrees
         return jnp.any(jnp.abs(self.drone_state[:, :2]) > 30 * (jnp.pi / 180), axis=-1)
 
-    def euler(self, state, thrust, torque):
-        return self.dt * self.f(state, thrust, torque)
+    def euler(
+        self,
+        agent: Agent,
+        state: Array,
+        thrust: Array,
+        torque: Array,
+    ) -> Array:
+        return self.dt * self.f(agent, state, thrust, torque)
 
-    def runge_kutta(self, state, thrust, torque):
-        k1 = self.f(state, thrust, torque)
-        k2 = self.f(state + self.dt * k1 / 2, thrust, torque)
-        k3 = self.f(state + self.dt * k2 / 2, thrust, torque)
-        k4 = self.f(state + self.dt * k3, thrust, torque)
+    def runge_kutta(
+        self,
+        agent: Agent,
+        state: Array,
+        thrust: Array,
+        torque: Array,
+    ) -> Array:
+        k1 = self.f(agent, state, thrust, torque)
+        k2 = self.f(agent, state + self.dt * k1 / 2, thrust, torque)
+        k3 = self.f(agent, state + self.dt * k2 / 2, thrust, torque)
+        k4 = self.f(agent, state + self.dt * k3, thrust, torque)
         return (self.dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
 
     @property
     def needed_action_size(self) -> int:
         return 4
 
-    def process_action(self):
-        u = self.agent.action.u
+    def process_action(self, agent: "Agent") -> tuple["Drone", "Agent"]:
+        u = agent.action.u
         thrust = u[:, 0]  # Thrust, sum of all propeller thrusts
         torque = u[:, 1:4]  # Torque in x, y, z direction
 
-        thrust += self.agent.mass * self.g  # Ensure the drone is not falling
+        thrust += agent.mass * self.g  # Ensure the drone is not falling
 
-        self.drone_state[:, 9] = self.agent.state.pos[:, 0]  # x
-        self.drone_state[:, 10] = self.agent.state.pos[:, 1]  # y
-        self.drone_state[:, 2] = self.agent.state.rot[:, 0]  # psi (yaw)
+        drone_state = self.drone_state.at[:, 9].set(agent.state.pos[:, 0])  # x
+        drone_state = drone_state.at[:, 10].set(agent.state.pos[:, 1])  # y
+        drone_state = drone_state.at[:, 2].set(agent.state.rot[:, 0])  # psi (yaw)
+        self = self.replace(drone_state=drone_state)
 
         if self.integration == "euler":
-            delta_state = self.euler(self.drone_state, thrust, torque)
+            delta_state = self.euler(agent, self.drone_state, thrust, torque)
         else:
-            delta_state = self.runge_kutta(self.drone_state, thrust, torque)
+            delta_state = self.runge_kutta(agent, self.drone_state, thrust, torque)
 
         # Calculate the change in state
-        self.drone_state = self.drone_state + delta_state
+        drone_state = self.drone_state + delta_state
+        self = self.replace(drone_state=drone_state)
 
-        v_cur_x = self.agent.state.vel[:, 0]  # Current velocity in x-direction
-        v_cur_y = self.agent.state.vel[:, 1]  # Current velocity in y-direction
-        v_cur_angular = self.agent.state.ang_vel[:, 0]  # Current angular velocity
+        v_cur_x = agent.state.vel[:, 0]  # Current velocity in x-direction
+        v_cur_y = agent.state.vel[:, 1]  # Current velocity in y-direction
+        v_cur_angular = agent.state.ang_vel[:, 0]  # Current angular velocity
 
         # Calculate the accelerations required to achieve the change in state
         acceleration_x = (delta_state[:, 6] - v_cur_x * self.dt) / self.dt**2
@@ -150,13 +179,21 @@ class Drone(Dynamics):
         ) / self.dt**2
 
         # Calculate the forces required for the linear accelerations
-        force_x = self.agent.mass * acceleration_x
-        force_y = self.agent.mass * acceleration_y
+        force_x = agent.mass * acceleration_x
+        force_y = agent.mass * acceleration_y
 
         # Calculate the torque required for the angular acceleration
-        torque_yaw = self.agent.moment_of_inertia * acceleration_angular
+        torque_yaw = agent.moment_of_inertia * acceleration_angular
 
         # Update the physical force and torque required for the user inputs
-        self.agent.state.force[:, jaxvmas.simulator.utils.X] = force_x
-        self.agent.state.force[:, jaxvmas.simulator.utils.Y] = force_y
-        self.agent.state.torque = torque_yaw.unsqueeze(-1)
+        force = agent.state.force.at[:, X].set(force_x)
+        force = force.at[:, Y].set(force_y)
+        torque = torque_yaw[..., None]
+
+        agent = agent.replace(
+            state=agent.state.replace(
+                force=force,
+                torque=torque,
+            )
+        )
+        return self, agent

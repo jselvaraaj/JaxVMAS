@@ -39,7 +39,6 @@ class Environment(JaxVectorizedObject):
     metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
-    world: World
     agents: list[Agent]
     n_agents: int
     max_steps: int | None
@@ -87,9 +86,8 @@ class Environment(JaxVectorizedObject):
                 not continuous_actions
             ), "When asking for multidiscrete_actions, make sure continuous_actions=False"
 
-        scenario = scenario
-        num_envs = num_envs
-        world = scenario.env_make_world(num_envs, **kwargs)
+        scenario = scenario.env_make_world(num_envs, **kwargs)
+        world = scenario.world
 
         agents = world.policy_agents
         n_agents = len(agents)
@@ -112,7 +110,6 @@ class Environment(JaxVectorizedObject):
             metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
-            world=world,
             agents=agents,
             n_agents=n_agents,
             max_steps=max_steps,
@@ -143,6 +140,17 @@ class Environment(JaxVectorizedObject):
         )
 
         return self
+
+    @property
+    def world(self) -> World:
+        return self.scenario.world
+
+    def replace(self, **kwargs) -> "Environment":
+        if "world" in kwargs:
+            world = kwargs.pop("world")
+            self = self.replace(scenario=self.scenario.replace(world=world))
+
+        return super(Environment, self).replace(**kwargs)
 
     def reset(
         self,
@@ -319,7 +327,7 @@ class Environment(JaxVectorizedObject):
         # advance world state
         scenario = self.scenario.pre_step()
         self = self.replace(scenario=scenario)
-        self.world.step()
+        self = self.replace(world=self.world.step())
         scenario = self.scenario.post_step()
         self = self.replace(scenario=scenario)
 
@@ -451,12 +459,14 @@ class Environment(JaxVectorizedObject):
         if self.continuous_actions:
             actions = []
             for action_index in range(agent.action_size):
+                key, subkey = jax.random.split(self.PRNG_key)
+                self = self.replace(PRNG_key=key)
                 actions.append(
-                    jnp.zeros(
-                        agent.batch_dim,
-                    ).uniform(
-                        -agent.action.u_range_jax_array[action_index],
-                        agent.action.u_range_jax_array[action_index],
+                    jax.random.uniform(
+                        key=subkey,
+                        shape=(agent.batch_dim,),
+                        minval=-agent.action.u_range_jax_array[action_index],
+                        maxval=agent.action.u_range_jax_array[action_index],
                     )
                 )
             if self.world.dim_c != 0 and not agent.silent:
@@ -529,7 +539,7 @@ class Environment(JaxVectorizedObject):
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
 
     # set env action for a particular agent
-    def _set_action(self, action: Array, agent: Agent):
+    def _set_action(self, action: Array, agent: Agent) -> tuple["Environment", Agent]:
         action = action.copy()
 
         u = jnp.zeros(
@@ -949,7 +959,8 @@ class Environment(JaxVectorizedObject):
                     self.text_lines.append(text_line)
                     idx += 1
 
-    def _set_agent_comm_messages(self, env_index: int):
+    def _set_agent_comm_messages(self, env_index: int) -> "Environment":
+        text_lines = [self.text_lines[i] for i in range(len(self.text_lines))]
         # Render comm messages
         if self.world.dim_c > 0:
             idx = 0
@@ -970,5 +981,7 @@ class Environment(JaxVectorizedObject):
                         word = ALPHABET[jnp.argmax(agent.state.c[env_index]).item()]
 
                     message = agent.name + " sends " + word + "   "
-                    self.text_lines[idx].set_text(message)
+                    text_lines[idx].set_text(message)
                     idx += 1
+        self = self.replace(text_lines=text_lines)
+        return self

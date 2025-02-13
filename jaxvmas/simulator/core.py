@@ -842,7 +842,7 @@ class Agent(Entity):
         alpha = alpha
 
         # Dynamics
-        dynamics = dynamics if dynamics is not None else Holonomic(agent=None)
+        dynamics = dynamics if dynamics is not None else Holonomic()
         # Action
         if action_size is not None:
             action_size = action_size
@@ -888,9 +888,6 @@ class Agent(Entity):
                 }
             )
         )
-
-        dynamics = dynamics.replace(agent=agent)
-        agent = agent.replace(dynamics=dynamics)
 
         if sensors is not None:
             sensors = [sensor.replace(agent=agent) for sensor in sensors]
