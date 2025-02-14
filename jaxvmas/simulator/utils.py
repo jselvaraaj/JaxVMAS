@@ -174,7 +174,7 @@ class JaxUtils:
     @staticmethod
     def to_numpy(data: Array | dict[str, Array] | list[Array]):
         if isinstance(data, Array):
-            return data.block_until_ready().device_buffer
+            return data.block_until_ready()
         elif isinstance(data, dict):
             return {k: JaxUtils.to_numpy(v) for k, v in data.items()}
         elif isinstance(data, list):

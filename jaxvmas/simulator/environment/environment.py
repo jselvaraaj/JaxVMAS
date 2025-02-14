@@ -39,7 +39,6 @@ class Environment(JaxVectorizedObject):
     metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
-    n_agents: int
     max_steps: int | None
     continuous_actions: bool
     dict_spaces: bool
@@ -86,10 +85,7 @@ class Environment(JaxVectorizedObject):
             ), "When asking for multidiscrete_actions, make sure continuous_actions=False"
 
         scenario = scenario.env_make_world(num_envs, **kwargs)
-        world = scenario.world
 
-        agents = world.policy_agents
-        n_agents = len(agents)
         max_steps = max_steps
         continuous_actions = continuous_actions
         dict_spaces = dict_spaces
@@ -109,7 +105,6 @@ class Environment(JaxVectorizedObject):
             metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
-            n_agents=n_agents,
             max_steps=max_steps,
             continuous_actions=continuous_actions,
             dict_spaces=dict_spaces,
@@ -143,6 +138,10 @@ class Environment(JaxVectorizedObject):
     @property
     def world(self) -> World:
         return self.scenario.world
+
+    @property
+    def n_agents(self) -> int:
+        return len(self.world.policy_agents)
 
     @property
     def agents(self) -> list[Agent]:

@@ -2,15 +2,15 @@
 # ProrokLab (https://www.proroklab.org/)
 # All rights reserved.
 
-import struct
-from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from abc import abstractmethod
+from typing import TypeVar
 
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, PyTree
 
+from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.environment.environment import Environment
+from jaxvmas.simulator.utils import extract_nested_with_index
 
 # Type definitions for dimensions
 batch = "batch"  # Batch dimension for vectorized environments
@@ -21,8 +21,9 @@ obs = "obs"  # Observation dimension
 T = TypeVar("T")  # Generic type for nested structures
 
 
-@struct.dataclass
-class EnvData(Generic[T]):
+class EnvData(
+    PyTreeNode,
+):
     """Immutable container for environment step data."""
 
     obs: T
@@ -33,10 +34,19 @@ class EnvData(Generic[T]):
     info: T
 
 
-class BaseJaxGymWrapper(ABC):
+class BaseJaxGymWrapper(PyTreeNode):
     """Base class for JAX-based gym environment wrappers."""
 
-    def __init__(self, env: Environment, return_numpy: bool, vectorized: bool):
+    env: Environment
+    dict_spaces: bool
+    vectorized: bool
+
+    @classmethod
+    def create(
+        cls,
+        env: Environment,
+        vectorized: bool,
+    ):
         """Initialize the wrapper.
 
         Args:
@@ -44,15 +54,8 @@ class BaseJaxGymWrapper(ABC):
             return_numpy: Whether to convert outputs to numpy arrays
             vectorized: Whether to return vectorized (batched) outputs
         """
-        self._env = env
-        self.return_numpy = return_numpy
-        self.dict_spaces = env.dict_spaces
-        self.vectorized = vectorized
-
-    @property
-    def env(self) -> Environment:
-        """Get the underlying environment."""
-        return self._env
+        self = cls(env, env.dict_spaces, vectorized)
+        return self
 
     def _convert_output(self, data: Array, item: bool = False) -> Array:
         """Convert output data based on vectorization settings.
@@ -63,10 +66,10 @@ class BaseJaxGymWrapper(ABC):
         """
         if not self.vectorized:
             # Take first item if not vectorized
-            data = jax.tree_map(lambda x: x[0], data)
+            data = extract_nested_with_index(data, index=0)
             if item:
-                return jnp.asarray(data).item()
-        return self._maybe_to_numpy(data)
+                return data.item()
+        return data
 
     def _compress_infos(self, infos: PyTree) -> dict:
         """Compress info data into a dictionary format.
@@ -77,9 +80,7 @@ class BaseJaxGymWrapper(ABC):
         if isinstance(infos, dict):
             return infos
         elif isinstance(infos, (list, tuple)):
-            return {
-                self._env.scenario.agents[i].name: info for i, info in enumerate(infos)
-            }
+            return {self.env.agents[i].name: info for i, info in enumerate(infos)}
         else:
             raise ValueError(
                 f"Expected list or dictionary for infos but got {type(infos)}"
@@ -113,7 +114,7 @@ class BaseJaxGymWrapper(ABC):
                 if rews is not None:
                     rews[agent] = self._convert_output(rews[agent], item=True)
         else:
-            for i in range(len(self._env.scenario.agents)):
+            for i in range(len(self.env.agents)):
                 if obs is not None:
                     obs[i] = self._convert_output(obs[i])
                 if info is not None:
@@ -149,7 +150,7 @@ class BaseJaxGymWrapper(ABC):
         Args:
             actions: List of actions for each agent
         """
-        n_agents = len(self._env.scenario.agents)
+        n_agents = self.env.n_agents
         assert (
             len(actions) == n_agents
         ), f"Expecting actions for {n_agents} agents, got {len(actions)} actions"
@@ -158,14 +159,13 @@ class BaseJaxGymWrapper(ABC):
             (
                 jnp.asarray(
                     act,
-                    dtype=jnp.float32 if self._env.continuous_actions else jnp.int32,
-                ).reshape(self._env.num_envs, self._env.get_agent_action_size(agent))
-                if not isinstance(act, jnp.ndarray)
-                else act.astype(
-                    jnp.float32 if self._env.continuous_actions else jnp.int32
-                ).reshape(self._env.num_envs, self._env.get_agent_action_size(agent))
+                ).reshape(self.env.num_envs, self.env.get_agent_action_size(agent))
+                if not isinstance(act, Array)
+                else act.reshape(
+                    self.env.num_envs, self.env.get_agent_action_size(agent)
+                )
             )
-            for agent, act in zip(self._env.scenario.agents, actions)
+            for agent, act in zip(self.env.agents, actions)
         ]
 
     @abstractmethod
@@ -177,7 +177,6 @@ class BaseJaxGymWrapper(ABC):
     def reset(
         self,
         *,
-        seed: int | None = None,
         options: dict | None = None,
     ) -> tuple[PyTree, dict]:
         """Reset the environment."""
