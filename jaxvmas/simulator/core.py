@@ -621,19 +621,21 @@ class Entity(JaxVectorizedObject):
     def _reset(self, env_index: int):
         return self.replace(state=self.state._reset(env_index))
 
-    def set_pos(self, pos: Array, batch_index: int):
+    def set_pos(self, pos: Array, batch_index: int | None = None):
         return self._set_state_property("pos", pos, batch_index)
 
-    def set_vel(self, vel: Array, batch_index: int):
+    def set_vel(self, vel: Array, batch_index: int | None = None):
         return self._set_state_property("vel", vel, batch_index)
 
-    def set_rot(self, rot: Array, batch_index: int):
+    def set_rot(self, rot: Array, batch_index: int | None = None):
         return self._set_state_property("rot", rot, batch_index)
 
-    def set_ang_vel(self, ang_vel: Array, batch_index: int):
+    def set_ang_vel(self, ang_vel: Array, batch_index: int | None = None):
         return self._set_state_property("ang_vel", ang_vel, batch_index)
 
-    def _set_state_property(self, prop_name: str, new: Array, batch_index: int | None):
+    def _set_state_property(
+        self, prop_name: str, new: Array, batch_index: int | None = None
+    ):
         assert (
             self.batch_dim is not None
         ), f"Tried to set property of {self.name} without adding it to the world"

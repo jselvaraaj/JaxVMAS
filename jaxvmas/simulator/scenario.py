@@ -6,7 +6,8 @@ from abc import abstractmethod
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from jaxvmas.simulator.core import Agent, JaxVectorizedObject, World
+from jaxvmas.equinox_utils import PyTreeNode
+from jaxvmas.simulator.core import Agent, World
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import (
     AGENT_INFO_TYPE,
@@ -24,7 +25,7 @@ action = "action"
 info = "info"
 
 
-class BaseScenario(JaxVectorizedObject):
+class BaseScenario(PyTreeNode):
     """Base class for scenarios.
 
     This is the class that scenarios inherit from.
