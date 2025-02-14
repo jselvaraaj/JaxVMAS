@@ -99,7 +99,8 @@ class BaseScenario(JaxVectorizedObject):
             self = self.replace(world=world)
         # Customizable action processor
         self, agent = self.process_action(agent)
-        agent = agent.replace(dynamics=agent.dynamics.check_and_process_action())
+        dynamics, agent = agent.dynamics.check_and_process_action(agent)
+        agent = agent.replace(dynamics=dynamics)
 
         return self, agent
 
