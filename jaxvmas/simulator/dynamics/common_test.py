@@ -11,7 +11,7 @@ from jaxvmas.simulator.dynamics.common import Dynamics
 class TestDynamics(Dynamics):
     needed_action_size: int = 2
 
-    def process_action(self, agent: Agent) -> Agent:
+    def process_action(self, agent: Agent) -> tuple[Dynamics, Agent]:
         # Simple implementation that just sets the force to the action
         agent = agent.replace(
             state=agent.state.replace(
@@ -19,7 +19,7 @@ class TestDynamics(Dynamics):
                 torque=jnp.zeros((agent.batch_dim, 1)),
             )
         )
-        return agent
+        return self, agent
 
 
 class TestDynamicsClass:
