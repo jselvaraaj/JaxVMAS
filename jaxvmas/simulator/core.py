@@ -1919,6 +1919,10 @@ class World(JaxVectorizedObject):
             policy_agents = kwargs.pop("policy_agents")
             scripted_agents = self.scripted_agents
             kwargs["_agents"] = policy_agents + scripted_agents
+        elif "agents" in kwargs:
+            kwargs["_agents"] = kwargs.pop("agents")
+        elif "landmarks" in kwargs:
+            kwargs["_landmarks"] = kwargs.pop("landmarks")
 
         return super().replace(**kwargs)
 
