@@ -618,7 +618,7 @@ class Entity(JaxVectorizedObject):
     def _spawn(self, dim_c: int, dim_p: int) -> "Entity":
         return self.replace(state=self.state._spawn(dim_c, dim_p))
 
-    def _reset(self, env_index: int):
+    def _reset(self, env_index: int | None = None):
         return self.replace(state=self.state._reset(env_index))
 
     def set_pos(self, pos: Array, batch_index: int | None = None):
@@ -1105,7 +1105,7 @@ class World(JaxVectorizedObject):
             )
         return self
 
-    def reset(self, env_index: int):
+    def reset(self, env_index: int | None = None):
         entities = []
         for e in self.entities:
             entities.append(e._reset(env_index))
@@ -1915,6 +1915,11 @@ class World(JaxVectorizedObject):
             entities = kwargs.pop("entities")
             kwargs["_agents"] = entities[:num_agents]
             kwargs["_landmarks"] = entities[num_agents:]
+        elif "policy_agents" in kwargs:
+            policy_agents = kwargs.pop("policy_agents")
+            scripted_agents = self.scripted_agents
+            kwargs["_agents"] = policy_agents + scripted_agents
+
         return super().replace(**kwargs)
 
     # update state of the world

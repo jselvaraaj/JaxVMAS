@@ -27,7 +27,7 @@ from jaxvmas.simulator.environment.jaxgym.spaces import (
     Space,
     Tuple,
 )
-from jaxvmas.simulator.rendering import TextLine, Viewer
+from jaxvmas.simulator.rendering import Image, TextLine, Viewer
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
 
@@ -39,7 +39,6 @@ class Environment(JaxVectorizedObject):
     metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
-    agents: list[Agent]
     n_agents: int
     max_steps: int | None
     continuous_actions: bool
@@ -103,14 +102,13 @@ class Environment(JaxVectorizedObject):
         headless = None
         visible_display = None
         text_lines = None
-
+        steps = jnp.zeros(num_envs)
         self = cls(
             batch_dim=num_envs,
             PRNG_key=PRNG_key,
             metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
-            agents=agents,
             n_agents=n_agents,
             max_steps=max_steps,
             continuous_actions=continuous_actions,
@@ -125,9 +123,10 @@ class Environment(JaxVectorizedObject):
             headless=headless,
             visible_display=visible_display,
             text_lines=text_lines,
+            steps=steps,
         )
 
-        observations = self.reset()
+        self, observations = self.reset()
 
         # configure spaces
         multidiscrete_actions = multidiscrete_actions
@@ -145,19 +144,28 @@ class Environment(JaxVectorizedObject):
     def world(self) -> World:
         return self.scenario.world
 
+    @property
+    def agents(self) -> list[Agent]:
+        return self.world.policy_agents
+
     def replace(self, **kwargs) -> "Environment":
         if "world" in kwargs:
             world = kwargs.pop("world")
-            self = self.replace(scenario=self.scenario.replace(world=world))
+            kwargs["scenario"] = self.scenario.replace(world=world)
+        elif "agents" in kwargs:
+            agents = kwargs.pop("agents")
+            kwargs["scenario"] = self.scenario.replace(
+                world=self.world.replace(policy_agents=agents)
+            )
 
-        return super(Environment, self).replace(**kwargs)
+        return super().replace(**kwargs)
 
     def reset(
         self,
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
-    ):
+    ) -> tuple["Environment", list | dict]:
         """
         Resets the environment in a vectorized way
         Returns observations for all envs and agents
@@ -173,7 +181,7 @@ class Environment(JaxVectorizedObject):
             get_rewards=False,
             get_dones=return_dones,
         )
-        return result[0] if result and len(result) == 1 else result, self
+        return self, result[0] if result and len(result) == 1 else result
 
     def reset_at(
         self,
@@ -181,7 +189,7 @@ class Environment(JaxVectorizedObject):
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
-    ):
+    ) -> tuple["Environment", list | dict]:
         """
         Resets the environment at index
         Returns observations for all agents in that environment
@@ -198,7 +206,7 @@ class Environment(JaxVectorizedObject):
             get_dones=return_dones,
         )
 
-        return result[0] if result and len(result) == 1 else result, self
+        return self, result[0] if result and len(result) == 1 else result
 
     def get_from_scenario(
         self,
@@ -207,7 +215,7 @@ class Environment(JaxVectorizedObject):
         get_infos: bool,
         get_dones: bool,
         dict_agent_names: bool | None = None,
-    ):
+    ) -> list | dict:
         if not get_infos and not get_dones and not get_rewards and not get_observations:
             return
         if dict_agent_names is None:
@@ -224,7 +232,7 @@ class Environment(JaxVectorizedObject):
 
         if get_rewards:
             for agent in self.agents:
-                reward = self.scenario.reward(agent).clone()
+                reward = self.scenario.reward(agent).copy()
                 if dict_agent_names:
                     rewards.update({agent.name: reward})
                 else:
@@ -255,7 +263,7 @@ class Environment(JaxVectorizedObject):
 
         return [data for data in result if data is not None]
 
-    def step(self, actions: list | dict):
+    def step(self, actions: list | dict) -> tuple["Environment", list | dict]:
         """Performs a vectorized step on all sub environments using `actions`.
         Args:
             actions: Is a list on len 'self.n_agents' of which each element is a torch.Tensor of shape
@@ -316,13 +324,17 @@ class Environment(JaxVectorizedObject):
         # set action for each agent
         agents = []
         for i, agent in enumerate(self.agents):
-            agent, self = self._set_action(actions[i], agent)
+            self, agent = self._set_action(actions[i], agent)
             agents.append(agent)
         self = self.replace(agents=agents)
+
+        agents = []
         # Scenarios can define a custom action processor. This step takes care also of scripted agents automatically
         for agent in self.world.agents:
-            scenario = self.scenario.env_process_action(agent)
+            scenario, agent = self.scenario.env_process_action(agent)
             self = self.replace(scenario=scenario)
+            agents.append(agent)
+        self = self.replace(agents=agents)
 
         # advance world state
         scenario = self.scenario.pre_step()
@@ -331,9 +343,9 @@ class Environment(JaxVectorizedObject):
         scenario = self.scenario.post_step()
         self = self.replace(scenario=scenario)
 
-        self.steps += 1
+        self = self.replace(steps=self.steps + 1)
 
-        return self.get_from_scenario(
+        return self, self.get_from_scenario(
             get_observations=True,
             get_infos=True,
             get_rewards=True,
@@ -357,7 +369,7 @@ class Environment(JaxVectorizedObject):
                 return terminated
             return terminated + truncated
 
-    def get_action_space(self):
+    def get_action_space(self) -> Space:
         if not self.dict_spaces:
             return Tuple([self.get_agent_action_space(agent) for agent in self.agents])
         else:
@@ -368,7 +380,7 @@ class Environment(JaxVectorizedObject):
                 }
             )
 
-    def get_observation_space(self, observations: list | dict):
+    def get_observation_space(self, observations: list | dict) -> Space:
         if not self.dict_spaces:
             return Tuple(
                 [
@@ -386,7 +398,7 @@ class Environment(JaxVectorizedObject):
                 }
             )
 
-    def get_agent_action_size(self, agent: Agent):
+    def get_agent_action_size(self, agent: Agent) -> int:
         if self.continuous_actions:
             return agent.action.action_size + (
                 self.world.dim_c if not agent.silent else 0
@@ -398,7 +410,7 @@ class Environment(JaxVectorizedObject):
         else:
             return 1
 
-    def get_agent_action_space(self, agent: Agent):
+    def get_agent_action_space(self, agent: Agent) -> Space:
         if self.continuous_actions:
             return Box(
                 low=jnp.array(
@@ -426,7 +438,7 @@ class Environment(JaxVectorizedObject):
                 )
             )
 
-    def get_agent_observation_space(self, agent: Agent, obs: AGENT_OBS_TYPE):
+    def get_agent_observation_space(self, agent: Agent, obs: AGENT_OBS_TYPE) -> Space:
         if isinstance(obs, Array):
             return Box(
                 low=-jnp.float32("inf"),
@@ -485,26 +497,30 @@ class Environment(JaxVectorizedObject):
             action = jnp.stack(actions, axis=-1)
         else:
             action_space = self.get_agent_action_space(agent)
-            if self.multidiscrete_actions:
+            if self.multidiscrete_actions and isinstance(action_space, MultiDiscrete):
                 key = jax.random.split(self.PRNG_key, action_space.shape[0] + 1)
                 self = self.replace(PRNG_key=key[-1])
                 actions = [
                     jax.random.randint(
                         key=key[action_index],
-                        low=0,
-                        high=action_space.nvec[action_index],
+                        minval=0,
+                        maxval=action_space.num_categories[action_index],
                         shape=(agent.batch_dim,),
                     )
                     for action_index in range(action_space.shape[0])
                 ]
                 action = jnp.stack(actions, axis=-1)
             else:
+                if not isinstance(action_space, Discrete):
+                    raise ValueError(
+                        f"Agent {agent.name} does not have a discrete or multidiscrete action space"
+                    )
                 key, subkey = jax.random.split(self.PRNG_key)
                 self = self.replace(PRNG_key=key)
                 action = jax.random.randint(
                     key=subkey,
-                    low=0,
-                    high=action_space.n,
+                    minval=0,
+                    maxval=action_space.n,
                     shape=(agent.batch_dim,),
                 )
         return action
@@ -533,7 +549,9 @@ class Environment(JaxVectorizedObject):
         """
         return [self.get_random_action(agent) for agent in self.agents]
 
-    def _check_discrete_action(self, action: Array, low: int, high: int, type: str):
+    def _check_discrete_action(
+        self, action: Array, low: int, high: int, type: str
+    ) -> None:
         assert jnp.all(
             (action >= jnp.array(low)) * (action < jnp.array(high))
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
@@ -543,9 +561,9 @@ class Environment(JaxVectorizedObject):
         action = action.copy()
 
         u = jnp.zeros(
-            (self.batch_dim, agent.action_size),
+            (self.num_envs, agent.action_size),
         )
-        agent = agent.replace(action=action.replace(u=u))
+        agent = agent.replace(action=agent.action.replace(u=u))
 
         assert action.shape[1] == self.get_agent_action_size(agent), (
             f"Agent {agent.name} has wrong action size, got {action.shape[1]}, "
@@ -572,12 +590,12 @@ class Environment(JaxVectorizedObject):
         if self.continuous_actions:
             physical_action = action[:, action_index : action_index + agent.action_size]
             action_index += self.world.dim_p
-            assert not jnp.any(
-                jnp.abs(physical_action) > agent.action.u_range_jax_array
-            ), f"Physical actions of agent {agent.name} are out of its range {agent.u_range}"
+            # assert not jnp.any(
+            #     jnp.abs(physical_action) > agent.action.u_range_jax_array
+            # ), f"Physical actions of agent {agent.name} are out of its range {agent.u_range}"
 
-            u = physical_action.astype(jnp.float32)
-            agent = agent.replace(action=agent.action.replace(u=u))
+            physical_action = physical_action.astype(jnp.float32)
+            agent = agent.replace(action=agent.action.replace(u=physical_action))
 
         else:
             if not self.multidiscrete_actions:
@@ -676,7 +694,7 @@ class Environment(JaxVectorizedObject):
                 agent = agent.replace(
                     action=agent.action.replace(c=agent.action.c + noise)
                 )
-        return agent, self
+        return self, agent
 
     def render(
         self,
@@ -695,7 +713,7 @@ class Environment(JaxVectorizedObject):
         plot_position_function_cmap_range: tuple[float, float] | None = None,
         plot_position_function_cmap_alpha: float = 1.0,
         plot_position_function_cmap_name: str | None = "viridis",
-    ):
+    ) -> Array:
         """
         Render function for environment using pyglet
 
@@ -856,7 +874,7 @@ class Environment(JaxVectorizedObject):
         # render to display or array
         return self.viewer.render(return_rgb_array=mode == "rgb_array")
 
-    def plot_boundary(self):
+    def plot_boundary(self) -> None:
         # include boundaries in the rendering if the environment is dimension-limited
         if self.world.x_semidim is not None or self.world.y_semidim is not None:
             from jaxvmas.simulator.rendering import Line
@@ -918,7 +936,7 @@ class Environment(JaxVectorizedObject):
 
     def plot_function(
         self, f, precision, plot_range, cmap_range, cmap_alpha, cmap_name
-    ):
+    ) -> Image:
         from jaxvmas.simulator.rendering import render_function_util
 
         if plot_range is None:
@@ -942,7 +960,7 @@ class Environment(JaxVectorizedObject):
         )
         return geom
 
-    def _init_rendering(self):
+    def _init_rendering(self) -> None:
         from jaxvmas.simulator import rendering
 
         self.viewer = rendering.Viewer(
