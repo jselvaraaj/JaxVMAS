@@ -755,8 +755,9 @@ class Environment(JaxVectorizedObject):
         headless = mode == "rgb_array" and not visualize_when_rgb
         # First time rendering
         if self.visible_display is None:
-            self.visible_display = not headless
-            self.headless = headless
+            visible_display = not headless
+            headless = headless
+            self = self.replace(visible_display=visible_display, headless=headless)
         # All other times headless should be the same
         else:
             assert self.visible_display is not headless
@@ -782,10 +783,10 @@ class Environment(JaxVectorizedObject):
                 assert num_devices.value > 0
 
             except (ImportError, AssertionError):
-                self.headless = False
+                self = self.replace(headless=False)
             pyglet.options["headless"] = self.headless
 
-            self._init_rendering()
+            self = self._init_rendering()
 
         if self.scenario.viewer_zoom <= 0:
             raise ValueError("Scenario viewer zoom must be > 0")
@@ -871,7 +872,7 @@ class Environment(JaxVectorizedObject):
             self.viewer.add_onetime_list(entity.render(env_index=env_index))
 
         # render to display or array
-        return self.viewer.render(return_rgb_array=mode == "rgb_array")
+        return self, self.viewer.render(return_rgb_array=mode == "rgb_array")
 
     def plot_boundary(self) -> None:
         # include boundaries in the rendering if the environment is dimension-limited
@@ -962,19 +963,19 @@ class Environment(JaxVectorizedObject):
     def _init_rendering(self) -> None:
         from jaxvmas.simulator import rendering
 
-        self.viewer = rendering.Viewer(
+        viewer = rendering.Viewer(
             *self.scenario.viewer_size, visible=self.visible_display
         )
-
-        self.text_lines = []
+        text_lines = []
         idx = 0
         if self.world.dim_c > 0:
             for agent in self.world.agents:
                 if not agent.silent:
                     text_line = rendering.TextLine(y=idx * 40)
-                    self.viewer.geoms.append(text_line)
-                    self.text_lines.append(text_line)
+                    viewer.geoms.append(text_line)
+                    text_lines.append(text_line)
                     idx += 1
+        return self.replace(viewer=viewer, text_lines=text_lines)
 
     def _set_agent_comm_messages(self, env_index: int) -> "Environment":
         text_lines = [self.text_lines[i] for i in range(len(self.text_lines))]

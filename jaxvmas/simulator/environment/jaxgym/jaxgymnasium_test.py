@@ -1,0 +1,126 @@
+import equinox as eqx
+import jax.numpy as jnp
+import pytest
+from jaxtyping import Array
+
+from jaxvmas.simulator.core import Agent, World
+from jaxvmas.simulator.environment.environment import Environment
+from jaxvmas.simulator.environment.jaxgym.base import EnvData
+from jaxvmas.simulator.environment.jaxgym.jaxgymnasium import JaxGymnasiumWrapper
+from jaxvmas.simulator.scenario import BaseScenario
+
+
+class MockWorld(World):
+    """Mock world for testing."""
+
+    pass
+
+
+class MockScenario(BaseScenario):
+    """Mock scenario for testing."""
+
+    def make_world(self, batch_dim: int, **kwargs) -> World:
+        return MockWorld.create(batch_dim=batch_dim)
+
+    def reset_world_at(self, env_index: int | None) -> "MockScenario":
+        return self
+
+    def observation(self, agent: Agent) -> Array:
+        return jnp.zeros((self.world.batch_dim, 2))
+
+    def reward(self, agent: Agent) -> Array:
+        return jnp.zeros(self.world.batch_dim)
+
+
+class TestJaxGymnasiumWrapper:
+    @pytest.fixture
+    def wrapper(self):
+        """Create test wrapper with mock environment."""
+        env = Environment.create(
+            scenario=MockScenario.create(), num_envs=1, terminated_truncated=True
+        )
+        mock_agent_1 = Agent.create(name="agent_0", batch_dim=1, dim_c=2, dim_p=2)
+        mock_agent_2 = Agent.create(name="agent_1", batch_dim=1, dim_c=2, dim_p=2)
+        world = env.world
+        world = world.add_agent(mock_agent_1)
+        world = world.add_agent(mock_agent_2)
+        env = env.replace(world=world)
+        return JaxGymnasiumWrapper.create(env=env)
+
+    def test_create(self, wrapper: JaxGymnasiumWrapper):
+        """Test wrapper creation."""
+        assert isinstance(wrapper.env, Environment)
+        assert wrapper.render_mode == "human"
+        assert wrapper.vectorized is False
+        assert wrapper.env.num_envs == 1
+
+    def test_create_assertions(self):
+        """Test create method assertions."""
+        # Test num_envs assertion
+        env = Environment.create(
+            scenario=MockScenario.create(), num_envs=2, terminated_truncated=True
+        )
+        with pytest.raises(AssertionError):
+            JaxGymnasiumWrapper.create(env=env)
+
+        # Test terminated_truncated assertion
+        env = Environment.create(
+            scenario=MockScenario.create(), num_envs=1, terminated_truncated=False
+        )
+        with pytest.raises(AssertionError):
+            JaxGymnasiumWrapper.create(env=env)
+
+    def test_step_jit(self, wrapper: JaxGymnasiumWrapper):
+        """Test jitted step function."""
+
+        @eqx.filter_jit
+        def step(wrapper: JaxGymnasiumWrapper, action):
+            return wrapper.step(action)
+
+        action = [jnp.ones((1, 2)), jnp.zeros((1, 2))]
+        new_wrapper, env_data = step(wrapper, action)
+
+        assert isinstance(new_wrapper, JaxGymnasiumWrapper)
+        assert isinstance(env_data, EnvData)
+        assert isinstance(env_data.obs, list)
+        assert isinstance(env_data.rews, list)
+        assert env_data.terminated.shape == tuple()
+        assert env_data.truncated.shape == tuple()
+        assert env_data.done is None
+
+    def test_reset_jit(self, wrapper: JaxGymnasiumWrapper):
+        """Test jitted reset function."""
+
+        @eqx.filter_jit
+        def reset(wrapper: JaxGymnasiumWrapper):
+            return wrapper.reset()
+
+        new_wrapper, (obs, info) = reset(wrapper)
+
+        assert isinstance(new_wrapper, JaxGymnasiumWrapper)
+        assert isinstance(obs, list)
+        assert isinstance(info, dict)
+        assert len(obs) == 2  # Two agents
+        assert obs[0].shape == (2,)  # (batch_dim, obs_dim)
+
+    def test_list_spaces(self):
+        """Test wrapper with list spaces."""
+        env = Environment.create(
+            scenario=MockScenario.create(), num_envs=1, terminated_truncated=True
+        )
+        agent_0 = Agent.create(name="agent_0", batch_dim=1, dim_c=2, dim_p=2)
+        agent_1 = Agent.create(name="agent_1", batch_dim=1, dim_c=2, dim_p=2)
+        env = env.replace(world=env.world.add_agent(agent_0).add_agent(agent_1))
+        wrapper = JaxGymnasiumWrapper.create(env=env)
+
+        @eqx.filter_jit
+        def step(wrapper: JaxGymnasiumWrapper, action):
+            return wrapper.step(action)
+
+        action = [jnp.ones((1, 2)), jnp.zeros((1, 2))]
+        new_wrapper, env_data = step(wrapper, action)
+
+        assert isinstance(env_data.obs, list)
+        assert isinstance(env_data.rews, list)
+        assert env_data.obs[0].shape == (2,)
+        assert env_data.rews[0].shape == tuple()

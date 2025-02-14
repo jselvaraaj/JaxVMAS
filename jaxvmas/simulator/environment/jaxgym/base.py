@@ -2,7 +2,6 @@
 # ProrokLab (https://www.proroklab.org/)
 # All rights reserved.
 
-from abc import abstractmethod
 from typing import TypeVar
 
 import jax.numpy as jnp
@@ -68,7 +67,7 @@ class BaseJaxGymWrapper(PyTreeNode):
             # Take first item if not vectorized
             data = extract_nested_with_index(data, index=0)
             if item:
-                return data.item()
+                return data
         return data
 
     def _compress_infos(self, infos: PyTree) -> dict:
@@ -168,21 +167,18 @@ class BaseJaxGymWrapper(PyTreeNode):
             for agent, act in zip(self.env.agents, actions)
         ]
 
-    @abstractmethod
-    def step(self, action: PyTree) -> EnvData:
+    def step(self, action: PyTree) -> tuple["BaseJaxGymWrapper", EnvData]:
         """Take a step in the environment."""
         raise NotImplementedError
 
-    @abstractmethod
     def reset(
         self,
         *,
         options: dict | None = None,
-    ) -> tuple[PyTree, dict]:
+    ) -> tuple["BaseJaxGymWrapper", tuple[PyTree, dict]]:
         """Reset the environment."""
         raise NotImplementedError
 
-    @abstractmethod
     def render(
         self,
         agent_index_focus: int | None = None,
