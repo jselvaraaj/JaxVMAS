@@ -32,7 +32,6 @@ class Drone(Dynamics):
         I_zz: float = 14.2e-3,
         integration: str = "rk4",
     ):
-        super().__init__()
 
         assert integration in (
             "rk4",
@@ -55,14 +54,11 @@ class Drone(Dynamics):
             #              p (roll_rate), q (pitch_rate), r (yaw_rate),
             #              x_dot (vel_x), y_dot (vel_y), z_dot (vel_z),
             #              x (pos_x), y (pos_y), z (pos_z)
-            drone_state = jnp.zeros(
-                self.batch_dim,
-                12,
-            )
-            self.drone_state = drone_state
+            drone_state = jnp.zeros((self.batch_dim, 12))
+            self = self.replace(drone_state=drone_state)
         else:
             drone_state = JaxUtils.where_from_index(index, 0.0, self.drone_state)
-            self.drone_state = drone_state
+            self = self.replace(drone_state=drone_state)
         return self
 
     def f(
@@ -113,7 +109,7 @@ class Drone(Dynamics):
                 y_dot,
                 z_dot,
             ],
-            dim=-1,
+            axis=-1,
         )
 
     def needs_reset(self) -> Array:
@@ -122,7 +118,7 @@ class Drone(Dynamics):
 
     def euler(
         self,
-        agent: Agent,
+        agent: "Agent",
         state: Array,
         thrust: Array,
         torque: Array,
@@ -131,7 +127,7 @@ class Drone(Dynamics):
 
     def runge_kutta(
         self,
-        agent: Agent,
+        agent: "Agent",
         state: Array,
         thrust: Array,
         torque: Array,

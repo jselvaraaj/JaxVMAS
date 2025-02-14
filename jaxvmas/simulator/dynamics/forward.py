@@ -18,7 +18,7 @@ class Forward(Dynamics):
         return 1
 
     def process_action(self, agent: "Agent") -> tuple["Forward", "Agent"]:
-        force = jnp.zeros(agent.batch_dim, 2)
+        force = jnp.zeros((agent.batch_dim, 2))
         force = force.at[:, X].set(agent.action.u[:, 0])
         force = JaxUtils.rotate_vector(force, agent.state.rot)
         agent = agent.replace(

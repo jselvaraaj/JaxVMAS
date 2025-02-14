@@ -24,7 +24,6 @@ class DiffDrive(Dynamics):
         world: "World",
         integration: str = "rk4",  # one of "euler", "rk4"
     ):
-        super().__init__()
         assert integration == "rk4" or integration == "euler"
 
         dt = world.dt

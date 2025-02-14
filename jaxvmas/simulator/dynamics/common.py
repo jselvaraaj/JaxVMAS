@@ -24,7 +24,7 @@ class Dynamics(PyTreeNode, ABC):
             raise ValueError(
                 f"Agent action size {action.shape[1]} is less than the required dynamics action size {self.needed_action_size}"
             )
-        agent = self.process_action(agent)
+        self, agent = self.process_action(agent)
         return self, agent
 
     @property
