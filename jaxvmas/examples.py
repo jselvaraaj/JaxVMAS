@@ -119,6 +119,6 @@ if __name__ == "__main__":
         heuristic=RandomPolicy,
         n_envs=32,
         n_steps=200,
-        render=True,
+        render=False,
         save_render=False,
     )

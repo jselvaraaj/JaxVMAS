@@ -189,17 +189,17 @@ class InteractiveEnv:
         agent_range = self.agents[self.current_agent_index].action.u_range_jax_array
         try:
             if k == key.LEFT:
-                self.keys[0] = agent_range[0]
+                self.keys = self.keys.at[0].set(agent_range[0])
             elif k == key.RIGHT:
-                self.keys[1] = agent_range[0]
+                self.keys = self.keys.at[1].set(agent_range[0])
             elif k == key.DOWN:
-                self.keys[2] = agent_range[1]
+                self.keys = self.keys.at[2].set(agent_range[1])
             elif k == key.UP:
-                self.keys[3] = agent_range[1]
+                self.keys = self.keys.at[3].set(agent_range[1])
             elif k == key.M:
-                self.keys[4] = agent_range[2]
+                self.keys = self.keys.at[4].set(agent_range[2])
             elif k == key.N:
-                self.keys[5] = agent_range[2]
+                self.keys = self.keys.at[5].set(agent_range[2])
             elif k == key.TAB:
                 self.current_agent_index = self._increment_selected_agent_index(
                     self.current_agent_index
@@ -216,17 +216,17 @@ class InteractiveEnv:
                 ].action.u_range_jax_array
 
                 if k == key.A:
-                    self.keys2[0] = agent2_range[0]
+                    self.keys2 = self.keys2.at[0].set(agent2_range[0])
                 elif k == key.D:
-                    self.keys2[1] = agent2_range[0]
+                    self.keys2 = self.keys2.at[1].set(agent2_range[0])
                 elif k == key.S:
-                    self.keys2[2] = agent2_range[1]
+                    self.keys2 = self.keys2.at[2].set(agent2_range[1])
                 elif k == key.W:
-                    self.keys2[3] = agent2_range[1]
+                    self.keys2 = self.keys2.at[3].set(agent2_range[1])
                 elif k == key.E:
-                    self.keys2[4] = agent2_range[2]
+                    self.keys2 = self.keys2.at[4].set(agent2_range[2])
                 elif k == key.Q:
-                    self.keys2[5] = agent2_range[2]
+                    self.keys2 = self.keys2.at[5].set(agent2_range[2])
 
                 elif k == key.LSHIFT:
                     self.current_agent_index2 = self._increment_selected_agent_index(
@@ -250,31 +250,31 @@ class InteractiveEnv:
         from pyglet.window import key
 
         if k == key.LEFT:
-            self.keys[0] = 0
+            self.keys = self.keys.at[0].set(0)
         elif k == key.RIGHT:
-            self.keys[1] = 0
+            self.keys = self.keys.at[1].set(0)
         elif k == key.DOWN:
-            self.keys[2] = 0
+            self.keys = self.keys.at[2].set(0)
         elif k == key.UP:
-            self.keys[3] = 0
+            self.keys = self.keys.at[3].set(0)
         elif k == key.M:
-            self.keys[4] = 0
+            self.keys = self.keys.at[4].set(0)
         elif k == key.N:
-            self.keys[5] = 0
+            self.keys = self.keys.at[5].set(0)
 
         if self.control_two_agents:
             if k == key.A:
-                self.keys2[0] = 0
+                self.keys2 = self.keys2.at[0].set(0)
             elif k == key.D:
-                self.keys2[1] = 0
+                self.keys2 = self.keys2.at[1].set(0)
             elif k == key.S:
-                self.keys2[2] = 0
+                self.keys2 = self.keys2.at[2].set(0)
             elif k == key.W:
-                self.keys2[3] = 0
+                self.keys2 = self.keys2.at[3].set(0)
             elif k == key.E:
-                self.keys2[4] = 0
+                self.keys2 = self.keys2.at[4].set(0)
             elif k == key.Q:
-                self.keys2[5] = 0
+                self.keys2 = self.keys2.at[5].set(0)
 
         self.set_u()
 
@@ -292,22 +292,22 @@ class InteractiveEnv:
             ]
         else:
             if jnp.sum(self.keys[:4]) >= 1:
-                self.u[0] = jnp.argmax(self.keys[:4]) + 1
+                self.u = self.u.at[0].set(jnp.argmax(self.keys[:4]) + 1)
             else:
-                self.u[0] = 0
+                self.u = self.u.at[0].set(0)
             if jnp.sum(self.keys[4:]) >= 1:
-                self.u[1] = jnp.argmax(self.keys[4:]) + 1
+                self.u = self.u.at[1].set(jnp.argmax(self.keys[4:]) + 1)
             else:
-                self.u[1] = 0
+                self.u = self.u.at[1].set(0)
 
             if jnp.sum(self.keys2[:4]) >= 1:
-                self.u2[0] = jnp.argmax(self.keys2[:4]) + 1
+                self.u2 = self.u2.at[0].set(jnp.argmax(self.keys2[:4]) + 1)
             else:
-                self.u2[0] = 0
+                self.u2 = self.u2.at[0].set(0)
             if jnp.sum(self.keys2[4:]) >= 1:
-                self.u2[1] = jnp.argmax(self.keys2[4:]) + 1
+                self.u2 = self.u2.at[1].set(jnp.argmax(self.keys2[4:]) + 1)
             else:
-                self.u2[1] = 0
+                self.u2 = self.u2.at[1].set(0)
 
     @staticmethod
     def format_obs(obs):
