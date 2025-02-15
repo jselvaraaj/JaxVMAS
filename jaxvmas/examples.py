@@ -4,6 +4,7 @@
 import time
 from typing import Type
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -54,7 +55,8 @@ def run_heuristic(
             actions[i] = policy.compute_action(
                 obs[i], u_range=env.agents[i].u_range, key=key_step
             )
-        env, (obs, rews, dones, info) = env.step(actions)
+        jitted_step = eqx.filter_jit(env.step)
+        env, (obs, rews, dones, info) = jitted_step(actions)
         rewards = jnp.stack(rews, axis=1)
         global_reward = rewards.mean(axis=1)
         mean_global_reward = global_reward.mean(axis=0)
@@ -83,7 +85,7 @@ if __name__ == "__main__":
     run_heuristic(
         scenario_name="simple",
         heuristic=RandomPolicy,
-        n_envs=1,
+        n_envs=32,
         n_steps=200,
         render=True,
         save_render=False,
