@@ -759,7 +759,7 @@ class Agent(Entity):
     max_f: float | None
     t_range: float | None
     max_t: float | None
-    action_script: Callable[["Agent", "World"], tuple["Agent", "World"]]
+    action_script: Callable[["Agent", "World"], tuple["Agent", "World"]] | None
     sensors: list[Sensor]
     c_noise: float
     silent: bool
@@ -797,7 +797,9 @@ class Agent(Entity):
         u_noise: float | Sequence[float] = 0.0,
         u_range: float | Sequence[float] = 1.0,
         u_multiplier: float | Sequence[float] = 1.0,
-        action_script: Callable[["Agent", "World"], tuple["Agent", "World"]] = None,
+        action_script: (
+            Callable[["Agent", "World"], tuple["Agent", "World"]] | None
+        ) = None,
         sensors: list[Sensor] = None,
         c_noise: float = 0.0,
         silent: bool = True,

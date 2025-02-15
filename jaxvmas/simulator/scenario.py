@@ -56,7 +56,7 @@ class BaseScenario(PyTreeNode):
     visualize_semidims: bool
 
     @classmethod
-    def create(cls):
+    def create(cls, **kwargs) -> "BaseScenario":
         """Do not override."""
         world = None
         viewer_size = INITIAL_VIEWER_SIZE
