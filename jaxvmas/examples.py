@@ -47,27 +47,59 @@ def run_heuristic(
     step = 0
     env, obs = env.reset(PRNG_key=key)
     total_reward = 0
-    for _ in range(n_steps):
-        key, key_step = jax.random.split(key)
-        step += 1
-        actions = [None] * len(obs)
-        for i in range(len(obs)):
-            actions[i] = policy.compute_action(
-                obs[i], u_range=env.agents[i].u_range, key=key_step
-            )
-        jitted_step = eqx.filter_jit(env.step)
-        env, (obs, rews, dones, info) = jitted_step(actions)
-        rewards = jnp.stack(rews, axis=1)
-        global_reward = rewards.mean(axis=1)
-        mean_global_reward = global_reward.mean(axis=0)
-        total_reward += mean_global_reward
-        if render:
+    if render:
+        for _ in range(n_steps):
+            key, key_step = jax.random.split(key)
+            step += 1
+            actions = [None] * len(obs)
+            for i in range(len(obs)):
+                key_step, key_step_i = jax.random.split(key_step)
+                actions[i] = policy.compute_action(
+                    obs[i], u_range=env.agents[i].u_range, key=key_step_i
+                )
+            jitted_step = eqx.filter_jit(env.step)
+            env, (obs, rews, dones, info) = jitted_step(actions)
+            rewards = jnp.stack(rews, axis=1)
+            global_reward = rewards.mean(axis=1)
+            mean_global_reward = global_reward.mean(axis=0)
+            total_reward += mean_global_reward
             env, rgb_array = env.render(
                 mode="rgb_array",
                 agent_index_focus=None,
                 visualize_when_rgb=True,
             )
             frame_list.append(rgb_array)
+    else:
+
+        init_state = (env, obs, key, jnp.array(total_reward))
+        dynamic_init_state, static_state = eqx.partition(init_state, eqx.is_array)
+
+        def step_fn(dynamic_carry, _):
+            carry = eqx.combine(static_state, dynamic_carry)
+
+            env, obs, key, total_reward = carry
+            key, key_step = jax.random.split(key)
+
+            actions = [None] * len(obs)
+            for i in range(len(obs)):
+                key_step, key_step_i = jax.random.split(key_step)
+                actions[i] = policy.compute_action(
+                    obs[i], u_range=env.agents[i].u_range, key=key_step_i
+                )
+
+            # Step environment
+            env, (next_obs, rews, dones, info) = env.step(actions)
+            rewards = jnp.stack(rews, axis=1)
+            global_reward = rewards.mean(axis=1)
+            mean_global_reward = global_reward.mean(axis=0)
+            new_total_reward = total_reward + mean_global_reward
+
+            carry = (env, next_obs, key, new_total_reward)
+            dynamic_carry, _ = eqx.partition(carry, eqx.is_array)
+            return dynamic_carry, None
+
+        final_carry, _ = jax.lax.scan(step_fn, dynamic_init_state, None, length=n_steps)
+        env, obs, key, total_reward = eqx.combine(static_state, final_carry)
 
     total_time = time.time() - init_time
     if render and save_render:

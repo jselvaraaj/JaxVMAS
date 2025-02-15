@@ -1145,6 +1145,15 @@ class World(JaxVectorizedObject):
 
         self = self.replace(entities=entities)
 
+        _entity_index_map = {e.name: i for i, e in enumerate(self.entities)}
+        self = self.replace(_entity_index_map=_entity_index_map)
+
+        forces_dict = {
+            e.name: jnp.zeros((self.batch_dim, self._dim_p)) for e in self.entities
+        }
+        torques_dict = {e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities}
+        self = self.replace(_force_dict=forces_dict, _torque_dict=torques_dict)
+
         return self
 
     @property
@@ -1961,9 +1970,6 @@ class World(JaxVectorizedObject):
 
     # update state of the world
     def step(self):
-        _entity_index_map = {e.name: i for i, e in enumerate(self.entities)}
-        self = self.replace(_entity_index_map=_entity_index_map)
-
         for substep in range(self._substeps):
             # Initialize force and torque dictionaries
             forces_dict = {
