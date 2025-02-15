@@ -63,8 +63,9 @@ def _init_pyglet_device():
 
 
 def save_video(name: str, frame_list: list[Array], fps: int):
-    """Requres cv2"""
+    """Requires cv2. Saves a list of frames as an MP4 video."""
     import cv2
+    import numpy as np
 
     video_name = name + ".mp4"
 
@@ -72,13 +73,13 @@ def save_video(name: str, frame_list: list[Array], fps: int):
     video = cv2.VideoWriter(
         video_name,
         cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,  # FPS
+        fps,
         (frame_list[0].shape[1], frame_list[0].shape[0]),
     )
     for img in frame_list:
+        # Convert JAX array to numpy array
+        img = np.asarray(img)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        # cv2.imwrite(f"{name}.png", img)
-        # break
         video.write(img)
     video.release()
 

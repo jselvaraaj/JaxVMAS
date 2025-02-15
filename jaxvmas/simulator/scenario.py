@@ -98,7 +98,7 @@ class BaseScenario(PyTreeNode):
     def env_process_action(self, agent: Agent) -> tuple["BaseScenario", Agent]:
         # Do not override
         if agent.action_script is not None:
-            world = agent.action_callback(self.world)
+            agent, world = agent.action_callback(self.world)
             self = self.replace(world=world)
         # Customizable action processor
         self, agent = self.process_action(agent)

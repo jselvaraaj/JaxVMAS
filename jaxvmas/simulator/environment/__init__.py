@@ -2,6 +2,7 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from jaxvmas.simulator.environment.environment import Environment
 

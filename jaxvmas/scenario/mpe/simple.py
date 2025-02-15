@@ -13,6 +13,7 @@ class Scenario(BaseScenario):
         ScenarioUtils.check_kwargs_consumed(kwargs)
         # Make world
         world = World.create(batch_dim=batch_dim)
+
         # Add agents
         for i in range(1):
             agent = Agent.create(

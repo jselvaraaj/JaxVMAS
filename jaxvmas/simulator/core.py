@@ -283,15 +283,18 @@ class EntityState(JaxVectorizedObject):
 
 
 class AgentState(EntityState):
-    c: Float[Array, f"{batch_dim} {comm_dim}"]
+    c: Float[Array, f"{batch_dim} {comm_dim}"] | None
     force: Float[Array, f"{batch_dim} {pos_dim}"]
     torque: Float[Array, f"{batch_dim} 1"]
 
     @classmethod
     def create(cls, batch_dim: int, dim_c: int, dim_p: int):
         entity_state = EntityState.create(batch_dim, dim_c, dim_p)
-        # communication utterance
-        c = jnp.zeros((batch_dim, dim_c))
+        if dim_c > 0:
+            # communication utterance
+            c = jnp.zeros((batch_dim, dim_c))
+        else:
+            c = None
         # Agent force from actions
         force = jnp.zeros((batch_dim, dim_p))
         # Agent torque from actions
@@ -309,27 +312,47 @@ class AgentState(EntityState):
 
     def _reset(self, env_index: int | None = None) -> "AgentState":
         if env_index is None:
-            return self.replace(
-                c=jnp.zeros_like(self.c),
-                force=jnp.zeros_like(self.force),
-                torque=jnp.zeros_like(self.torque),
-            )
-        self = self.replace(
-            c=JaxUtils.where_from_index(env_index, jnp.zeros_like(self.c), self.c),
-            force=JaxUtils.where_from_index(
-                env_index, jnp.zeros_like(self.force), self.force
-            ),
-            torque=JaxUtils.where_from_index(
-                env_index, jnp.zeros_like(self.torque), self.torque
-            ),
-        )
+            if self.c is not None:
+                return self.replace(
+                    c=jnp.zeros_like(self.c),
+                    force=jnp.zeros_like(self.force),
+                    torque=jnp.zeros_like(self.torque),
+                )
+            else:
+                return self.replace(
+                    force=jnp.zeros_like(self.force),
+                    torque=jnp.zeros_like(self.torque),
+                )
+        else:
+            if self.c is not None:
+                self = self.replace(
+                    c=JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(self.c), self.c
+                    ),
+                    force=JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(self.force), self.force
+                    ),
+                    torque=JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(self.torque), self.torque
+                    ),
+                )
+            else:
+                self = self.replace(
+                    force=JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(self.force), self.force
+                    ),
+                    torque=JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(self.torque), self.torque
+                    ),
+                )
 
         self = super(AgentState, self)._reset(env_index)
 
         return self
 
     def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
-        self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
+        if dim_c > 0:
+            self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
         self = self.replace(
             force=jnp.zeros((self.batch_dim, dim_p)),
             torque=jnp.zeros((self.batch_dim, 1)),
@@ -342,9 +365,10 @@ class AgentState(EntityState):
             assert (
                 self.batch_dim is not None
             ), "First add an entity to the world before setting its state"
-            assert (
-                c.shape[0] == self.batch_dim
-            ), f"Internal state must match batch dim, got {c.shape[0]}, expected {self.batch_dim}"
+            if self.c is not None:
+                assert (
+                    c.shape[0] == self.batch_dim
+                ), f"Internal state must match batch dim, got {c.shape[0]}, expected {self.batch_dim}"
         elif "force" in kwargs:
             force = kwargs["force"]
             assert (
@@ -366,7 +390,7 @@ class AgentState(EntityState):
 
 class Action(JaxVectorizedObject):
     u: Float[Array, f"{batch_dim} {action_size_dim}"]
-    c: Float[Array, f"{batch_dim} {comm_dim}"]
+    c: Float[Array, f"{batch_dim} {comm_dim}"] | None
 
     u_range: float | Sequence[float]
     u_multiplier: float | Sequence[float]
@@ -388,7 +412,10 @@ class Action(JaxVectorizedObject):
         u_noise: float | Sequence[float],
     ):
         u = jnp.zeros((batch_dim, action_size))
-        c = jnp.zeros((batch_dim, comm_dim))
+        if comm_dim > 0:
+            c = jnp.zeros((batch_dim, comm_dim))
+        else:
+            c = None
 
         # control range
         _u_range = u_range
@@ -730,7 +757,7 @@ class Agent(Entity):
     max_f: float | None
     t_range: float | None
     max_t: float | None
-    action_script: Callable[["Agent", Action, "World"], None]
+    action_script: Callable[["Agent", "World"], tuple["Agent", "World"]]
     sensors: list[Sensor]
     c_noise: float
     silent: bool
@@ -768,7 +795,7 @@ class Agent(Entity):
         u_noise: float | Sequence[float] = 0.0,
         u_range: float | Sequence[float] = 1.0,
         u_multiplier: float | Sequence[float] = 1.0,
-        action_script: Callable[["Agent", Action, "World"], None] = None,
+        action_script: Callable[["Agent", "World"], tuple["Agent", "World"]] = None,
         sensors: list[Sensor] = None,
         c_noise: float = 0.0,
         silent: bool = True,
@@ -897,9 +924,13 @@ class Agent(Entity):
 
         return agent
 
-    def action_callback(self, world: "World"):
-        self._action_script(self, world)
-        if self._silent or world.dim_c == 0:
+    @property
+    def u_range(self):
+        return self.action.u_range
+
+    def action_callback(self, world: "World") -> "tuple[Agent, World]":
+        self, world = self.action_script(self, world)
+        if self.silent or world.dim_c == 0:
             assert (
                 self.action.c is None
             ), f"Agent {self.name} should not communicate but action script communicates"
@@ -914,6 +945,8 @@ class Agent(Entity):
             jnp.abs(self.action.u / self.action.u_multiplier_jax_array)
             <= self.action.u_range_jax_array
         ), f"Scripted physical action of {self.name} is out of range"
+
+        return self, world
 
     def _spawn(self, dim_c: int, dim_p: int) -> "Agent":
         if dim_c == 0:
