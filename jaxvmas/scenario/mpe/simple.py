@@ -6,7 +6,7 @@ from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
 
 
-class SimpleScenario(BaseScenario):
+class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, **kwargs):
         ScenarioUtils.check_kwargs_consumed(kwargs)
         # Make world

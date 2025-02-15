@@ -2,7 +2,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
-from jaxvmas.scenario.mpe.simple import SimpleScenario
+from jaxvmas.scenario.mpe.simple import Scenario
 from jaxvmas.simulator.utils import Color
 
 # Dimension type variables
@@ -14,16 +14,16 @@ dots_dim = "..."
 
 class TestSimpleScenario:
     @pytest.fixture
-    def scenario(self) -> SimpleScenario:
+    def scenario(self) -> Scenario:
         """Basic scenario fixture with default settings"""
-        return SimpleScenario.create()
+        return Scenario.create()
 
     @pytest.fixture
-    def world(self, scenario: SimpleScenario):
+    def world(self, scenario: Scenario):
         """World fixture with batch dimension of 32"""
         return scenario.make_world(batch_dim=32)
 
-    def test_make_world(self, scenario: SimpleScenario):
+    def test_make_world(self, scenario: Scenario):
         """Test world creation and initialization"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)
@@ -47,7 +47,7 @@ class TestSimpleScenario:
         assert landmark.color == Color.RED
 
     @eqx.filter_jit
-    def test_reset_world_at_jit(self, scenario: SimpleScenario):
+    def test_reset_world_at_jit(self, scenario: Scenario):
         """Test that reset_world_at is jit-compatible"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)
@@ -61,7 +61,7 @@ class TestSimpleScenario:
         scenario = scenario.reset_world_at(seed=0, env_index=0)
         assert scenario.world.batch_dim == batch_dim
 
-    def test_reset_world_at(self, scenario: SimpleScenario):
+    def test_reset_world_at(self, scenario: Scenario):
         """Test reset functionality and state changes"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)
@@ -87,11 +87,11 @@ class TestSimpleScenario:
         assert jnp.all((agent_pos_single >= -1.0) & (agent_pos_single <= 1.0))
         assert jnp.all((landmark_pos_single >= -1.0) & (landmark_pos_single <= 1.0))
 
-    def test_reward_jit(self, scenario: SimpleScenario):
+    def test_reward_jit(self, scenario: Scenario):
         """Test that reward computation is jit-compatible"""
 
         @eqx.filter_jit
-        def _reward(scenario: SimpleScenario):
+        def _reward(scenario: Scenario):
             reward = scenario.reward(scenario.world.agents[0])
             return reward
 
@@ -103,7 +103,7 @@ class TestSimpleScenario:
         reward = _reward(scenario)
         assert reward.shape == (batch_dim,)
 
-    def test_reward(self, scenario: SimpleScenario):
+    def test_reward(self, scenario: Scenario):
         """Test reward computation logic"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)
@@ -124,7 +124,7 @@ class TestSimpleScenario:
         assert jnp.array_equal(actual_reward, expected_reward)
         assert actual_reward.shape == (batch_dim,)
 
-    def test_observation_jit(self, scenario: SimpleScenario):
+    def test_observation_jit(self, scenario: Scenario):
         """Test that observation computation is jit-compatible"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)
@@ -132,7 +132,7 @@ class TestSimpleScenario:
         scenario = scenario.reset_world_at(seed=0)
 
         @eqx.filter_jit
-        def _observation(scenario: SimpleScenario):
+        def _observation(scenario: Scenario):
             obs = scenario.observation(scenario.world.agents[0])
             return obs
 
@@ -142,7 +142,7 @@ class TestSimpleScenario:
             4,
         )  # 2 for velocity + 2 for relative landmark position
 
-    def test_observation(self, scenario: SimpleScenario):
+    def test_observation(self, scenario: Scenario):
         """Test observation computation logic"""
         batch_dim = 32
         world = scenario.make_world(batch_dim=batch_dim)

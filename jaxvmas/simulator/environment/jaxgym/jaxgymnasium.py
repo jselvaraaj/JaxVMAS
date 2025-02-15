@@ -54,6 +54,10 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
             render_mode=render_mode,
         )
 
+    @property
+    def unwrapped(self) -> Environment:
+        return self.env
+
     def step(self, action: list) -> tuple["JaxGymnasiumWrapper", EnvData]:
         """Take a step in the environment.
 
