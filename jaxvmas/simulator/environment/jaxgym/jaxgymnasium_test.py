@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
@@ -22,7 +23,7 @@ class MockScenario(BaseScenario):
     def make_world(self, batch_dim: int, **kwargs) -> World:
         return MockWorld.create(batch_dim=batch_dim)
 
-    def reset_world_at(self, env_index: int | None) -> "MockScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         return self
 
     def observation(self, agent: Agent) -> Array:
@@ -36,8 +37,12 @@ class TestJaxGymnasiumWrapper:
     @pytest.fixture
     def wrapper(self):
         """Create test wrapper with mock environment."""
+        PRNG_key = jax.random.PRNGKey(0)
         env = Environment.create(
-            scenario=MockScenario.create(), num_envs=1, terminated_truncated=True
+            scenario=MockScenario.create(),
+            num_envs=1,
+            terminated_truncated=True,
+            PRNG_key=PRNG_key,
         )
         mock_agent_1 = Agent.create(name="agent_0", batch_dim=1, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1", batch_dim=1, dim_c=2, dim_p=2)
@@ -56,16 +61,23 @@ class TestJaxGymnasiumWrapper:
 
     def test_create_assertions(self):
         """Test create method assertions."""
+        PRNG_key = jax.random.PRNGKey(0)
         # Test num_envs assertion
         env = Environment.create(
-            scenario=MockScenario.create(), num_envs=2, terminated_truncated=True
+            scenario=MockScenario.create(),
+            num_envs=2,
+            terminated_truncated=True,
+            PRNG_key=PRNG_key,
         )
         with pytest.raises(AssertionError):
             JaxGymnasiumWrapper.create(env=env)
 
         # Test terminated_truncated assertion
         env = Environment.create(
-            scenario=MockScenario.create(), num_envs=1, terminated_truncated=False
+            scenario=MockScenario.create(),
+            num_envs=1,
+            terminated_truncated=False,
+            PRNG_key=PRNG_key,
         )
         with pytest.raises(AssertionError):
             JaxGymnasiumWrapper.create(env=env)
@@ -78,6 +90,8 @@ class TestJaxGymnasiumWrapper:
             return wrapper.step(action)
 
         action = [jnp.ones((1, 2)), jnp.zeros((1, 2))]
+        PRNG_key = jax.random.PRNGKey(0)
+        wrapper, _ = wrapper.reset(PRNG_key=PRNG_key)
         new_wrapper, env_data = step(wrapper, action)
 
         assert isinstance(new_wrapper, JaxGymnasiumWrapper)
@@ -86,16 +100,18 @@ class TestJaxGymnasiumWrapper:
         assert isinstance(env_data.rews, list)
         assert env_data.terminated.shape == tuple()
         assert env_data.truncated.shape == tuple()
-        assert env_data.done is None
+        assert env_data.done.shape == tuple()
 
     def test_reset_jit(self, wrapper: JaxGymnasiumWrapper):
         """Test jitted reset function."""
 
         @eqx.filter_jit
-        def reset(wrapper: JaxGymnasiumWrapper):
-            return wrapper.reset()
+        def reset(wrapper: JaxGymnasiumWrapper, PRNG_key: Array):
+            return wrapper.reset(PRNG_key=PRNG_key)
 
-        new_wrapper, (obs, info) = reset(wrapper)
+        PRNG_key = jax.random.PRNGKey(0)
+        wrapper, _ = wrapper.reset(PRNG_key=PRNG_key)
+        new_wrapper, (obs, info) = reset(wrapper, PRNG_key)
 
         assert isinstance(new_wrapper, JaxGymnasiumWrapper)
         assert isinstance(obs, list)
@@ -105,8 +121,12 @@ class TestJaxGymnasiumWrapper:
 
     def test_list_spaces(self):
         """Test wrapper with list spaces."""
+        PRNG_key = jax.random.PRNGKey(0)
         env = Environment.create(
-            scenario=MockScenario.create(), num_envs=1, terminated_truncated=True
+            scenario=MockScenario.create(),
+            num_envs=1,
+            terminated_truncated=True,
+            PRNG_key=PRNG_key,
         )
         agent_0 = Agent.create(name="agent_0", batch_dim=1, dim_c=2, dim_p=2)
         agent_1 = Agent.create(name="agent_1", batch_dim=1, dim_c=2, dim_p=2)

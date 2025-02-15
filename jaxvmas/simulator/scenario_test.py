@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pytest
 from jaxtyping import Array, Float
@@ -24,7 +25,7 @@ class MockScenario(BaseScenario):
         world = world.add_landmark(landmark)
         return world
 
-    def reset_world_at(self, env_index: int | None) -> "MockScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         agent = self.world._agents[0]
         if env_index is None:
             agent = agent.set_pos(jnp.ones((self.world.batch_dim, 2)))
@@ -79,13 +80,14 @@ class TestBaseScenario:
         assert scenario.world.batch_dim == 2
 
     def test_reset_world(self, scenario: MockScenario):
+        PRNG_key = jax.random.PRNGKey(0)
         # Test reset with specific index
-        scenario = scenario.env_reset_world_at(env_index=0)
+        scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=0)
         assert jnp.all(scenario.world._agents[0].state.pos[0] == 1.0)
         assert not jnp.all(scenario.world._agents[0].state.pos[1] == 1.0)
 
         # Test reset all environments
-        scenario = scenario.env_reset_world_at(env_index=None)
+        scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
         assert jnp.all(scenario.world._agents[0].state.pos == 1.0)
 
     def test_observation(self, scenario: MockScenario):
@@ -126,7 +128,7 @@ class TestBaseScenario:
     def test_done(self, scenario: MockScenario):
         done = scenario.done()
         assert done.shape == (2,)
-        assert jnp.all(done == False)
+        assert not jnp.any(done)
 
     def test_is_jittable(self, scenario: MockScenario):
         # Test jit compatibility of observation
@@ -155,10 +157,13 @@ class TestBaseScenario:
 
         # Test jit compatibility of reset
         @eqx.filter_jit
-        def reset_scenario(scenario: MockScenario, env_index: int | None):
-            return scenario.env_reset_world_at(env_index)
+        def reset_scenario(
+            scenario: MockScenario, PRNG_key: Array, env_index: int | None
+        ):
+            return scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=env_index)
 
-        reset_scen = reset_scenario(scenario, 0)
+        PRNG_key = jax.random.PRNGKey(0)
+        reset_scen = reset_scenario(scenario, PRNG_key, 0)
         assert jnp.all(reset_scen.world._agents[0].state.pos[0] == 1.0)
 
         # Test jit compatibility of process_action

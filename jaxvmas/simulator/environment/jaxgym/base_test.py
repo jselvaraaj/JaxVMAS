@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pytest
 from jaxtyping import Array, Float
@@ -29,7 +30,7 @@ class MockScenario(BaseScenario):
     def make_world(self, batch_dim: int, **kwargs) -> World:
         return MockWorld.create(batch_dim=batch_dim)
 
-    def reset_world_at(self, env_index: int | None) -> "MockScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         return self
 
     def observation(self, agent: Agent) -> Array:
@@ -129,13 +130,18 @@ class TestEnvData:
 class TestBaseJaxGymWrapper:
     @pytest.fixture
     def wrapper(self):
-        env = Environment.create(scenario=MockScenario.create(), num_envs=2)
+        PRNG_key = jax.random.PRNGKey(0)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env = Environment.create(
+            scenario=MockScenario.create(), num_envs=2, PRNG_key=key_step_i
+        )
         mock_agent_1 = Agent.create(name="agent_0", batch_dim=2, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1", batch_dim=2, dim_c=2, dim_p=2)
         world = env.world
         world = world.add_agent(mock_agent_1)
         world = world.add_agent(mock_agent_2)
         env = env.replace(world=world)
+        env, _ = env.reset(PRNG_key=key_step)
         return MockJaxGymWrapper.create(env=env, vectorized=True)
 
     def test_create(self, wrapper: BaseJaxGymWrapper):
@@ -171,7 +177,7 @@ class TestBaseJaxGymWrapper:
             wrapper._compress_infos(42)
 
     def test_action_list_to_array(self, wrapper: BaseJaxGymWrapper):
-        actions = [jnp.ones(2), jnp.zeros(2)]
+        actions = [jnp.ones((2, 2)), jnp.zeros((2, 2))]
         converted = wrapper._action_list_to_array(actions)
         assert len(converted) == 2
         assert converted[0].shape == (2, 2)

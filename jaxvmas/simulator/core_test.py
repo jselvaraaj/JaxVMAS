@@ -108,7 +108,7 @@ class TestAgentState:
 
         # Test spawn with zero dim_c
         spawned_state_zero_c = agent_state._spawn(dim_c=0, dim_p=4)
-        assert spawned_state_zero_c.c.shape == (2, 0)
+        assert spawned_state_zero_c.c is None
         assert spawned_state_zero_c.force.shape == (2, 4)
         assert spawned_state_zero_c.torque.shape == (2, 1)
 
@@ -389,7 +389,7 @@ class TestAgent:
         # Test spawn with silent agent
         silent_agent = basic_agent.replace(silent=True)
         spawned_silent = silent_agent._spawn(dim_c=4, dim_p=2)
-        assert spawned_silent.state.c.shape[1] == 0  # No communication dimension
+        assert spawned_silent.state.c is None  # No communication dimension
 
         # Test reset
         reset_agent = basic_agent._reset(env_index=0)
@@ -584,7 +584,7 @@ class TestWorld:
 
     def test_entity_index_map(self, world_with_agent):
         # Test entity index map is properly updated
-        world = world_with_agent.step()
+        world = world_with_agent.reset()
         assert len(world._entity_index_map) == 1
         assert world._agents[0].name in world._entity_index_map
         assert world._entity_index_map[world._agents[0].name] == 0
@@ -675,6 +675,7 @@ class TestWorld:
         )
 
         world = world.replace(_agents=[agent1, agent2])
+        world = world.reset()
 
         # Add joint constraint
         from jaxvmas.simulator.joints import JointConstraint
@@ -726,6 +727,7 @@ class TestWorld:
         def create_world_with_entities(world: World, agent: Agent, landmark: Landmark):
             world = world.add_agent(agent)
             world = world.add_landmark(landmark)
+            world = world.reset()
             return world
 
         world = create_world_with_entities(basic_world, agent, landmark)
@@ -773,7 +775,6 @@ class TestWorld:
             )
             world = world.add_agent(agent2)
             world = world.replace(_substeps=2)
-
             joint = Joint.create(
                 batch_dim=2,
                 entity_a=world._agents[0],
@@ -783,6 +784,8 @@ class TestWorld:
                 dist=1.0,
             )
             world = world.add_joint(joint)
+
+            world = world.reset()
 
             return world.step()
 

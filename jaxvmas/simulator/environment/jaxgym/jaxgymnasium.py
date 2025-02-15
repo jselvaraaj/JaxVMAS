@@ -8,7 +8,7 @@ Ensures all operations are jittable and compatible with JAX transformations.
 """
 
 
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.simulator.environment.environment import Environment
@@ -86,12 +86,14 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
 
     def reset(
         self,
+        PRNG_key: Array,
         *,
         options: dict | None = None,
     ) -> tuple["JaxGymnasiumWrapper", tuple[PyTree, dict]]:
 
         # Reset environment state
         env, (obs, info) = self.env.reset_at(
+            PRNG_key=PRNG_key,
             index=0,
             return_observations=True,
             return_info=True,

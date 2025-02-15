@@ -47,14 +47,14 @@ class MockScenario(BaseScenario):
         world = world.add_agent(agent2)
         return world
 
-    def reset_world_at(self, env_index: int | None) -> "MockScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         # Reset all agents in the world at the specified index
         world = self.world
         if env_index is not None:
-            world = world.reset(env_index)
+            world = world.reset(env_index=env_index)
         else:
             # Reset all environments
-            world = world.reset(None)
+            world = world.reset(env_index=None)
         self = self.replace(world=world)
         return self
 
@@ -74,24 +74,26 @@ class TestEnvironment:
         """Basic environment fixture with default settings"""
         scenario = MockScenario.create()
         batch_dim = 32
+        PRNG_key = jax.random.PRNGKey(0)
         return Environment.create(
             scenario=scenario,
             num_envs=batch_dim,
             max_steps=100,
             continuous_actions=True,
-            PRNG_key=0,
+            PRNG_key=PRNG_key,
         )
 
     @pytest.fixture
     def discrete_env(self):
         """Environment fixture with discrete actions"""
         scenario = MockScenario.create()
+        PRNG_key = jax.random.PRNGKey(0)
         return Environment.create(
             scenario=scenario,
             num_envs=32,
             max_steps=100,
             continuous_actions=False,
-            PRNG_key=0,
+            PRNG_key=PRNG_key,
         )
 
     def test_create(self, basic_env: Environment):
@@ -107,20 +109,24 @@ class TestEnvironment:
     def test_reset(self, basic_env: Environment):
         """Test environment reset functionality"""
         # Full reset
-        env, obs = basic_env.reset()
+        PRNG_key = jax.random.PRNGKey(0)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, obs = basic_env.reset(PRNG_key=key_step_i)
         assert isinstance(obs, list)
         assert len(obs) == basic_env.n_agents
         assert obs[0].shape == (basic_env.num_envs, 2)  # pos observation
         assert jnp.all(env.steps == 0)
 
         # Reset with info
-        env, result = basic_env.reset(return_info=True)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, result = basic_env.reset(PRNG_key=key_step_i, return_info=True)
         obs, info = result
         assert isinstance(info, list)
         assert len(info) == basic_env.n_agents
 
         # Reset with dones
-        env, result = basic_env.reset(return_dones=True)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, result = basic_env.reset(PRNG_key=key_step_i, return_dones=True)
         obs, dones = result
         assert dones.shape == (basic_env.num_envs,)
 
@@ -131,7 +137,9 @@ class TestEnvironment:
         basic_env, _ = basic_env.step(actions)
 
         # Reset specific environment
-        env, result = basic_env.reset_at(0)
+        PRNG_key = jax.random.PRNGKey(0)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, result = basic_env.reset_at(PRNG_key=key_step_i, index=0)
         assert isinstance(result, list)
         assert len(result) == basic_env.n_agents
         assert jnp.all(env.steps[0] == 0)
@@ -139,7 +147,7 @@ class TestEnvironment:
 
         # Test invalid index
         with pytest.raises(AssertionError):
-            basic_env.reset_at(32)
+            basic_env.reset_at(PRNG_key=key_step_i, index=32)
 
     def test_step(self, basic_env: Environment):
         """Test environment stepping"""
@@ -180,8 +188,10 @@ class TestEnvironment:
         assert isinstance(discrete_env.action_space.spaces[0], Discrete)
 
         # Test with dict spaces
+        PRNG_key = jax.random.PRNGKey(0)
         dict_env = Environment.create(
             scenario=MockScenario.create(),
+            PRNG_key=PRNG_key,
             num_envs=32,
             dict_spaces=True,
         )
@@ -194,8 +204,10 @@ class TestEnvironment:
         assert len(basic_env.observation_space.spaces) == basic_env.n_agents
 
         # Test with dict spaces
+        PRNG_key = jax.random.PRNGKey(0)
         dict_env = Environment.create(
             scenario=MockScenario.create(),
+            PRNG_key=PRNG_key,
             num_envs=32,
             dict_spaces=True,
         )
@@ -216,10 +228,12 @@ class TestEnvironment:
 
     def test_max_steps(self):
         """Test max steps functionality"""
+        PRNG_key = jax.random.PRNGKey(0)
         env = Environment.create(
             scenario=MockScenario.create(),
             num_envs=32,
             max_steps=2,
+            PRNG_key=PRNG_key,
         )
 
         # Step until max steps
@@ -234,11 +248,13 @@ class TestEnvironment:
 
     def test_multidiscrete_actions(self):
         """Test multidiscrete action space"""
+        PRNG_key = jax.random.PRNGKey(0)
         env = Environment.create(
             scenario=MockScenario.create(),
             num_envs=32,
             continuous_actions=False,
             multidiscrete_actions=True,
+            PRNG_key=PRNG_key,
         )
 
         # Test action space
@@ -254,11 +270,13 @@ class TestEnvironment:
 
     def test_terminated_truncated(self):
         """Test terminated/truncated functionality"""
+        PRNG_key = jax.random.PRNGKey(0)
         env = Environment.create(
             scenario=MockScenario.create(),
             num_envs=32,
             max_steps=2,
             terminated_truncated=True,
+            PRNG_key=PRNG_key,
         )
 
         actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
@@ -277,21 +295,24 @@ class TestEnvironment:
 
     def test_is_jittable(self, basic_env: Environment):
         """Test jit compatibility of all major functions"""
+        PRNG_key = jax.random.PRNGKey(0)
 
         # Test jit compatibility of reset
         @eqx.filter_jit
-        def reset_env(env: Environment):
-            return env.reset()
+        def reset_env(env: Environment, PRNG_key: Array):
+            return env.reset(PRNG_key=PRNG_key)
 
-        env, obs = reset_env(basic_env)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, obs = reset_env(basic_env, key_step_i)
         assert len(obs) == basic_env.n_agents
 
         # Test jit compatibility of reset_at
         @eqx.filter_jit
-        def reset_at_env(env: Environment, index: int):
-            return env.reset_at(index)
+        def reset_at_env(env: Environment, PRNG_key: Array, index: int):
+            return env.reset_at(PRNG_key=PRNG_key, index=index)
 
-        env, obs = reset_at_env(basic_env, 0)
+        key_step, key_step_i = jax.random.split(PRNG_key)
+        env, obs = reset_at_env(basic_env, key_step_i, 0)
         assert len(obs) == basic_env.n_agents
 
         # Test jit compatibility of step

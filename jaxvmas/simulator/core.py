@@ -353,6 +353,8 @@ class AgentState(EntityState):
     def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
         if dim_c > 0:
             self = self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
+        else:
+            self = self.replace(c=None)
         self = self.replace(
             force=jnp.zeros((self.batch_dim, dim_p)),
             torque=jnp.zeros((self.batch_dim, 1)),
@@ -365,7 +367,7 @@ class AgentState(EntityState):
             assert (
                 self.batch_dim is not None
             ), "First add an entity to the world before setting its state"
-            if self.c is not None:
+            if c is not None:
                 assert (
                     c.shape[0] == self.batch_dim
                 ), f"Internal state must match batch dim, got {c.shape[0]}, expected {self.batch_dim}"
@@ -2009,8 +2011,8 @@ class World(JaxVectorizedObject):
             # Update joint states after entity states have been updated
             new_joints = {}
             for joint_key, joint in self._joints.items():
-                entity_a = self.entities[_entity_index_map[joint.entity_a.name]]
-                entity_b = self.entities[_entity_index_map[joint.entity_b.name]]
+                entity_a = self.entities[self._entity_index_map[joint.entity_a.name]]
+                entity_b = self.entities[self._entity_index_map[joint.entity_b.name]]
                 updated_joint = joint.update_joint_state(entity_a, entity_b)
                 new_joints[joint_key] = updated_joint
             self = self.replace(_joints=new_joints)

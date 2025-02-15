@@ -82,12 +82,14 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
 
     def reset(
         self,
+        PRNG_key: Array,
         *,
         options: dict | None = None,
     ) -> tuple["JaxGymnasiumVecWrapper", tuple[PyTree, dict]]:
 
         # Reset environment state
         env, (obs, info) = self.env.reset(
+            PRNG_key=PRNG_key,
             return_observations=True,
             return_info=True,
         )
