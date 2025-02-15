@@ -4,6 +4,8 @@
 
 from typing import Optional, Union
 
+from jaxtyping import Array
+
 import jaxvmas.scenario as scenarios
 from jaxvmas.simulator.environment import Environment, Wrapper
 from jaxvmas.simulator.scenario import BaseScenario
@@ -12,10 +14,10 @@ from jaxvmas.simulator.scenario import BaseScenario
 def make_env(
     scenario: Union[str, BaseScenario],
     num_envs: int,
+    PRNG_key: Array,
     continuous_actions: bool = True,
     wrapper: Optional[Union[Wrapper, str]] = None,
     max_steps: Optional[int] = None,
-    seed: Optional[int] = None,
     dict_spaces: bool = False,
     multidiscrete_actions: bool = False,
     clamp_actions: bool = False,
@@ -72,14 +74,14 @@ def make_env(
     if isinstance(scenario, str):
         if not scenario.endswith(".py"):
             scenario += ".py"
-        scenario = scenarios.load(scenario).Scenario()
+        scenario = scenarios.load(scenario).Scenario.create()
 
-    env = Environment(
+    env = Environment.create(
         scenario,
         num_envs=num_envs,
         continuous_actions=continuous_actions,
         max_steps=max_steps,
-        seed=seed,
+        PRNG_key=PRNG_key,
         dict_spaces=dict_spaces,
         multidiscrete_actions=multidiscrete_actions,
         clamp_actions=clamp_actions,

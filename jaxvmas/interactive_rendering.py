@@ -15,7 +15,8 @@ from argparse import ArgumentParser, BooleanOptionalAction
 from operator import add
 from typing import Dict, Union
 
-import numpy as np
+import jax
+import jax.numpy as jnp
 from jaxtyping import Array
 
 from jaxvmas.make_env import make_env
@@ -57,10 +58,10 @@ class InteractiveEnv:
         self.agents = self.env.unwrapped.agents
         self.continuous = self.env.unwrapped.continuous_actions
         self.reset = False
-        self.keys = np.array(
+        self.keys = jnp.asarray(
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         )  # up, down, left, right, rot+, rot-
-        self.keys2 = np.array(
+        self.keys2 = jnp.asarray(
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         )  # up, down, left, right, rot+, rot-
         self.u = [0] * (3 if self.continuous else 2)
@@ -77,7 +78,8 @@ class InteractiveEnv:
 
         self.text_lines: list[rendering.TextLine] = []
         self.font_size = 15
-        self.env.render()
+        self.env = self.env.render()
+
         self.text_idx = len(self.env.unwrapped.text_lines)
         self._init_text()
         self.env.unwrapped.viewer.window.on_key_press = self._key_press
@@ -122,7 +124,13 @@ class InteractiveEnv:
                     : self.agents[self.current_agent_index2].dynamics.needed_action_size
                 ]
 
-            obs, rew, done, info = self.env.step(action_list)
+            self.env, env_data = self.env.step(action_list)
+            obs, rew, done, info = (
+                env_data.obs,
+                env_data.rews,
+                env_data.done,
+                env_data.info,
+            )
 
             if self.display_info and self.n_agents > 0:
                 # TODO: Determine number of lines of obs_str and render accordingly
@@ -277,28 +285,28 @@ class InteractiveEnv:
                 self.keys2[4] - self.keys2[5],
             ]
         else:
-            if np.sum(self.keys[:4]) >= 1:
-                self.u[0] = np.argmax(self.keys[:4]) + 1
+            if jnp.sum(self.keys[:4]) >= 1:
+                self.u[0] = jnp.argmax(self.keys[:4]) + 1
             else:
                 self.u[0] = 0
-            if np.sum(self.keys[4:]) >= 1:
-                self.u[1] = np.argmax(self.keys[4:]) + 1
+            if jnp.sum(self.keys[4:]) >= 1:
+                self.u[1] = jnp.argmax(self.keys[4:]) + 1
             else:
                 self.u[1] = 0
 
-            if np.sum(self.keys2[:4]) >= 1:
-                self.u2[0] = np.argmax(self.keys2[:4]) + 1
+            if jnp.sum(self.keys2[:4]) >= 1:
+                self.u2[0] = jnp.argmax(self.keys2[:4]) + 1
             else:
                 self.u2[0] = 0
-            if np.sum(self.keys2[4:]) >= 1:
-                self.u2[1] = np.argmax(self.keys2[4:]) + 1
+            if jnp.sum(self.keys2[4:]) >= 1:
+                self.u2[1] = jnp.argmax(self.keys2[4:]) + 1
             else:
                 self.u2[1] = 0
 
     @staticmethod
     def format_obs(obs):
         if isinstance(obs, Array):
-            return list(np.around(obs.tolist(), decimals=2))
+            return list(jnp.around(obs, decimals=2))
         elif isinstance(obs, Dict):
             return {key: InteractiveEnv.format_obs(value) for key, value in obs.items()}
         else:
@@ -341,14 +349,16 @@ def render_interactively(
         ... )
 
     """
+    seed = 0
+    key = jax.random.PRNGKey(seed)
 
     InteractiveEnv(
         make_env(
             scenario=scenario,
             num_envs=1,
             continuous_actions=True,
-            wrapper="gym",
-            seed=0,
+            wrapper="GYMNASIUM",
+            PRNG_key=key,
             # Environment specific variables
             **kwargs,
         ),

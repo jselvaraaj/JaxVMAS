@@ -16,10 +16,11 @@ class Wrapper(Enum):
                 JaxGymnasiumWrapper,
             )
 
-            return JaxGymnasiumWrapper(env, **kwargs)
+            env = env.replace(terminated_truncated=True)
+            return JaxGymnasiumWrapper.create(env, **kwargs)
         elif self is self.GYMNASIUM_VEC:
             from jaxvmas.simulator.environment.jaxgym.jaxgymnasium_vec import (
                 JaxGymnasiumVecWrapper,
             )
 
-            return JaxGymnasiumVecWrapper(env, **kwargs)
+            return JaxGymnasiumVecWrapper.create(env, **kwargs)

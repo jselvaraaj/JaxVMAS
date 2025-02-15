@@ -1149,7 +1149,7 @@ class World(JaxVectorizedObject):
     # return all entities in the world
     @property
     def entities(self) -> list[Entity]:
-        return self._landmarks + self._agents
+        return self._agents + self._landmarks
 
     # return all agents controllable by external policies
     @property

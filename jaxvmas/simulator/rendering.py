@@ -7,9 +7,9 @@ from __future__ import annotations
 import math
 import os
 import sys
+from itertools import chain
 from typing import Callable
 
-import jax
 import jax.numpy as jnp
 import pyglet
 from jaxtyping import Array, Float, Int
@@ -122,10 +122,10 @@ class Viewer:
 
     def set_bounds(
         self,
-        left: Float[Array, ""],
-        right: Float[Array, ""],
-        bottom: Float[Array, ""],
-        top: Float[Array, ""],
+        left: Float[Array, "..."],
+        right: Float[Array, "..."],
+        bottom: Float[Array, "..."],
+        top: Float[Array, "..."],
     ) -> None:
         assert right > left and top > bottom
         self.bounds = jnp.array([left, right, bottom, top])
@@ -141,6 +141,9 @@ class Viewer:
     def add_onetime(self, geom: Geom) -> None:
         self.onetime_geoms.append(geom)
 
+    def add_onetime_list(self, geoms: list[Geom]) -> None:
+        self.onetime_geoms.extend(geoms)
+
     def render(self, return_rgb_array: bool = False) -> None | Int[Array, f"{n} {n} 3"]:
         glClearColor(1, 1, 1, 1)
         self.window.clear()
@@ -148,21 +151,41 @@ class Viewer:
         self.window.dispatch_events()
 
         self.transform.enable()
-        for geom in self.geoms + self.onetime_geoms:
-            geom.render()
+        text_lines: list[TextLine] = []
+        for geom in chain(self.geoms, self.onetime_geoms):
+            if isinstance(geom, TextLine):
+                text_lines.append(geom)
+            else:
+                geom.render()
+
         self.transform.disable()
+
+        for text_line in text_lines:
+            text_line.render()
+
+        pyglet.gl.glMatrixMode(pyglet.gl.GL_PROJECTION)
+        pyglet.gl.glLoadIdentity()
+        gluOrtho2D(0, self.width, 0, self.height)
 
         arr = None
         if return_rgb_array:
-            buffer = pyglet.image.get_buffer_manager().get_color_buffer()
-            image_data = buffer.get_image_data()
-            # Convert buffer to JAX array directly
-            arr = jnp.frombuffer(image_data.get_data(), dtype=jnp.uint8)
-            arr = arr.reshape(buffer.height, buffer.width, 4)
-            arr = arr[::-1, :, 0:3]
-
+            arr = self.get_array()
         self.window.flip()
         self.onetime_geoms = []
+        return arr
+
+    def get_array(self):
+        buffer = pyglet.image.get_buffer_manager().get_color_buffer()
+        image_data = buffer.get_image_data()
+        arr = jnp.frombuffer(image_data.get_data(), dtype=jnp.uint8)
+        # In https://github.com/openai/gym-http-api/issues/2, we
+        # discovered that someone using Xmonad on Arch was having
+        # a window of size 598 x 398, though a 600 x 400 window
+        # was requested. (Guess Xmonad was preserving a pixel for
+        # the boundary.) So we use the buffer height/width rather
+        # than the requested one.
+        arr = arr.reshape((buffer.height, buffer.width, 4))
+        arr = arr[::-1, :, 0:3]
         return arr
 
 
@@ -225,9 +248,6 @@ class Transform(Attr):
     def set_scale(self, newx: float, newy: float) -> None:
         self.scale = (float(newx), float(newy))
 
-    def set_color(self, r: float, g: float, b: float, alpha: float = 1.0) -> None:
-        self._color.vec4 = (r, g, b, alpha)
-
 
 class Color(Attr):
     def __init__(self, vec4: tuple[float, float, float, float]):
@@ -257,6 +277,44 @@ class LineWidth(Attr):
         glLineWidth(self.stroke)
 
 
+class TextLine(Geom):
+    def __init__(
+        self,
+        text: str = "",
+        font_size: int = 15,
+        x: float = 0.0,
+        y: float = 0.0,
+    ):
+        super().__init__()
+
+        if pyglet.font.have_font("Courier"):
+            font = "Courier"
+        elif pyglet.font.have_font("Secret Code"):
+            font = "Secret Code"
+        else:
+            font = None
+
+        self.label = pyglet.text.Label(
+            text,
+            font_name=font,
+            font_size=font_size,
+            color=(0, 0, 0, 255),
+            x=x,
+            y=y,
+            anchor_x="left",
+            anchor_y="bottom",
+        )
+
+    def render1(self):
+        if self.label is not None:
+            self.label.draw()
+
+    def set_text(self, text: str, font_size: None | int = None) -> None:
+        self.label.text = text
+        if font_size is not None:
+            self.label.font_size = font_size
+
+
 class Point(Geom):
     def render1(self):
         glBegin(GL_POINTS)
@@ -264,13 +322,43 @@ class Point(Geom):
         glEnd()
 
 
+class Image(Geom):
+    def __init__(
+        self, img: Float[Array, f"{n} {n} 4"], x: float, y: float, scale: float
+    ):
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.scale = scale
+        img_shape = img.shape
+        # Convert to uint8 using JAX
+        img = jnp.asarray(img, dtype=jnp.uint8).reshape(-1)
+        # Get device array for OpenGL
+        tex_data = (pyglet.gl.GLubyte * img.size)(*img)
+        pyg_img = pyglet.image.ImageData(
+            img_shape[1],
+            img_shape[0],
+            "RGBA",
+            tex_data,
+            pitch=img_shape[1] * img_shape[2] * 1,
+        )
+        self.img = pyg_img
+        self.sprite = pyglet.sprite.Sprite(
+            img=self.img, x=self.x, y=self.y, subpixel=True
+        )
+        self.sprite.update(scale=self.scale)
+
+    def render1(self):
+        self.sprite.draw()
+
+
 class FilledPolygon(Geom):
     def __init__(
         self, vertices: Float[Array, f"{vertex} {dim_2}"], draw_border: bool = True
     ):
         super().__init__()
-        self.vertices = vertices
         self.draw_border = draw_border
+        self.vertices = vertices
 
     def render1(self):
         if len(self.vertices) == 4:
@@ -291,6 +379,18 @@ class FilledPolygon(Geom):
             for v in self.vertices:
                 glVertex3f(v[0], v[1], 0)
             glEnd()
+
+
+class Compound(Geom):
+    def __init__(self, gs: list[Geom]):
+        super().__init__()
+        self.gs = gs
+        for g in self.gs:
+            g.attrs = [a for a in g.attrs if not isinstance(a, Color)]
+
+    def render1(self):
+        for g in self.gs:
+            g.render()
 
 
 class PolyLine(Geom):
@@ -339,57 +439,6 @@ class Line(Geom):
         self.linewidth.stroke = x
 
 
-def make_circle(
-    radius: float = 10, res: int = 30, filled: bool = True, angle: float = 2 * math.pi
-) -> FilledPolygon | PolyLine:
-    points = []
-    for i in range(res):
-        ang = -angle / 2 + angle * i / res
-        points.append((math.cos(ang) * radius, math.sin(ang) * radius))
-
-    if angle % (2 * math.pi) != 0:
-        points.append((0, 0))
-
-    points = jnp.array(points)
-    return FilledPolygon(points) if filled else PolyLine(points, True)
-
-
-def make_polygon(
-    vertices: Float[Array, f"{vertex} {dim_2}"],
-    filled: bool = True,
-    draw_border: bool = True,
-) -> FilledPolygon | PolyLine:
-    if filled:
-        return FilledPolygon(vertices, draw_border=draw_border)
-    else:
-        return PolyLine(vertices, True)
-
-
-def make_polyline(vertices: Float[Array, f"{vertex} {dim_2}"]) -> PolyLine:
-    return PolyLine(vertices, False)
-
-
-def make_capsule(length: float, width: float) -> Compound:
-    l, r, t, b = 0, length, width / 2, -width / 2
-    box = make_polygon(jnp.array([(l, b), (l, t), (r, t), (r, b)]))
-    circ0 = make_circle(width / 2)
-    circ1 = make_circle(width / 2)
-    circ1.add_attr(Transform(translation=(length, 0)))
-    return Compound([box, circ0, circ1])
-
-
-class Compound(Geom):
-    def __init__(self, gs: list[Geom]):
-        super().__init__()
-        self.gs = gs
-        for g in self.gs:
-            g.attrs = [a for a in g.attrs if not isinstance(a, Color)]
-
-    def render1(self):
-        for g in self.gs:
-            g.render()
-
-
 class Grid(Geom):
     def __init__(self, spacing: float = 0.1, length: float = 50, width: float = 0.5):
         super().__init__()
@@ -411,75 +460,6 @@ class Grid(Geom):
 
     def set_linewidth(self, x: float) -> None:
         self.linewidth.stroke = x
-
-
-class Image(Geom):
-    def __init__(
-        self, img: Float[Array, f"{n} {n} 4"], x: float, y: float, scale: float
-    ):
-        super().__init__()
-        self.x = x
-        self.y = y
-        self.scale = scale
-        img_shape = img.shape
-        # Convert to uint8 using JAX
-        img = jnp.asarray(img, dtype=jnp.uint8)
-        # Get device array for OpenGL
-        img_data = jax.device_get(img.reshape(-1))
-        tex_data = (pyglet.gl.GLubyte * len(img_data))(*img_data)
-        pyg_img = pyglet.image.ImageData(
-            img_shape[1],
-            img_shape[0],
-            "RGBA",
-            tex_data,
-            pitch=img_shape[1] * img_shape[2] * 1,
-        )
-        self.img = pyg_img
-        self.sprite = pyglet.sprite.Sprite(
-            img=self.img, x=self.x, y=self.y, subpixel=True
-        )
-        self.sprite.update(scale=self.scale)
-
-    def render1(self):
-        self.sprite.draw()
-
-
-class TextLine(Geom):
-    def __init__(
-        self,
-        text: str = "",
-        font_size: int = 15,
-        x: float = 0.0,
-        y: float = 0.0,
-    ):
-        super().__init__()
-
-        if pyglet.font.have_font("Courier"):
-            font = "Courier"
-        elif pyglet.font.have_font("Secret Code"):
-            font = "Secret Code"
-        else:
-            font = None
-
-        self.label = pyglet.text.Label(
-            text,
-            font_name=font,
-            font_size=font_size,
-            color=(0, 0, 0, 255),
-            x=x,
-            y=y,
-            anchor_x="left",
-            anchor_y="bottom",
-        )
-
-    def render1(self):
-        if self.label is not None:
-            self.label.draw()
-
-    def set_text(self, text: str, font_size: None | int = None) -> None:
-        self.label.text = text
-        if font_size is not None:
-            self.label.font_size = font_size
 
 
 def render_function_util(
@@ -561,31 +541,44 @@ def render_function_util(
     return Image(img, x=x_min, y=y_min, scale=precision)
 
 
-def make_ellipse(
-    radius_x: float = 10,
-    radius_y: float = 5,
-    res: int = 30,
-    filled: bool = True,
-    angle: float = 2 * math.pi,
-) -> FilledPolygon | PolyLine:
-    """Create an ellipse geometry.
+def make_circle(radius=10, res=30, filled=True, angle=2 * math.pi):
+    return make_ellipse(
+        radius_x=radius, radius_y=radius, res=res, filled=filled, angle=angle
+    )
 
-    Args:
-        radius_x: X radius
-        radius_y: Y radius
-        res: Resolution (number of points)
-        filled: Whether to fill the ellipse
-        angle: Angle to sweep (default full ellipse)
 
-    Returns:
-        Ellipse geometry
-    """
+def make_ellipse(radius_x=10, radius_y=5, res=30, filled=True, angle=2 * math.pi):
     points = []
     for i in range(res):
         ang = -angle / 2 + angle * i / res
         points.append((math.cos(ang) * radius_x, math.sin(ang) * radius_y))
     if angle % (2 * math.pi) != 0:
         points.append((0, 0))
+    if filled:
+        return FilledPolygon(points)
+    else:
+        return PolyLine(points, True)
 
-    points = jnp.array(points)
-    return FilledPolygon(points) if filled else PolyLine(points, True)
+
+def make_polygon(
+    vertices: Float[Array, f"{vertex} {dim_2}"],
+    filled: bool = True,
+    draw_border: bool = True,
+) -> FilledPolygon | PolyLine:
+    if filled:
+        return FilledPolygon(vertices, draw_border=draw_border)
+    else:
+        return PolyLine(vertices, True)
+
+
+def make_polyline(vertices: Float[Array, f"{vertex} {dim_2}"]) -> PolyLine:
+    return PolyLine(vertices, False)
+
+
+def make_capsule(length: float, width: float) -> Compound:
+    l, r, t, b = 0, length, width / 2, -width / 2
+    box = make_polygon(jnp.array([(l, b), (l, t), (r, t), (r, b)]))
+    circ0 = make_circle(width / 2)
+    circ1 = make_circle(width / 2)
+    circ1.add_attr(Transform(translation=(length, 0)))
+    return Compound([box, circ0, circ1])

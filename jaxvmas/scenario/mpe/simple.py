@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array
 
+from jaxvmas.interactive_rendering import render_interactively
 from jaxvmas.simulator.core import Agent, Landmark, World
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
@@ -34,12 +36,13 @@ class Scenario(BaseScenario):
 
         return world
 
-    def reset_world_at(self, seed=0, env_index: int = None):
+    def reset_world_at(self, PRNG_key: Array, env_index: int = None):
         agents = []
         for agent in self.world.agents:
+            PRNG_key, PRNG_key_agent = jax.random.split(PRNG_key)
             agent = agent.set_pos(
                 jax.random.uniform(
-                    key=jax.random.PRNGKey(seed),
+                    key=PRNG_key_agent,
                     shape=(
                         (self.world.dim_p,)
                         if env_index is not None
@@ -56,9 +59,10 @@ class Scenario(BaseScenario):
 
         landmarks = []
         for landmark in self.world.landmarks:
+            PRNG_key, PRNG_key_landmark = jax.random.split(PRNG_key)
             landmark = landmark.set_pos(
                 jax.random.uniform(
-                    key=jax.random.PRNGKey(seed),
+                    key=PRNG_key_landmark,
                     shape=(
                         (self.world.dim_p,)
                         if env_index is not None
@@ -88,3 +92,7 @@ class Scenario(BaseScenario):
         for entity in self.world.landmarks:
             entity_pos.append(entity.state.pos - agent.state.pos)
         return jnp.concatenate([agent.state.vel, *entity_pos], axis=-1)
+
+
+if __name__ == "__main__":
+    render_interactively(__file__)

@@ -79,7 +79,7 @@ class TestEnvironment:
             num_envs=batch_dim,
             max_steps=100,
             continuous_actions=True,
-            seed=0,
+            PRNG_key=0,
         )
 
     @pytest.fixture
@@ -91,7 +91,7 @@ class TestEnvironment:
             num_envs=32,
             max_steps=100,
             continuous_actions=False,
-            seed=0,
+            PRNG_key=0,
         )
 
     def test_create(self, basic_env: Environment):

@@ -60,10 +60,10 @@ class Environment(JaxVectorizedObject):
     def create(
         cls,
         scenario: BaseScenario,
+        PRNG_key: Array,
         num_envs: int = 32,
         max_steps: int | None = None,
         continuous_actions: bool = True,
-        seed: int | None = None,
         dict_spaces: bool = False,
         multidiscrete_actions: bool = False,
         clamp_actions: bool = False,
@@ -75,10 +75,6 @@ class Environment(JaxVectorizedObject):
             "render.modes": ["human", "rgb_array"],
             "runtime.vectorized": True,
         }
-        if seed is None:
-            PRNG_key = jax.random.PRNGKey(0)
-        else:
-            PRNG_key = jax.random.PRNGKey(seed)
         if multidiscrete_actions:
             assert (
                 not continuous_actions
@@ -121,7 +117,10 @@ class Environment(JaxVectorizedObject):
             steps=steps,
         )
 
-        self, observations = self.reset()
+        PRNG_key, PRNG_key_reset = jax.random.split(PRNG_key)
+        self = self.replace(PRNG_key=PRNG_key)
+
+        self, observations = self.reset(PRNG_key=PRNG_key_reset)
 
         # configure spaces
         multidiscrete_actions = multidiscrete_actions
@@ -161,6 +160,7 @@ class Environment(JaxVectorizedObject):
 
     def reset(
         self,
+        PRNG_key: Array,
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
@@ -170,7 +170,7 @@ class Environment(JaxVectorizedObject):
         Returns observations for all envs and agents
         """
         # reset world
-        scenario = self.scenario.env_reset_world_at(env_index=None)
+        scenario = self.scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
         self = self.replace(scenario=scenario)
         self = self.replace(steps=jnp.zeros(self.num_envs))
 
@@ -184,6 +184,7 @@ class Environment(JaxVectorizedObject):
 
     def reset_at(
         self,
+        PRNG_key: Array,
         index: int,
         return_observations: bool = True,
         return_info: bool = False,
@@ -194,7 +195,7 @@ class Environment(JaxVectorizedObject):
         Returns observations for all agents in that environment
         """
         self._check_batch_index(index)
-        scenario = self.scenario.env_reset_world_at(index)
+        scenario = self.scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=index)
         self = self.replace(scenario=scenario)
         self = self.replace(steps=self.steps.at[index].set(0))
 
@@ -712,7 +713,7 @@ class Environment(JaxVectorizedObject):
         plot_position_function_cmap_range: tuple[float, float] | None = None,
         plot_position_function_cmap_alpha: float = 1.0,
         plot_position_function_cmap_name: str | None = "viridis",
-    ) -> Array:
+    ) -> tuple["Environment", Array]:
         """
         Render function for environment using pyglet
 
@@ -845,7 +846,7 @@ class Environment(JaxVectorizedObject):
         if self.scenario.visualize_semidims:
             self.plot_boundary()
 
-        self._set_agent_comm_messages(env_index)
+        self = self._set_agent_comm_messages(env_index)
 
         if plot_position_function is not None:
             self.viewer.add_onetime(

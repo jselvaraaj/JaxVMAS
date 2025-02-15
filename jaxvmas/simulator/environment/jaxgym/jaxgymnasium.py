@@ -8,7 +8,7 @@ Ensures all operations are jittable and compatible with JAX transformations.
 """
 
 
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.simulator.environment.environment import Environment
@@ -36,7 +36,6 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
 
         Args:
             env: The JAX environment to wrap
-            return_numpy: Whether to convert outputs to numpy arrays
         """
 
         assert (
@@ -107,11 +106,15 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         **kwargs,
-    ) -> Array | None:
-        return self.env.render(
-            mode=self.render_mode,
-            env_index=0,
-            agent_index_focus=agent_index_focus,
-            visualize_when_rgb=visualize_when_rgb,
+    ) -> "JaxGymnasiumWrapper":
+
+        kwargs = {
+            "mode": self.render_mode,
+            "env_index": 0,
+            "agent_index_focus": agent_index_focus,
+            "visualize_when_rgb": visualize_when_rgb,
             **kwargs,
-        )
+        }
+        env, _ = self.env.render(**kwargs)
+        self = self.replace(env=env)
+        return self
