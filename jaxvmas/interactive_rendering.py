@@ -135,7 +135,9 @@ class InteractiveEnv:
 
             if self.display_info and self.n_agents > 0:
                 # TODO: Determine number of lines of obs_str and render accordingly
-                obs_str = str(InteractiveEnv.format_obs(obs[self.current_agent_index]))
+                _obs = InteractiveEnv.format_obs(obs[self.current_agent_index])
+                obs_str = "[ " + " ".join([f"{x:.2f}" for x in _obs]) + " ]"
+
                 message = f"\t\t{obs_str[len(obs_str) // 2:]}"
                 self._write_values(0, message)
                 message = f"Obs: {obs_str[:len(obs_str) // 2]}"
@@ -310,7 +312,7 @@ class InteractiveEnv:
     @staticmethod
     def format_obs(obs):
         if isinstance(obs, Array):
-            return list(jnp.around(obs, decimals=2).tolist())
+            return jnp.round(obs, decimals=2).tolist()
         elif isinstance(obs, Dict):
             return {key: InteractiveEnv.format_obs(value) for key, value in obs.items()}
         else:
