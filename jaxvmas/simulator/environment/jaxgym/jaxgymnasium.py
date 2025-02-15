@@ -79,6 +79,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
             info=info,
             terminated=terminated,
             truncated=truncated,
+            done=terminated,
         )
 
         return self, env_data

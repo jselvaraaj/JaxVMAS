@@ -27,7 +27,7 @@ from jaxvmas.simulator.environment.jaxgym.jaxgymnasium import (
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import save_video
 
-N_TEXT_LINES_INTERACTIVE = 6
+N_TEXT_LINES_INTERACTIVE = 7
 
 
 class InteractiveEnv:
@@ -125,10 +125,11 @@ class InteractiveEnv:
                 ]
 
             self.env, env_data = self.env.step(action_list)
-            obs, rew, done, info = (
+            obs, rew, terminated, truncated, info = (
                 env_data.obs,
                 env_data.rews,
-                env_data.done,
+                env_data.terminated,
+                env_data.truncated,
                 env_data.info,
             )
 
@@ -147,11 +148,14 @@ class InteractiveEnv:
                 message = f"Total rew: {round(total_rew[self.current_agent_index], 3)}"
                 self._write_values(3, message)
 
-                message = f"Done: {done}"
+                message = f"Terminated: {terminated}"
                 self._write_values(4, message)
 
-                message = f"Selected: {self.env.unwrapped.agents[self.current_agent_index].name}"
+                message = f"Truncated: {truncated}"
                 self._write_values(5, message)
+
+                message = f"Selected: {self.env.unwrapped.agents[self.current_agent_index].name}"
+                self._write_values(6, message)
 
             frame = self.env.render(
                 mode="rgb_array" if self.save_render else "human",
@@ -160,7 +164,7 @@ class InteractiveEnv:
             if self.save_render:
                 self.frame_list.append(frame)
 
-            if done:
+            if terminated or truncated:
                 self.reset = True
 
     def _init_text(self):
@@ -306,7 +310,7 @@ class InteractiveEnv:
     @staticmethod
     def format_obs(obs):
         if isinstance(obs, Array):
-            return list(jnp.around(obs, decimals=2))
+            return list(jnp.around(obs, decimals=2).tolist())
         elif isinstance(obs, Dict):
             return {key: InteractiveEnv.format_obs(value) for key, value in obs.items()}
         else:
