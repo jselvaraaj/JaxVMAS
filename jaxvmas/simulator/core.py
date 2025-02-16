@@ -4,6 +4,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import asdict
+from enum import Enum
 from typing import Callable, Sequence
 
 import jax
@@ -580,6 +581,7 @@ class Entity(JaxVectorizedObject):
         max_speed = max_speed
         v_range = v_range
         # color
+        assert isinstance(color, Enum), f"Color must be a Enum, got {type(color)}"
         color = color
         # shape
         shape = shape
@@ -676,7 +678,7 @@ class Entity(JaxVectorizedObject):
                 new_entity = self.state.replace(**{prop_name: new})
             else:
                 new_entity = self.state.replace(
-                    **{prop_name: new.repeat(self.batch_dim, 1)}
+                    **{prop_name: new[None].repeat(self.batch_dim, 0)}
                 )
         else:
             value = getattr(self.state, prop_name)

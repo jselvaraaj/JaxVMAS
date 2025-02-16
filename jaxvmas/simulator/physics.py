@@ -52,6 +52,7 @@ def _get_closest_box_box(
     if not isinstance(box2_length, Array):
         box2_length = jnp.full(box2_pos.shape[0], box2_length)
 
+    # Get all lines for both boxes
     lines_pos, lines_rot, lines_length = _get_all_lines_box(
         jnp.stack([box_pos, box2_pos]),
         jnp.stack([box_rot, box2_rot]),
@@ -96,9 +97,11 @@ def _get_closest_box_box(
     points_box2_a, points_box_b = points_first[0], points_first[1]
     points_box_a, points_box2_b = points_second[0], points_second[1]
 
+    # Concatenate all point pairs
     p1s = jnp.concatenate([points_box_a, points_box_b])
     p2s = jnp.concatenate([points_box2_a, points_box2_b])
 
+    # Find the closest pair of points
     closest_point_1 = jnp.full_like(box_pos, jnp.inf)
     closest_point_2 = jnp.full_like(box_pos, jnp.inf)
     distance = jnp.full(box_pos.shape[:-1], jnp.inf)
@@ -171,12 +174,9 @@ def _get_closest_points_line_line(
 
     point_a1_line_b, point_a2_line_b, point_b1_line_a, point_b2_line_a = points
 
-    point_pairs = (
-        (point_a1, point_a1_line_b),
-        (point_a2, point_a2_line_b),
-        (point_b1_line_a, point_b1),
-        (point_b2_line_a, point_b2),
-    )
+    # Convert point pairs to arrays for jax.lax.scan
+    p1s = jnp.stack([point_a1, point_a2, point_b1_line_a, point_b2_line_a])
+    p2s = jnp.stack([point_a1_line_b, point_a2_line_b, point_b1, point_b2])
 
     closest_point_1 = jnp.full_like(line_pos, jnp.inf)
     closest_point_2 = jnp.full_like(line_pos, jnp.inf)
@@ -193,7 +193,7 @@ def _get_closest_points_line_line(
         return (closest_point_1, closest_point_2, min_distance), None
 
     (closest_point_1, closest_point_2, _), _ = jax.lax.scan(
-        update_closest, (closest_point_1, closest_point_2, min_distance), point_pairs
+        update_closest, (closest_point_1, closest_point_2, min_distance), (p1s, p2s)
     )
 
     cond = (d_i == 0)[..., None]
@@ -231,7 +231,8 @@ def _get_intersection_point_line_line(
     point = jnp.full_like(point_a1, jnp.inf)
 
     condition = ~cross_r_s_is_zero & u_in_range & t_in_range
-    point = jnp.where(condition[..., None], p + t[..., None] * r, point)
+    condition_exp = jnp.broadcast_to(condition, point.shape)
+    point = jnp.where(condition_exp, p + t * r, point)
     distance = jnp.where(condition.squeeze(-1), 0.0, distance)
 
     return point, distance
@@ -319,6 +320,7 @@ def _get_closest_line_box(
     if not isinstance(line_length, Array):
         line_length = jnp.full(line_pos.shape[0], line_length)
 
+    # Get all lines of the box
     lines_pos, lines_rot, lines_length = _get_all_lines_box(
         box_pos, box_rot, box_width, box_length
     )
@@ -336,6 +338,7 @@ def _get_closest_line_box(
         jnp.broadcast_to(line_length[None], lines_length.shape),
     )
 
+    # Find the closest pair of points
     def update_closest(carry, x):
         closest_point_1, closest_point_2, distance = carry
         p_box, p_line = x

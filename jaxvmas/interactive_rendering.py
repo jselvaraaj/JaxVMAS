@@ -95,6 +95,7 @@ class InteractiveEnv:
 
     def _cycle(self):
         total_rew = [0] * self.n_agents
+        PRNG_key = jax.random.PRNGKey(0)
         while True:
             if self.reset:
                 if self.save_render:
@@ -124,7 +125,8 @@ class InteractiveEnv:
                     : self.agents[self.current_agent_index2].dynamics.needed_action_size
                 ]
 
-            self.env, env_data = self.env.step(action_list)
+            PRNG_key, subkey = jax.random.split(PRNG_key)
+            self.env, env_data = self.env.step(subkey, action_list)
             obs, rew, terminated, truncated, info = (
                 env_data.obs,
                 env_data.rews,
