@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict
 from typing import Callable, Sequence
 
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 
@@ -759,7 +760,7 @@ class Agent(Entity):
     max_f: float | None
     t_range: float | None
     max_t: float | None
-    action_script: Callable[["Agent", "World"], tuple["Agent", "World"]] | None
+    action_script: Callable[[Array, "Agent", "World"], tuple["Agent", "World"]] | None
     sensors: list[Sensor]
     c_noise: float
     silent: bool
@@ -798,7 +799,7 @@ class Agent(Entity):
         u_range: float | Sequence[float] = 1.0,
         u_multiplier: float | Sequence[float] = 1.0,
         action_script: (
-            Callable[["Agent", "World"], tuple["Agent", "World"]] | None
+            Callable[[Array, "Agent", "World"], tuple["Agent", "World"]] | None
         ) = None,
         sensors: list[Sensor] = None,
         c_noise: float = 0.0,
@@ -932,8 +933,9 @@ class Agent(Entity):
     def u_range(self):
         return self.action.u_range
 
-    def action_callback(self, world: "World") -> "tuple[Agent, World]":
-        self, world = self.action_script(self, world)
+    def action_callback(self, PRNG_key: Array, world: "World") -> "tuple[Agent, World]":
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
+        self, world = self.action_script(sub_key, self, world)
         if self.silent or world.dim_c == 0:
             assert (
                 self.action.c is None

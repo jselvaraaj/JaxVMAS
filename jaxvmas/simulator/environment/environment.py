@@ -331,7 +331,8 @@ class Environment(JaxVectorizedObject):
         agents = []
         # Scenarios can define a custom action processor. This step takes care also of scripted agents automatically
         for agent in self.world.agents:
-            scenario, agent = self.scenario.env_process_action(agent)
+            PRNG_key, subkey = jax.random.split(PRNG_key)
+            scenario, agent = self.scenario.env_process_action(subkey, agent)
             self = self.replace(scenario=scenario)
             agents.append(agent)
         self = self.replace(agents=agents)

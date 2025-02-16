@@ -29,9 +29,9 @@ def run_heuristic(
 
     # Scenario specific variables
     policy = heuristic(continuous_action=True)
-    key = jax.random.PRNGKey(0)
+    PRNG_key = jax.random.PRNGKey(0)
 
-    key, key_env = jax.random.split(key)
+    PRNG_key, key_env = jax.random.split(PRNG_key)
     env: Environment = make_env(
         scenario=scenario_name,
         num_envs=n_envs,
@@ -45,11 +45,11 @@ def run_heuristic(
     frame_list = []  # For creating a gif
     init_time = time.time()
     step = 0
-    env, obs = env.reset(PRNG_key=key)
+    env, obs = env.reset(PRNG_key=PRNG_key)
     total_reward = 0
     if render:
         for _ in range(n_steps):
-            key, key_step = jax.random.split(key)
+            PRNG_key, key_step = jax.random.split(PRNG_key)
             step += 1
             actions = [None] * len(obs)
             for i in range(len(obs)):
@@ -58,7 +58,10 @@ def run_heuristic(
                     obs[i], u_range=env.agents[i].u_range, key=key_step_i
                 )
             jitted_step = eqx.filter_jit(env.step)
-            env, (obs, rews, dones, info) = jitted_step(actions)
+            PRNG_key, key_step_i = jax.random.split(PRNG_key)
+            env, (obs, rews, dones, info) = jitted_step(
+                PRNG_key=key_step_i, actions=actions
+            )
             rewards = jnp.stack(rews, axis=1)
             global_reward = rewards.mean(axis=1)
             mean_global_reward = global_reward.mean(axis=0)
@@ -71,14 +74,14 @@ def run_heuristic(
             frame_list.append(rgb_array)
     else:
 
-        init_state = (env, obs, key, jnp.array(total_reward))
+        init_state = (env, obs, PRNG_key, jnp.array(total_reward))
         dynamic_init_state, static_state = eqx.partition(init_state, eqx.is_array)
 
         def step_fn(dynamic_carry, _):
             carry = eqx.combine(static_state, dynamic_carry)
 
-            env, obs, key, total_reward = carry
-            key, key_step = jax.random.split(key)
+            env, obs, PRNG_key, total_reward = carry
+            PRNG_key, key_step = jax.random.split(PRNG_key)
 
             actions = [None] * len(obs)
             for i in range(len(obs)):
@@ -88,18 +91,21 @@ def run_heuristic(
                 )
 
             # Step environment
-            env, (next_obs, rews, dones, info) = env.step(actions)
+            PRNG_key, key_step_i = jax.random.split(PRNG_key)
+            env, (next_obs, rews, dones, info) = env.step(
+                PRNG_key=key_step_i, actions=actions
+            )
             rewards = jnp.stack(rews, axis=1)
             global_reward = rewards.mean(axis=1)
             mean_global_reward = global_reward.mean(axis=0)
             new_total_reward = total_reward + mean_global_reward
 
-            carry = (env, next_obs, key, new_total_reward)
+            carry = (env, next_obs, PRNG_key, new_total_reward)
             dynamic_carry, _ = eqx.partition(carry, eqx.is_array)
             return dynamic_carry, None
 
         final_carry, _ = jax.lax.scan(step_fn, dynamic_init_state, None, length=n_steps)
-        env, obs, key, total_reward = eqx.combine(static_state, final_carry)
+        env, obs, PRNG_key, total_reward = eqx.combine(static_state, final_carry)
 
     total_time = time.time() - init_time
     if render and save_render:
@@ -113,7 +119,7 @@ def run_heuristic(
 
 
 def test_run_heuristic():
-    expected_reward = -272.1388854980469
+    expected_reward = -272.2748107910156
     actual_reward = run_heuristic(
         scenario_name="simple",
         heuristic=RandomPolicy,
@@ -128,7 +134,7 @@ def test_run_heuristic():
 
 
 def test_run_heuristic_with_render():
-    expected_reward = -272.1388854980469
+    expected_reward = -272.2748107910156
     actual_reward = run_heuristic(
         scenario_name="simple",
         heuristic=RandomPolicy,

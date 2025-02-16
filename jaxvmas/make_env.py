@@ -74,7 +74,9 @@ def make_env(
     if isinstance(scenario, str):
         if not scenario.endswith(".py"):
             scenario += ".py"
-        scenario = scenarios.load(scenario).Scenario.create()
+        scenario = scenarios.load(scenario).Scenario.create(
+            batch_dim=num_envs, **kwargs
+        )
 
     env = Environment.create(
         scenario,

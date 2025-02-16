@@ -3,6 +3,7 @@
 #  All rights reserved.
 from typing import Generic, TypeVar
 
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
@@ -97,10 +98,13 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         self = self.reset_world_at(PRNG_key, env_index)
         return self
 
-    def env_process_action(self, agent: Agent) -> tuple["BaseScenario", Agent]:
+    def env_process_action(
+        self, PRNG_key: Array, agent: Agent
+    ) -> tuple["BaseScenario", Agent]:
         # Do not override
         if agent.action_script is not None:
-            agent, world = agent.action_callback(self.world)
+            PRNG_key, sub_key = jax.random.split(PRNG_key)
+            agent, world = agent.action_callback(sub_key, self.world)
             self = self.replace(world=world)
         # Customizable action processor
         self, agent = self.process_action(agent)
