@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from jaxvmas.make_env import make_env
-from jaxvmas.simulator.environment.environment import Environment
+from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.heuristic_policy import BaseHeuristicPolicy, RandomPolicy
 from jaxvmas.simulator.utils import save_video
 
@@ -48,6 +48,8 @@ def run_heuristic(
     env, obs = env.reset(PRNG_key=PRNG_key)
     total_reward = 0
     if render:
+        render_object = RenderObject()
+
         for _ in range(n_steps):
             PRNG_key, key_step = jax.random.split(PRNG_key)
             step += 1
@@ -66,7 +68,8 @@ def run_heuristic(
             global_reward = rewards.mean(axis=1)
             mean_global_reward = global_reward.mean(axis=0)
             total_reward += mean_global_reward
-            env, rgb_array = env.render(
+            render_object, rgb_array = env.render(
+                render_object=render_object,
                 mode="rgb_array",
                 agent_index_focus=None,
                 visualize_when_rgb=True,

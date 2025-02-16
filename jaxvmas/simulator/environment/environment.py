@@ -32,10 +32,144 @@ from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
 
 
+class RenderObject:
+    def __init__(
+        self,
+        viewer: Viewer | None = None,
+        headless: bool | None = None,
+        visible_display: bool | None = None,
+        text_lines: list[TextLine] | None = None,
+    ):
+
+        self.metadata = {
+            "render.modes": ["human", "rgb_array"],
+            "runtime.vectorized": True,
+        }
+        self.viewer = viewer
+        self.headless = headless
+        self.visible_display = visible_display
+        self.text_lines = text_lines
+
+    def _init_rendering(self, viewer_size, dim_c, agents) -> None:
+        from jaxvmas.simulator import rendering
+
+        viewer = rendering.Viewer(*viewer_size, visible=self.visible_display)
+        text_lines = []
+        idx = 0
+        if dim_c > 0:
+            for agent in agents:
+                if not agent.silent:
+                    text_line = rendering.TextLine(y=idx * 40)
+                    viewer.geoms.append(text_line)
+                    text_lines.append(text_line)
+                    idx += 1
+
+        self.viewer = viewer
+        self.text_lines = text_lines
+
+    def plot_boundary(self, x_semidim, y_semidim) -> None:
+        # include boundaries in the rendering if the environment is dimension-limited
+        if x_semidim is not None or y_semidim is not None:
+            from jaxvmas.simulator.rendering import Line
+            from jaxvmas.simulator.utils import Color
+
+            # set a big value for the cases where the environment is dimension-limited only in one coordinate
+            infinite_value = 100
+
+            x_semi = x_semidim if x_semidim is not None else infinite_value
+            y_semi = y_semidim if y_semidim is not None else infinite_value
+
+            # set the color for the boundary line
+            color = Color.GRAY.value
+
+            # Define boundary points based on whether world semidims are provided
+            if (
+                x_semidim is not None and y_semidim is not None
+            ) or y_semidim is not None:
+                boundary_points = [
+                    (-x_semi, y_semi),
+                    (x_semi, y_semi),
+                    (x_semi, -y_semi),
+                    (-x_semi, -y_semi),
+                ]
+            else:
+                boundary_points = [
+                    (-x_semi, y_semi),
+                    (-x_semi, -y_semi),
+                    (x_semi, y_semi),
+                    (x_semi, -y_semi),
+                ]
+
+            # Create lines by connecting points
+            for i in range(
+                0,
+                len(boundary_points),
+                (1 if (x_semidim is not None and y_semidim is not None) else 2),
+            ):
+                start = boundary_points[i]
+                end = boundary_points[(i + 1) % len(boundary_points)]
+                line = Line(start, end, width=0.7)
+                line.set_color(*color)
+                self.viewer.add_onetime(line)
+
+    def _set_agent_comm_messages(
+        self, env_index: int, dim_c: int, continuous_actions: bool, agents: list[Agent]
+    ) -> "Environment":
+        text_lines = [self.text_lines[i] for i in range(len(self.text_lines))]
+        # Render comm messages
+        if dim_c > 0:
+            idx = 0
+            for agent in agents:
+                if not agent.silent:
+                    assert (
+                        agent.state.c is not None
+                    ), "Agent has no comm state but it should"
+                    if continuous_actions:
+                        word = (
+                            "["
+                            + ",".join(
+                                [f"{comm:.2f}" for comm in agent.state.c[env_index]]
+                            )
+                            + "]"
+                        )
+                    else:
+                        word = ALPHABET[jnp.argmax(agent.state.c[env_index]).item()]
+
+                    message = agent.name + " sends " + word + "   "
+                    text_lines[idx].set_text(message)
+                    idx += 1
+        self.text_lines = text_lines
+
+    def plot_function(
+        self, f, precision, plot_range, cmap_range, cmap_alpha, cmap_name
+    ) -> Image:
+        from jaxvmas.simulator.rendering import render_function_util
+
+        if plot_range is None:
+            assert self.viewer.bounds is not None, "Set viewer bounds before plotting"
+            x_min, x_max, y_min, y_max = self.viewer.bounds.tolist()
+            plot_range = (
+                [x_min - precision, x_max - precision],
+                [
+                    y_min - precision,
+                    y_max + precision,
+                ],
+            )
+
+        geom = render_function_util(
+            f=f,
+            precision=precision,
+            plot_range=plot_range,
+            cmap_range=cmap_range,
+            cmap_alpha=cmap_alpha,
+            cmap_name=cmap_name,
+        )
+        return geom
+
+
 # environment for all agents in the multiagent world
 # currently code assumes that no agents will be created/destroyed at runtime!
 class Environment(JaxVectorizedObject):
-    metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
     max_steps: int | None
@@ -47,11 +181,6 @@ class Environment(JaxVectorizedObject):
     multidiscrete_actions: bool
     action_space: Space
     observation_space: Space
-
-    viewer: Viewer | None
-    headless: bool | None
-    visible_display: bool | None
-    text_lines: list[TextLine] | None
 
     steps: Array
 
@@ -70,10 +199,6 @@ class Environment(JaxVectorizedObject):
         terminated_truncated: bool = False,
         **kwargs,
     ):
-        metadata = {
-            "render.modes": ["human", "rgb_array"],
-            "runtime.vectorized": True,
-        }
         if multidiscrete_actions:
             assert (
                 not continuous_actions
@@ -88,15 +213,9 @@ class Environment(JaxVectorizedObject):
         grad_enabled = grad_enabled
         terminated_truncated = terminated_truncated
 
-        # rendering
-        viewer = None
-        headless = None
-        visible_display = None
-        text_lines = None
         steps = jnp.zeros(num_envs)
         self = cls(
             batch_dim=num_envs,
-            metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
             max_steps=max_steps,
@@ -108,10 +227,6 @@ class Environment(JaxVectorizedObject):
             multidiscrete_actions=multidiscrete_actions,
             action_space=None,
             observation_space=None,
-            viewer=viewer,
-            headless=headless,
-            visible_display=visible_display,
-            text_lines=text_lines,
             steps=steps,
         )
 
@@ -701,6 +816,7 @@ class Environment(JaxVectorizedObject):
 
     def render(
         self,
+        render_object: RenderObject,
         mode="human",
         env_index=0,
         agent_index_focus: int = None,
@@ -716,7 +832,7 @@ class Environment(JaxVectorizedObject):
         plot_position_function_cmap_range: tuple[float, float] | None = None,
         plot_position_function_cmap_alpha: float = 1.0,
         plot_position_function_cmap_name: str | None = "viridis",
-    ) -> tuple["Environment", Array]:
+    ) -> tuple[RenderObject, Array]:
         """
         Render function for environment using pyglet
 
@@ -746,8 +862,8 @@ class Environment(JaxVectorizedObject):
         """
         self._check_batch_index(env_index)
         assert (
-            mode in self.metadata["render.modes"]
-        ), f"Invalid mode {mode} received, allowed modes: {self.metadata['render.modes']}"
+            mode in render_object.metadata["render.modes"]
+        ), f"Invalid mode {mode} received, allowed modes: {render_object.metadata['render.modes']}"
         if agent_index_focus is not None:
             assert 0 <= agent_index_focus < self.n_agents, (
                 f"Agent focus in rendering should be a valid agent index"
@@ -758,16 +874,15 @@ class Environment(JaxVectorizedObject):
 
         headless = mode == "rgb_array" and not visualize_when_rgb
         # First time rendering
-        if self.visible_display is None:
-            visible_display = not headless
-            headless = headless
-            self = self.replace(visible_display=visible_display, headless=headless)
+        if render_object.visible_display is None:
+            render_object.visible_display = not headless
+            render_object.headless = headless
         # All other times headless should be the same
         else:
-            assert self.visible_display is not headless
+            assert render_object.visible_display is not headless
 
         # First time rendering
-        if self.viewer is None:
+        if render_object.viewer is None:
             try:
                 import pyglet
             except ImportError:
@@ -787,10 +902,12 @@ class Environment(JaxVectorizedObject):
                 assert num_devices.value > 0
 
             except (ImportError, AssertionError):
-                self = self.replace(headless=False)
-            pyglet.options["headless"] = self.headless
+                render_object.headless = False
+            pyglet.options["headless"] = render_object.headless
 
-            self = self._init_rendering()
+            render_object._init_rendering(
+                self.scenario.viewer_size, self.world.dim_c, self.world.agents
+            )
 
         if self.scenario.viewer_zoom <= 0:
             raise ValueError("Scenario viewer zoom must be > 0")
@@ -829,7 +946,7 @@ class Environment(JaxVectorizedObject):
                 jnp.asarray(zoom),
             )
             cam_range *= jnp.max(viewer_size)
-            self.viewer.set_bounds(
+            render_object.viewer.set_bounds(
                 -cam_range[X] + self.scenario.render_origin[X],
                 cam_range[X] + self.scenario.render_origin[X],
                 -cam_range[Y] + self.scenario.render_origin[Y],
@@ -838,7 +955,7 @@ class Environment(JaxVectorizedObject):
         else:
             # update bounds to center around agent
             pos = self.agents[agent_index_focus].state.pos[env_index]
-            self.viewer.set_bounds(
+            render_object.viewer.set_bounds(
                 pos[X] - cam_range[X],
                 pos[X] + cam_range[X],
                 pos[Y] - cam_range[Y],
@@ -847,13 +964,18 @@ class Environment(JaxVectorizedObject):
 
         # Render
         if self.scenario.visualize_semidims:
-            self.plot_boundary()
+            render_object.plot_boundary(self.world.x_semidim, self.world.y_semidim)
 
-        self = self._set_agent_comm_messages(env_index)
+        render_object._set_agent_comm_messages(
+            env_index,
+            self.world.dim_c,
+            self.continuous_actions,
+            self.world.agents,
+        )
 
         if plot_position_function is not None:
-            self.viewer.add_onetime(
-                self.plot_function(
+            render_object.viewer.add_onetime(
+                render_object.plot_function(
                     plot_position_function,
                     precision=plot_position_function_precision,
                     plot_range=plot_position_function_range,
@@ -868,142 +990,14 @@ class Environment(JaxVectorizedObject):
         if self.scenario.plot_grid:
             grid = Grid(spacing=self.scenario.grid_spacing)
             grid.set_color(*jaxvmas.simulator.utils.Color.BLACK.value, alpha=0.3)
-            self.viewer.add_onetime(grid)
+            render_object.viewer.add_onetime(grid)
 
-        self.viewer.add_onetime_list(self.scenario.extra_render(env_index))
+        render_object.viewer.add_onetime_list(self.scenario.extra_render(env_index))
 
         for entity in self.world.entities:
-            self.viewer.add_onetime_list(entity.render(env_index=env_index))
+            render_object.viewer.add_onetime_list(entity.render(env_index=env_index))
 
         # render to display or array
-        return self, self.viewer.render(return_rgb_array=mode == "rgb_array")
-
-    def plot_boundary(self) -> None:
-        # include boundaries in the rendering if the environment is dimension-limited
-        if self.world.x_semidim is not None or self.world.y_semidim is not None:
-            from jaxvmas.simulator.rendering import Line
-            from jaxvmas.simulator.utils import Color
-
-            # set a big value for the cases where the environment is dimension-limited only in one coordinate
-            infinite_value = 100
-
-            x_semi = (
-                self.world.x_semidim
-                if self.world.x_semidim is not None
-                else infinite_value
-            )
-            y_semi = (
-                self.world.y_semidim
-                if self.world.y_semidim is not None
-                else infinite_value
-            )
-
-            # set the color for the boundary line
-            color = Color.GRAY.value
-
-            # Define boundary points based on whether world semidims are provided
-            if (
-                self.world.x_semidim is not None and self.world.y_semidim is not None
-            ) or self.world.y_semidim is not None:
-                boundary_points = [
-                    (-x_semi, y_semi),
-                    (x_semi, y_semi),
-                    (x_semi, -y_semi),
-                    (-x_semi, -y_semi),
-                ]
-            else:
-                boundary_points = [
-                    (-x_semi, y_semi),
-                    (-x_semi, -y_semi),
-                    (x_semi, y_semi),
-                    (x_semi, -y_semi),
-                ]
-
-            # Create lines by connecting points
-            for i in range(
-                0,
-                len(boundary_points),
-                (
-                    1
-                    if (
-                        self.world.x_semidim is not None
-                        and self.world.y_semidim is not None
-                    )
-                    else 2
-                ),
-            ):
-                start = boundary_points[i]
-                end = boundary_points[(i + 1) % len(boundary_points)]
-                line = Line(start, end, width=0.7)
-                line.set_color(*color)
-                self.viewer.add_onetime(line)
-
-    def plot_function(
-        self, f, precision, plot_range, cmap_range, cmap_alpha, cmap_name
-    ) -> Image:
-        from jaxvmas.simulator.rendering import render_function_util
-
-        if plot_range is None:
-            assert self.viewer.bounds is not None, "Set viewer bounds before plotting"
-            x_min, x_max, y_min, y_max = self.viewer.bounds.tolist()
-            plot_range = (
-                [x_min - precision, x_max - precision],
-                [
-                    y_min - precision,
-                    y_max + precision,
-                ],
-            )
-
-        geom = render_function_util(
-            f=f,
-            precision=precision,
-            plot_range=plot_range,
-            cmap_range=cmap_range,
-            cmap_alpha=cmap_alpha,
-            cmap_name=cmap_name,
+        return render_object, render_object.viewer.render(
+            return_rgb_array=mode == "rgb_array"
         )
-        return geom
-
-    def _init_rendering(self) -> None:
-        from jaxvmas.simulator import rendering
-
-        viewer = rendering.Viewer(
-            *self.scenario.viewer_size, visible=self.visible_display
-        )
-        text_lines = []
-        idx = 0
-        if self.world.dim_c > 0:
-            for agent in self.world.agents:
-                if not agent.silent:
-                    text_line = rendering.TextLine(y=idx * 40)
-                    viewer.geoms.append(text_line)
-                    text_lines.append(text_line)
-                    idx += 1
-        return self.replace(viewer=viewer, text_lines=text_lines)
-
-    def _set_agent_comm_messages(self, env_index: int) -> "Environment":
-        text_lines = [self.text_lines[i] for i in range(len(self.text_lines))]
-        # Render comm messages
-        if self.world.dim_c > 0:
-            idx = 0
-            for agent in self.world.agents:
-                if not agent.silent:
-                    assert (
-                        agent.state.c is not None
-                    ), "Agent has no comm state but it should"
-                    if self.continuous_actions:
-                        word = (
-                            "["
-                            + ",".join(
-                                [f"{comm:.2f}" for comm in agent.state.c[env_index]]
-                            )
-                            + "]"
-                        )
-                    else:
-                        word = ALPHABET[jnp.argmax(agent.state.c[env_index]).item()]
-
-                    message = agent.name + " sends " + word + "   "
-                    text_lines[idx].set_text(message)
-                    idx += 1
-        self = self.replace(text_lines=text_lines)
-        return self

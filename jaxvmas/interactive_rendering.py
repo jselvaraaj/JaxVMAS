@@ -21,6 +21,7 @@ from jaxtyping import Array
 
 from jaxvmas.make_env import make_env
 from jaxvmas.simulator import rendering
+from jaxvmas.simulator.environment.environment import RenderObject
 from jaxvmas.simulator.environment.jaxgym.jaxgymnasium import (
     JaxGymnasiumWrapper as GymWrapper,
 )
@@ -78,12 +79,14 @@ class InteractiveEnv:
 
         self.text_lines: list[rendering.TextLine] = []
         self.font_size = 15
-        self.env = self.env.render()
+        self.render_object = RenderObject()
 
-        self.text_idx = len(self.env.unwrapped.text_lines)
+        self.render_object, _ = self.env.render(render_object=self.render_object)
+
+        self.text_idx = len(self.render_object.text_lines)
         self._init_text()
-        self.env.unwrapped.viewer.window.on_key_press = self._key_press
-        self.env.unwrapped.viewer.window.on_key_release = self._key_release
+        self.render_object.viewer.window.on_key_press = self._key_press
+        self.render_object.viewer.window.on_key_release = self._key_release
 
         self._cycle()
 
@@ -161,7 +164,8 @@ class InteractiveEnv:
                 message = f"Selected: {self.env.unwrapped.agents[self.current_agent_index].name}"
                 self._write_values(6, message)
 
-            frame = self.env.render(
+            self.render_object, frame = self.env.render(
+                render_object=self.render_object,
                 mode="rgb_array" if self.save_render else "human",
                 visualize_when_rgb=True,
             )
@@ -178,7 +182,7 @@ class InteractiveEnv:
             text_line = rendering.TextLine(
                 y=(self.text_idx + i) * 40, font_size=self.font_size
             )
-            self.env.unwrapped.viewer.add_geom(text_line)
+            self.render_object.viewer.add_geom(text_line)
             self.text_lines.append(text_line)
 
     def _write_values(self, index: int, message: str):

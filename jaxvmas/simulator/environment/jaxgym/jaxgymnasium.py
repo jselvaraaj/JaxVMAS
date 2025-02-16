@@ -12,7 +12,7 @@ import jax
 from jaxtyping import Array, PyTree
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
-from jaxvmas.simulator.environment.environment import Environment
+from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.environment.jaxgym.base import BaseJaxGymWrapper, EnvData
 
 # Type definitions for dimensions
@@ -112,10 +112,11 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
 
     def render(
         self,
+        render_object: RenderObject,
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         **kwargs,
-    ) -> "JaxGymnasiumWrapper":
+    ) -> tuple[RenderObject, Array]:
 
         kwargs = {
             "mode": self.render_mode,
@@ -124,6 +125,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
             "visualize_when_rgb": visualize_when_rgb,
             **kwargs,
         }
-        env, _ = self.env.render(**kwargs)
-        self = self.replace(env=env)
-        return self
+        render_object, rgb_array = self.env.render(
+            render_object=render_object, **kwargs
+        )
+        return render_object, rgb_array

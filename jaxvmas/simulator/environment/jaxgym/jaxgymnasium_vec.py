@@ -11,7 +11,7 @@ import jax
 from jaxtyping import Array, PyTree
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
-from jaxvmas.simulator.environment.environment import Environment
+from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.environment.jaxgym.base import BaseJaxGymWrapper, EnvData
 from jaxvmas.simulator.environment.jaxgym.spaces import Space
 
@@ -107,11 +107,13 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
 
     def render(
         self,
+        render_object: RenderObject,
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         **kwargs,
-    ) -> Array | None:
+    ) -> tuple[RenderObject, Array]:
         return self.env.render(
+            render_object=render_object,
             mode=self.render_mode,
             agent_index_focus=agent_index_focus,
             visualize_when_rgb=visualize_when_rgb,
