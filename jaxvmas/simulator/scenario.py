@@ -2,6 +2,7 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 from abc import abstractmethod
+from typing import Generic, TypeVar
 
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -24,8 +25,10 @@ comm = "comm"
 action = "action"
 info = "info"
 
+WorldType = TypeVar("WorldType", bound=World)
 
-class BaseScenario(PyTreeNode):
+
+class BaseScenario(PyTreeNode, Generic[WorldType]):
     """Base class for scenarios.
 
     This is the class that scenarios inherit from.
@@ -47,7 +50,7 @@ class BaseScenario(PyTreeNode):
 
     """
 
-    world: World | None
+    world: WorldType | None
     viewer_size: tuple[int, int]
     viewer_zoom: float
     render_origin: tuple[float, float]
@@ -81,7 +84,7 @@ class BaseScenario(PyTreeNode):
             visualize_semidims,
         )
 
-    def env_make_world(self, batch_dim: int, **kwargs) -> World:
+    def env_make_world(self, batch_dim: int, **kwargs) -> WorldType:
         # Do not override
         world = self.make_world(batch_dim, **kwargs)
         self = self.replace(world=world)
@@ -108,7 +111,7 @@ class BaseScenario(PyTreeNode):
         return self, agent
 
     @abstractmethod
-    def make_world(self, batch_dim: int, **kwargs) -> World:
+    def make_world(self, batch_dim: int, **kwargs) -> WorldType:
         """
         This function needs to be implemented when creating a scenario.
         In this function the user should instantiate the world and insert agents and landmarks in it.

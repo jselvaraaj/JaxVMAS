@@ -22,7 +22,114 @@ if typing.TYPE_CHECKING:
     from jaxvmas.simulator.rendering import Geom
 
 
-class Scenario(BaseScenario):
+class FootballWorld(World):
+    n_blue_agents: int
+    n_red_agents: int
+    n_traj_points: int
+    agent_size: float
+    pitch_width: float
+    pitch_length: float
+    goal_size: float
+    goal_depth: float
+
+    @classmethod
+    def create(cls, batch_dim: int, **kwargs):
+        n_blue_agents = kwargs.pop("n_blue_agents")
+        n_red_agents = kwargs.pop("n_red_agents")
+        n_traj_points = kwargs.pop("n_traj_points")
+        agent_size = kwargs.pop("agent_size")
+        pitch_width = kwargs.pop("pitch_width")
+        pitch_length = kwargs.pop("pitch_length")
+        goal_size = kwargs.pop("goal_size")
+        goal_depth = kwargs.pop("goal_depth")
+        base_world = World.create(batch_dim=batch_dim, **kwargs)
+        return cls(
+            **asdict(base_world),
+            n_blue_agents=n_blue_agents,
+            n_red_agents=n_red_agents,
+            n_traj_points=n_traj_points,
+            agent_size=agent_size,
+            pitch_width=pitch_width,
+            pitch_length=pitch_length,
+            goal_size=goal_size,
+            goal_depth=goal_depth,
+        )
+
+    def replace(self, **kwargs) -> "FootballWorld":
+        if "blue_agents" in kwargs:
+            blue_agents = kwargs.pop("blue_agents")
+            agents = self.agents
+            agents = blue_agents + agents[self.n_blue_agents :]
+            self = self.replace(agents=agents)
+        elif "red_agents" in kwargs:
+            red_agents = kwargs.pop("red_agents")
+            agents = self.agents
+            agents = (
+                agents[: self.n_blue_agents]
+                + red_agents
+                + agents[self.n_blue_agents + self.n_red_agents :]
+            )
+            self = self.replace(agents=agents)
+
+        return super(self, World).replace(**kwargs)
+
+    @property
+    def blue_agents(self):
+        return self.agents[: self.n_blue_agents]
+
+    @property
+    def red_agents(self):
+        return self.agents[self.n_blue_agents : self.n_blue_agents + self.n_red_agents]
+
+    @property
+    def ball(self) -> "BallAgent":
+        return self.agents[self.n_blue_agents + self.n_red_agents]
+
+    @property
+    def right_top_wall(self):
+        return self.landmarks[0]
+
+    @property
+    def left_top_wall(self):
+        return self.landmarks[1]
+
+    @property
+    def right_bottom_wall(self):
+        return self.landmarks[2]
+
+    @property
+    def left_bottom_wall(self):
+        return self.landmarks[3]
+
+    @property
+    def blue_net(self):
+        return self.landmarks[4]
+
+    @property
+    def red_net(self):
+        return self.landmarks[5]
+
+    @property
+    def traj_points(self):
+        red_offset = 5
+        blue_offset = red_offset + self.n_traj_points * len(self.red_agents)
+        return {
+            "Red": {
+                agent.name: self.landmarks[
+                    red_offset + i * self.n_traj_points : self.n_traj_points
+                ]
+                for i, agent in enumerate(self.red_agents)
+            },
+            "Blue": {
+                agent.name: self.landmarks[
+                    blue_offset + i * self.n_traj_points : self.n_traj_points
+                ]
+                for i, agent in enumerate(self.blue_agents)
+            },
+        }
+
+
+class Scenario(BaseScenario[FootballWorld]):
     n_blue_agents: int
     n_red_agents: int
     ai_red_agents: bool
@@ -333,34 +440,24 @@ class Scenario(BaseScenario):
     def replace(self, **kwargs) -> "Scenario":
         if "blue_agents" in kwargs:
             blue_agents = kwargs.pop("blue_agents")
-            agents = self.world.agents
-            agents = blue_agents + agents[self.n_blue_agents :]
-            self = self.replace(world=self.world.replace(agents=agents))
-        elif "blue_agents" in kwargs:
+            self = self.replace(world=self.world.replace(blue_agents=blue_agents))
+        elif "red_agents" in kwargs:
             red_agents = kwargs.pop("red_agents")
-            agents = self.world.agents
-            agents = (
-                agents[: self.n_blue_agents]
-                + red_agents
-                + agents[self.n_blue_agents + self.n_red_agents :]
-            )
-            self = self.replace(world=self.world.replace(agents=agents))
+            self = self.replace(world=self.world.replace(red_agents=red_agents))
 
         return super(self, BaseScenario).replace(**kwargs)
 
     @property
     def blue_agents(self):
-        return self.world.agents[: self.n_blue_agents]
+        return self.world.blue_agents
 
     @property
     def red_agents(self):
-        return self.world.agents[
-            self.n_blue_agents : self.n_blue_agents + self.n_red_agents
-        ]
+        return self.world.red_agents
 
     @property
     def ball(self) -> "BallAgent":
-        return self.world.agents[self.n_blue_agents + self.n_red_agents]
+        return self.world.ball
 
     @property
     def background(self):
@@ -376,48 +473,33 @@ class Scenario(BaseScenario):
 
     @property
     def right_top_wall(self):
-        return self.world.landmarks[0]
+        return self.world.right_top_wall
 
     @property
     def left_top_wall(self):
-        return self.world.landmarks[1]
+        return self.world.left_top_wall
 
     @property
     def right_bottom_wall(self):
-        return self.world.landmarks[2]
+        return self.world.right_bottom_wall
 
     @property
     def left_bottom_wall(self):
-        return self.world.landmarks[3]
+        return self.world.left_bottom_wall
 
     @property
     def blue_net(self):
-        return self.world.landmarks[4]
+        return self.world.blue_net
 
     @property
     def red_net(self):
-        return self.world.landmarks[5]
+        return self.world.red_net
 
     @property
     def traj_points(self):
-        red_offset = 5
-        blue_offset = red_offset + self.n_traj_points * len(self.red_agents)
-        return {
-            "Red": {
-                agent.name: self.world.landmarks[
-                    red_offset + i * self.n_traj_points : self.n_traj_points
-                ]
-                for i, agent in enumerate(self.red_agents)
-            },
-            "Blue": {
-                agent.name: self.world.landmarks[
-                    blue_offset + i * self.n_traj_points : self.n_traj_points
-                ]
-                for i, agent in enumerate(self.blue_agents)
-            },
-        }
+        return self.world.traj_points
 
-    def make_world(self, batch_dim: int):
+    def make_world(self, batch_dim: int) -> "FootballWorld":
         world = self.init_world(batch_dim)
         world = self.init_agents(world)
         world = self.init_ball(world)
@@ -440,15 +522,20 @@ class Scenario(BaseScenario):
         self = self.replace(_done=_done)
         return self
 
-    def init_world(self, batch_dim: int):
+    def init_world(self, batch_dim: int) -> FootballWorld:
         # Make world
-        world = World.create(
+        world = FootballWorld.create(
             batch_dim,
             dt=0.1,
             drag=0.05,
             x_semidim=self.pitch_length / 2 + self.goal_depth - self.agent_size,
             y_semidim=self.pitch_width / 2 - self.agent_size,
             substeps=2,
+            agent_size=self.agent_size,
+            pitch_width=self.pitch_width,
+            pitch_length=self.pitch_length,
+            goal_size=self.goal_size,
+            goal_depth=self.goal_depth,
         )
         world = world.replace(
             agent_size=self.agent_size,
@@ -459,7 +546,7 @@ class Scenario(BaseScenario):
         )
         return world
 
-    def init_agents(self, world: World) -> World:
+    def init_agents(self, world: FootballWorld) -> FootballWorld:
 
         if self.physically_different:
             blue_agents = self.get_physically_different_agents()
@@ -737,7 +824,7 @@ class Scenario(BaseScenario):
         )
         return self
 
-    def init_ball(self, world: World):
+    def init_ball(self, world: FootballWorld):
         # Add Ball
         ball = BallAgent(
             name="Ball",
@@ -981,7 +1068,7 @@ class Scenario(BaseScenario):
         )
         return self
 
-    def init_walls(self, world: World):
+    def init_walls(self, world: FootballWorld):
         right_top_wall = Landmark(
             name="Right Top Wall",
             collide=True,
@@ -1096,7 +1183,7 @@ class Scenario(BaseScenario):
         self = self.replace(world=self.world.replace(landmarks=landmarks))
         return self
 
-    def init_goals(self, world: World):
+    def init_goals(self, world: FootballWorld):
         right_goal_back = Landmark(
             name="Right Goal Back",
             collide=True,
@@ -1287,7 +1374,7 @@ class Scenario(BaseScenario):
         self = self.replace(world=self.world.replace(landmarks=landmarks))
         return self
 
-    def init_traj_pts(self, world: World):
+    def init_traj_pts(self, world: FootballWorld):
         if self.ai_red_agents:
             for i in range(self.n_red_agents):
                 for j in range(self.n_traj_points):
@@ -1951,7 +2038,7 @@ class Scenario(BaseScenario):
 def get_ball_action_script(
     agent_size: float, pitch_width: float, pitch_length: float, goal_size: float
 ):
-    def ball_action_script(ball: "BallAgent", world: World):
+    def ball_action_script(ball: "BallAgent", world: FootballWorld):
         # Avoid getting stuck against the wall
         dist_thres = agent_size * 2
         vel_thres = 0.3
@@ -2183,26 +2270,26 @@ class AgentPolicy(PyTreeNode):
             team_disps=team_disps,
         )
 
-    def get_dynamic_params(self, scenario: Scenario):
-        ball = scenario.ball
+    def get_dynamic_params(self, world: FootballWorld):
+        ball = world.ball
         if self.team_name == "Red":
-            teammates = scenario.red_agents
-            opposition = scenario.blue_agents
-            own_net = scenario.red_net
-            target_net = scenario.blue_net
+            teammates = world.red_agents
+            opposition = world.blue_agents
+            own_net = world.red_net
+            target_net = world.blue_net
         elif self.team_name == "Blue":
-            teammates = scenario.blue_agents
-            opposition = scenario.red_agents
-            own_net = scenario.blue_net
-            target_net = scenario.red_net
+            teammates = world.blue_agents
+            opposition = world.red_agents
+            own_net = world.blue_net
+            target_net = world.red_net
 
-        return ball, teammates, opposition, own_net, target_net, scenario.world
+        return ball, teammates, opposition, own_net, target_net
 
-    def init(self, scenario: Scenario) -> "AgentPolicy":
+    def init(self, world: FootballWorld) -> "AgentPolicy":
         initialised = True
 
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
 
         team_color = teammates[0].color if len(teammates) > 0 else None
@@ -2240,11 +2327,11 @@ class AgentPolicy(PyTreeNode):
             team_disps=team_disps,
         )
 
-    def reset(self, scenario: Scenario, env_index=Ellipsis) -> "AgentPolicy":
+    def reset(self, world: FootballWorld, env_index=Ellipsis) -> "AgentPolicy":
         team_disps = {}
         objectives = dict(self.objectives)
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
         for agent in self.teammates:
             objectives[agent]["shot_power"][env_index] = 0
@@ -2257,30 +2344,26 @@ class AgentPolicy(PyTreeNode):
         return self.replace(objectives=objectives, team_disps=team_disps)
 
     def dribble_policy(
-        self, agent: "FootballAgent", scenario: Scenario
-    ) -> tuple["AgentPolicy", Scenario]:
+        self, agent: "FootballAgent", world: FootballWorld
+    ) -> tuple["AgentPolicy", FootballWorld]:
         possession_mask = self.agent_possession[agent.name]
-        self, scenario = self.dribble_to_goal(
-            agent, scenario, env_index=possession_mask
-        )
+        self, world = self.dribble_to_goal(agent, world, env_index=possession_mask)
         move_mask = ~possession_mask
-        self, best_pos = self.check_better_positions(
-            agent, scenario, env_index=move_mask
-        )
-        self, scenario = self.go_to(
+        self, best_pos = self.check_better_positions(agent, world, env_index=move_mask)
+        self, world = self.go_to(
             agent,
-            scenario,
+            world,
             pos=best_pos,
             aggression=1.0,
             env_index=move_mask,
         )
-        return self, scenario
+        return self, world
 
     def passing_policy(
-        self, agent: "FootballAgent", scenario: Scenario
-    ) -> tuple["AgentPolicy", Scenario]:
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        self, agent: "FootballAgent", world: FootballWorld
+    ) -> tuple["AgentPolicy", FootballWorld]:
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
         possession_mask = self.agent_possession[agent.name]
         otheragent = None
@@ -2289,21 +2372,19 @@ class AgentPolicy(PyTreeNode):
                 otheragent = a
                 break
         # min_dist_mask = (agent.state.pos - otheragent.state.pos).norm(dim=-1) > self.max_shot_dist * 0.75
-        self, scenario = self.shoot(
-            agent, otheragent.state.pos, env_index=possession_mask
+        self, world = self.shoot(
+            agent, world, otheragent.state.pos, env_index=possession_mask
         )
         move_mask = ~possession_mask
-        self, best_pos = self.check_better_positions(
-            agent, scenario=scenario, env_index=move_mask
-        )
-        self, scenario = self.go_to(
+        self, best_pos = self.check_better_positions(agent, world, env_index=move_mask)
+        self, world = self.go_to(
             agent,
-            scenario,
+            world,
             pos=best_pos,
             aggression=1.0,
             env_index=move_mask,
         )
-        return self, scenario
+        return self, world
 
     def disable(self):
         return self.replace(disabled=True)
@@ -2312,13 +2393,13 @@ class AgentPolicy(PyTreeNode):
         return self.replace(disabled=False)
 
     def run(
-        self, agent: "FootballAgent", scenario: Scenario
-    ) -> tuple["AgentPolicy", Scenario]:
+        self, agent: "FootballAgent", world: FootballWorld
+    ) -> tuple["AgentPolicy", FootballWorld]:
         if not self.disabled:
             if "0" in agent.name:
                 self.team_disps = {}
-                self = self.check_possession(scenario)
-            self, scenario = self.dribble_policy(agent, scenario)
+                self = self.check_possession(world)
+            self, world = self.dribble_policy(agent, world)
             control = self.get_action(agent)
             control = jnp.clip(control, min=-agent.u_range, max=agent.u_range)
             u = control * agent.action.u_multiplier_jax_array[None].expand(
@@ -2331,39 +2412,47 @@ class AgentPolicy(PyTreeNode):
                     u=jnp.zeros((self.world.batch_dim, agent.action_size))
                 )
             )
-        return self, scenario
+        return self, world
 
     def dribble_to_goal(
-        self, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
-    ) -> tuple["AgentPolicy", Scenario]:
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        self, agent: "FootballAgent", world: FootballWorld, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", FootballWorld]:
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
-        self, scenario = self.dribble(
+        self, world = self.dribble(
             agent,
-            scenario,
+            world,
             target_net.state.pos[env_index],
             env_index=env_index,
         )
-        return self, scenario
+        return self, world
 
     def dribble(
-        self, agent: "FootballAgent", scenario: Scenario, pos: Array, env_index=Ellipsis
-    ) -> tuple["AgentPolicy", Scenario]:
-        self, scenario = self.update_dribble(
+        self,
+        agent: "FootballAgent",
+        world: FootballWorld,
+        pos: Array,
+        env_index=Ellipsis,
+    ) -> tuple["AgentPolicy", FootballWorld]:
+        self, world = self.update_dribble(
             agent,
-            scenario,
+            world,
             pos=pos,
             env_index=env_index,
         )
-        return self, scenario
+        return self, world
 
     def update_dribble(
-        self, agent: "FootballAgent", scenario: Scenario, pos: Array, env_index=Ellipsis
-    ) -> tuple["AgentPolicy", Scenario]:
+        self,
+        agent: "FootballAgent",
+        world: FootballWorld,
+        pos: Array,
+        env_index=Ellipsis,
+    ) -> tuple["AgentPolicy", FootballWorld]:
         # Specifies a new location to dribble towards.
         agent_pos = agent.state.pos[env_index]
-        ball_pos = scenario.ball.state.pos[env_index]
+        ball_pos = world.ball.state.pos[env_index]
         ball_disp = pos - ball_pos
         ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         direction = ball_disp / ball_dist[:, None]
@@ -2378,28 +2467,28 @@ class AgentPolicy(PyTreeNode):
         new_direction /= jnp.linalg.norm(new_direction, axis=-1)[:, None]
         hit_pos = (
             ball_pos
-            - new_direction * (scenario.ball.shape.radius + agent.shape.radius) * 0.7
+            - new_direction * (world.ball.shape.radius + agent.shape.radius) * 0.7
         )
         # Execute dribble with a go_to command
-        self, scenario = self.go_to(
+        self, world = self.go_to(
             agent,
-            scenario,
+            world,
             hit_pos,
             hit_vel,
             start_vel=start_vel,
             env_index=env_index,
         )
-        return self, scenario
+        return self, world
 
     def shoot(
         self,
         agent: "FootballAgent",
-        scenario: Scenario,
+        world: FootballWorld,
         pos: Array,
         env_index=Ellipsis,
-    ) -> tuple["AgentPolicy", Scenario]:
+    ) -> tuple["AgentPolicy", FootballWorld]:
         agent_pos = agent.state.pos
-        ball_disp = scenario.ball.state.pos - agent_pos
+        ball_disp = world.ball.state.pos - agent_pos
         ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         within_range_mask = ball_dist <= self.shooting_radius
         target_disp = pos - agent_pos
@@ -2416,13 +2505,13 @@ class AgentPolicy(PyTreeNode):
         objectives[agent]["target_ang"][env_index] = jnp.atan2(
             target_disp[:, 1], target_disp[:, 0]
         )[env_index]
-        self, scenario = self.dribble(agent, scenario, pos, env_index=env_index)
+        self, world = self.dribble(agent, world, pos, env_index=env_index)
         # Shooting
         objectives[agent]["shot_power"][:] = -1
         objectives[agent]["shot_power"][self.combine_mask(shooting_mask, env_index)] = (
             jnp.minimum(target_dist[shooting_mask] / self.max_shot_dist, 1.0)
         )
-        return self.replace(objectives=objectives), scenario
+        return self.replace(objectives=objectives), world
 
     def combine_mask(self, mask, env_index):
         if env_index == Ellipsis:
@@ -2436,7 +2525,7 @@ class AgentPolicy(PyTreeNode):
     def go_to(
         self,
         agent: "FootballAgent",
-        scenario: Scenario,
+        world: FootballWorld,
         pos: Array,
         vel: Array | None = None,
         start_vel: Array | None = None,
@@ -2468,15 +2557,15 @@ class AgentPolicy(PyTreeNode):
             )
         objectives = dict(self.objectives)
         objectives[agent]["target_pos_rel"][env_index] = (
-            pos - scenario.ball.state.pos[env_index]
+            pos - world.ball.state.pos[env_index]
         )
         objectives[agent]["target_pos"][env_index] = pos
         objectives[agent]["target_vel"][env_index] = vel
         objectives[agent]["start_pos"][env_index] = start_pos
         objectives[agent]["start_vel"][env_index] = start_vel
         self = self.replace(objectives=objectives)
-        scenario = self.plot_traj(agent, scenario, env_index=env_index)
-        return self, scenario
+        world = self.plot_traj(agent, world, env_index=env_index)
+        return self, world
 
     def get_start_vel(
         self, pos: Array, vel: Array, start_pos: Array, aggression: float = 0.0
@@ -2572,17 +2661,17 @@ class AgentPolicy(PyTreeNode):
         return (ang1 - ang2 + jnp.pi) % (2 * jnp.pi) - jnp.pi
 
     def plot_traj(
-        self, agent: "FootballAgent", scenario: Scenario, env_index=0
-    ) -> tuple["AgentPolicy", Scenario]:
+        self, agent: "FootballAgent", world: FootballWorld, env_index=0
+    ) -> tuple["AgentPolicy", FootballWorld]:
         for i, u in enumerate(
             jnp.linspace(
                 0,
                 1,
-                len(scenario.traj_points[self.team_name][agent.name]),
+                len(world.traj_points[self.team_name][agent.name]),
             )
         ):
-            pointi = scenario.traj_points[self.team_name][agent.name][i]
-            traj_points = dict(scenario.traj_points)
+            pointi = world.traj_points[self.team_name][agent.name][i]
+            traj_points = dict(world.traj_points)
             traj_points[self.team_name][agent.name] = dict(
                 traj_points[self.team_name][agent.name]
             )
@@ -2626,19 +2715,19 @@ class AgentPolicy(PyTreeNode):
                         batch_index=envi[0],
                     )
             traj_points[self.team_name][agent.name] = pointi
-        scenario = scenario.replace(traj_points=traj_points)
-        return scenario
+        world = world.replace(traj_points=traj_points)
+        return world
 
     def clamp_pos(
-        self, scenario: Scenario, pos: Array, return_bool: bool = False
+        self, world: FootballWorld, pos: Array, return_bool: bool = False
     ) -> Array:
         orig_pos = pos.copy()
 
-        agent_size = scenario.agent_size
-        pitch_y = scenario.pitch_width / 2 - agent_size
-        pitch_x = scenario.pitch_length / 2 - agent_size
-        goal_y = scenario.goal_size / 2 - agent_size
-        goal_x = scenario.goal_depth
+        agent_size = world.agent_size
+        pitch_y = world.pitch_width / 2 - agent_size
+        pitch_x = world.pitch_length / 2 - agent_size
+        goal_y = world.goal_size / 2 - agent_size
+        goal_x = world.goal_depth
         pos = pos.at[:, Y].set(jnp.clip(pos[:, Y], -pitch_y, pitch_y))
         inside_goal_y_mask = jnp.abs(pos[:, Y]) < goal_y
         pos = pos.at[~inside_goal_y_mask, X].set(
@@ -2652,9 +2741,9 @@ class AgentPolicy(PyTreeNode):
         else:
             return pos
 
-    def check_possession(self, scenario: Scenario):
+    def check_possession(self, world: FootballWorld):
         ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+            self.get_dynamic_params(world)
         )
         agents_pos = jnp.stack(
             [agent.state.pos for agent in teammates + opposition],
@@ -2691,10 +2780,10 @@ class AgentPolicy(PyTreeNode):
         return self
 
     def check_better_positions(
-        self, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
+        self, agent: "FootballAgent", world: FootballWorld, env_index=Ellipsis
     ) -> tuple["AgentPolicy", Array]:
         ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+            self.get_dynamic_params(world)
         )
         ball_pos = ball.state.pos[env_index]
         curr_target = self.objectives[agent]["target_pos_rel"][env_index] + ball_pos
@@ -2712,11 +2801,11 @@ class AgentPolicy(PyTreeNode):
         test_pos = jnp.concatenate([curr_target[:, None, :], samples], axis=1)
         test_pos_shape = test_pos.shape
         test_pos = self.clamp_pos(
-            scenario,
+            world,
             test_pos.view(test_pos_shape[0] * test_pos_shape[1], test_pos_shape[2]),
         ).view(*test_pos_shape)
         self, values = self.get_pos_value(
-            test_pos, agent=agent, scenario=scenario, env_index=env_index
+            test_pos, agent=agent, world=world, env_index=env_index
         )
         values = values.at[:, 0].set(
             values[:, 0] + self.replan_margin + 3 * (1 - self.decision_strength)
@@ -2725,15 +2814,22 @@ class AgentPolicy(PyTreeNode):
         best_pos = jnp.take(
             test_pos,
             axis=1,
-            index=highest_value[None, ..., None].expand(-1, -1, self.world.dim_p),
+            index=jnp.broadcast_to(
+                highest_value[None, ..., None],
+                (-1, -1, world.dim_p),
+            ),
         )
         return self, best_pos[0]
 
     def get_pos_value(
-        self, pos: Array, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
+        self,
+        pos: Array,
+        agent: "FootballAgent",
+        world: FootballWorld,
+        env_index=Ellipsis,
     ) -> tuple["AgentPolicy", Array]:
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
         ball_pos = ball.state.pos[env_index, None]
         target_net_pos = target_net.state.pos[env_index, None]
@@ -2765,32 +2861,34 @@ class AgentPolicy(PyTreeNode):
                 for i, a in enumerate(teammates)
                 if a.name != agent.name and a.state.pos[env_index, :] != pos
             ][0]
-            self, team_disps = self.get_separations(scenario, teammate=True)
+            self, team_disps = self.get_separations(world, teammate=True)
             team_disps = jnp.concatenate(
                 [team_disps[:, 0:agent_index], team_disps[:, agent_index + 1 :]], axis=1
             )
-            team_dists = (team_disps[env_index, None] - pos[:, :, None]).norm(dim=-1)
-            other_agent_value = -jnp.exp(-5 * team_dists).norm(dim=-1) + 1
+            team_dists = jnp.linalg.norm(
+                team_disps[env_index, None] - pos[:, :, None], axis=-1
+            )
+            other_agent_value = jnp.linalg.norm(-jnp.exp(-5 * team_dists), axis=-1) + 1
         else:
             other_agent_value = 0
 
         # wall_value disincentivises being close to a wall
         wall_disps = self.get_wall_separations(pos)
-        wall_dists = wall_disps.norm(dim=-1)
-        wall_value = -jnp.exp(-8 * wall_dists).norm(dim=-1) + 1
+        wall_dists = jnp.linalg.norm(wall_disps, axis=-1)
+        wall_value = jnp.linalg.norm(-jnp.exp(-8 * wall_dists), axis=-1) + 1
 
         value = (
             wall_value + other_agent_value + ball_dist_value + side_value + defend_value
         ) / 5
         if self.decision_strength != 1:
-            value += jnp.random.randn(value.shape) * (1 - self.decision_strength)
+            value += jax.random.normal(value.shape) * (1 - self.decision_strength)
         return self, value
 
-    def get_wall_separations(self, pos: Array) -> Array:
-        top_wall_dist = -pos[:, Y] + self.world.pitch_width / 2
-        bottom_wall_dist = pos[:, Y] + self.world.pitch_width / 2
-        left_wall_dist = pos[:, X] + self.world.pitch_length / 2
-        right_wall_dist = -pos[:, X] + self.world.pitch_length / 2
+    def get_wall_separations(self, world: FootballWorld, pos: Array) -> Array:
+        top_wall_dist = -pos[:, Y] + world.pitch_width / 2
+        bottom_wall_dist = pos[:, Y] + world.pitch_width / 2
+        left_wall_dist = pos[:, X] + world.pitch_length / 2
+        right_wall_dist = -pos[:, X] + world.pitch_length / 2
         vertical_wall_disp = jnp.zeros(pos.shape)
         vertical_wall_disp = vertical_wall_disp.at[:, Y].set(
             jnp.minimum(top_wall_dist, bottom_wall_dist)
@@ -2809,14 +2907,14 @@ class AgentPolicy(PyTreeNode):
 
     def get_separations(
         self,
-        scenario: Scenario,
+        world: FootballWorld,
         teammate=False,
         opposition=False,
         vel=False,
     ) -> tuple["AgentPolicy", Array]:
         assert teammate or opposition, "One of teammate or opposition must be True"
-        ball, teammates, opposition, own_net, target_net, world = (
-            self.get_dynamic_params(scenario)
+        ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
+            world
         )
         key = (teammate, opposition, vel)
         if key in self.team_disps:
