@@ -10,8 +10,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.interactive_rendering import render_interactively
-from jaxvmas.simulator.core import Agent, Box, Landmark, Line, Sphere, World
+from jaxvmas.simulator.core import Agent, Box, Entity, Landmark, Line, Sphere, World
 from jaxvmas.simulator.dynamics.holonomic import Holonomic
 from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 from jaxvmas.simulator.scenario import BaseScenario
@@ -60,13 +61,33 @@ class Scenario(BaseScenario):
     observe_teammates: bool
     observe_adversaries: bool
     dict_obs: bool
-    blue_color: tuple[float, float, float] | None
-    red_color: tuple[float, float, float] | None
+    visualize_semidims: bool
+
+    blue_color: tuple[float, float, float]
+    red_color: tuple[float, float, float]
     red_controller: "AgentPolicy" | None
     blue_controller: "AgentPolicy" | None
+    background_entities: list[Landmark]
+
+    left_goal_pos: Array
+    right_goal_pos: Array
+    _done: Array
+    _sparse_reward_blue: Array
+    _sparse_reward_red: Array
+    _dense_reward_blue: Array
+    _dense_reward_red: Array
+    _render_field: bool
+    min_agent_dist_to_ball_blue: None
+    min_agent_dist_to_ball_red: None
+    _reset_agent_range: Array
+    _reset_agent_offset_blue: Array
+    _reset_agent_offset_red: Array
+    _agents_rel_pos_to_ball: Array
+    _agent_dist_to_ball: Array
+    _agents_closest_to_ball: Array
 
     @classmethod
-    def create(cls, **kwargs):
+    def create(cls, batch_dim: int, **kwargs):
         # Scenario config
         viewer_size = kwargs.pop("viewer_size", (1200, 800))
         base_scenario = super().create(viewer_size=viewer_size)
@@ -164,7 +185,84 @@ class Scenario(BaseScenario):
             )
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
-        return cls(
+        blue_color = (0.22, 0.49, 0.72)
+        red_color = (0.89, 0.10, 0.11)
+        # Add agents
+        red_controller = (
+            AgentPolicy(
+                team="Red",
+                disabled=disable_ai_red,
+                speed_strength=(
+                    ai_speed_strength[1]
+                    if isinstance(ai_speed_strength, tuple)
+                    else ai_speed_strength
+                ),
+                precision_strength=(
+                    ai_precision_strength[1]
+                    if isinstance(ai_precision_strength, tuple)
+                    else ai_precision_strength
+                ),
+                decision_strength=(
+                    ai_decision_strength[1]
+                    if isinstance(ai_decision_strength, tuple)
+                    else ai_decision_strength
+                ),
+            )
+            if ai_red_agents
+            else None
+        )
+        blue_controller = (
+            AgentPolicy(
+                team="Blue",
+                speed_strength=(
+                    ai_speed_strength[0]
+                    if isinstance(ai_speed_strength, tuple)
+                    else ai_speed_strength
+                ),
+                precision_strength=(
+                    ai_precision_strength[0]
+                    if isinstance(ai_precision_strength, tuple)
+                    else ai_precision_strength
+                ),
+                decision_strength=(
+                    ai_decision_strength[0]
+                    if isinstance(ai_decision_strength, tuple)
+                    else ai_decision_strength
+                ),
+            )
+            if ai_blue_agents
+            else None
+        )
+
+        # Cached values
+        left_goal_pos = jnp.asarray([-pitch_length / 2 - ball_size / 2, 0])
+        right_goal_pos = -left_goal_pos
+        _done = jnp.zeros(batch_dim, dtype=jnp.bool_)
+        _sparse_reward_blue = jnp.zeros(batch_dim)
+        _sparse_reward_red = _sparse_reward_blue
+        _dense_reward_blue = jnp.zeros(batch_dim)
+        _dense_reward_red = _dense_reward_blue
+        _render_field = True
+        min_agent_dist_to_ball_blue = None
+        min_agent_dist_to_ball_red = None
+
+        _reset_agent_range = jnp.asarray([pitch_length / 2, pitch_width])
+        _reset_agent_offset_blue = jnp.asarray(
+            [-pitch_length / 2 + agent_size, -pitch_width / 2]
+        )
+        _reset_agent_offset_red = jnp.asarray([-agent_size, -pitch_width / 2])
+
+        dim_p = 2
+        _agents_rel_pos_to_ball = jnp.zeros(
+            (batch_dim, n_blue_agents + n_red_agents, dim_p)
+        )
+        _agent_dist_to_ball = jnp.zeros((batch_dim, n_blue_agents + n_red_agents))
+        _agents_closest_to_ball = (
+            _agent_dist_to_ball == _agent_dist_to_ball.min(axis=-1, keepdims=True)[0]
+        )
+
+        visualize_semidims = False
+        scenario = cls(
             **asdict(base_scenario),
             n_blue_agents=n_blue_agents,
             n_red_agents=n_red_agents,
@@ -204,13 +302,51 @@ class Scenario(BaseScenario):
             observe_teammates=observe_teammates,
             observe_adversaries=observe_adversaries,
             dict_obs=dict_obs,
-            blue_color=None,
-            red_color=None,
-            red_controller=None,
-            blue_controller=None,
+            visualize_semidims=visualize_semidims,
+            blue_color=blue_color,
+            red_color=red_color,
+            red_controller=red_controller,
+            blue_controller=blue_controller,
             blue_agents=[],
             red_agents=[],
+            background=[],
+            left_goal_pos=left_goal_pos,
+            right_goal_pos=right_goal_pos,
+            _done=_done,
+            _sparse_reward_blue=_sparse_reward_blue,
+            _sparse_reward_red=_sparse_reward_red,
+            _dense_reward_blue=_dense_reward_blue,
+            _dense_reward_red=_dense_reward_red,
+            _render_field=_render_field,
+            min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue,
+            min_agent_dist_to_ball_red=min_agent_dist_to_ball_red,
+            _reset_agent_range=_reset_agent_range,
+            _reset_agent_offset_blue=_reset_agent_offset_blue,
+            _reset_agent_offset_red=_reset_agent_offset_red,
+            _agents_rel_pos_to_ball=_agents_rel_pos_to_ball,
+            _agent_dist_to_ball=_agent_dist_to_ball,
+            _agents_closest_to_ball=_agents_closest_to_ball,
         )
+        scenario = scenario.init_background()
+        return scenario
+
+    def replace(self, **kwargs) -> "Scenario":
+        if "blue_agents" in kwargs:
+            blue_agents = kwargs.pop("blue_agents")
+            agents = self.world.agents
+            agents = blue_agents + agents[self.n_blue_agents :]
+            self = self.replace(world=self.world.replace(agents=agents))
+        elif "blue_agents" in kwargs:
+            red_agents = kwargs.pop("red_agents")
+            agents = self.world.agents
+            agents = (
+                agents[: self.n_blue_agents]
+                + red_agents
+                + agents[self.n_blue_agents + self.n_red_agents :]
+            )
+            self = self.replace(world=self.world.replace(agents=agents))
+
+        return super(self, BaseScenario).replace(**kwargs)
 
     @property
     def blue_agents(self):
@@ -222,49 +358,87 @@ class Scenario(BaseScenario):
             self.n_blue_agents : self.n_blue_agents + self.n_red_agents
         ]
 
+    @property
+    def ball(self) -> "BallAgent":
+        return self.world.agents[self.n_blue_agents + self.n_red_agents]
+
+    @property
+    def background(self):
+        return self.background_entities[0]
+
+    @property
+    def centre_circle_outer(self):
+        return self.background_entities[1]
+
+    @property
+    def centre_circle_inner(self):
+        return self.background_entities[2]
+
+    @property
+    def right_top_wall(self):
+        return self.world.landmarks[0]
+
+    @property
+    def left_top_wall(self):
+        return self.world.landmarks[1]
+
+    @property
+    def right_bottom_wall(self):
+        return self.world.landmarks[2]
+
+    @property
+    def left_bottom_wall(self):
+        return self.world.landmarks[3]
+
+    @property
+    def blue_net(self):
+        return self.world.landmarks[4]
+
+    @property
+    def red_net(self):
+        return self.world.landmarks[5]
+
+    @property
+    def traj_points(self):
+        red_offset = 5
+        blue_offset = red_offset + self.n_traj_points * len(self.red_agents)
+        return {
+            "Red": {
+                agent.name: self.world.landmarks[
+                    red_offset + i * self.n_traj_points : self.n_traj_points
+                ]
+                for i, agent in enumerate(self.red_agents)
+            },
+            "Blue": {
+                agent.name: self.world.landmarks[
+                    blue_offset + i * self.n_traj_points : self.n_traj_points
+                ]
+                for i, agent in enumerate(self.blue_agents)
+            },
+        }
+
     def make_world(self, batch_dim: int):
-        self.visualize_semidims = False
         world = self.init_world(batch_dim)
-        self, world = self.init_agents(world)
-        self.init_ball(world)
-        self.init_background()
-        self.init_walls(world)
-        self.init_goals(world)
-        self.init_traj_pts(world)
-
-        # Cached values
-        self.left_goal_pos = jnp.asarray(
-            [-self.pitch_length / 2 - self.ball_size / 2, 0]
-        )
-        self.right_goal_pos = -self.left_goal_pos
-        self._done = jnp.zeros(batch_dim, dtype=jnp.bool_)
-        self._sparse_reward_blue = jnp.zeros(batch_dim)
-        self._sparse_reward_red = self._sparse_reward_blue
-        self._render_field = True
-        self.min_agent_dist_to_ball_blue = None
-        self.min_agent_dist_to_ball_red = None
-
-        self._reset_agent_range = jnp.asarray([self.pitch_length / 2, self.pitch_width])
-        self._reset_agent_offset_blue = jnp.asarray(
-            [-self.pitch_length / 2 + self.agent_size, -self.pitch_width / 2]
-        )
-        self._reset_agent_offset_red = jnp.asarray(
-            [-self.agent_size, -self.pitch_width / 2]
-        )
-        self._agents_rel_pos_to_ball = None
+        world = self.init_agents(world)
+        world = self.init_ball(world)
+        world = self.init_walls(world)
+        world = self.init_goals(world)
+        world = self.init_traj_pts(world)
         return world
 
     def reset_world_at(self, env_index: int | None = None):
         self = self.reset_agents(env_index)
-        self.reset_ball(env_index)
-        self.reset_walls(env_index)
-        self.reset_goals(env_index)
-        self.reset_controllers(env_index)
-        self._done = jnp.where(
+        self = self.reset_ball(env_index)
+        self = self.reset_walls(env_index)
+        self = self.reset_goals(env_index)
+        self = self.reset_controllers(env_index)
+        _done = jnp.where(
             env_index is None,
             jnp.zeros_like(self._done, dtype=jnp.bool_),
             self._done.at[env_index].set(False),
         )
+        self = self.replace(_done=_done)
+        return self
 
     def init_world(self, batch_dim: int):
         # Make world
@@ -285,61 +459,7 @@ class Scenario(BaseScenario):
         )
         return world
 
-    def init_agents(self, world: World):
-        blue_color = (0.22, 0.49, 0.72)
-        red_color = (0.89, 0.10, 0.11)
-        # Add agents
-        red_controller = (
-            AgentPolicy(
-                team="Red",
-                disabled=self.disable_ai_red,
-                speed_strength=(
-                    self.ai_speed_strength[1]
-                    if isinstance(self.ai_speed_strength, tuple)
-                    else self.ai_speed_strength
-                ),
-                precision_strength=(
-                    self.ai_precision_strength[1]
-                    if isinstance(self.ai_precision_strength, tuple)
-                    else self.ai_precision_strength
-                ),
-                decision_strength=(
-                    self.ai_decision_strength[1]
-                    if isinstance(self.ai_decision_strength, tuple)
-                    else self.ai_decision_strength
-                ),
-            )
-            if self.ai_red_agents
-            else None
-        )
-        blue_controller = (
-            AgentPolicy(
-                team="Blue",
-                speed_strength=(
-                    self.ai_speed_strength[0]
-                    if isinstance(self.ai_speed_strength, tuple)
-                    else self.ai_speed_strength
-                ),
-                precision_strength=(
-                    self.ai_precision_strength[0]
-                    if isinstance(self.ai_precision_strength, tuple)
-                    else self.ai_precision_strength
-                ),
-                decision_strength=(
-                    self.ai_decision_strength[0]
-                    if isinstance(self.ai_decision_strength, tuple)
-                    else self.ai_decision_strength
-                ),
-            )
-            if self.ai_blue_agents
-            else None
-        )
-        self = self.replace(
-            blue_color=blue_color,
-            red_color=red_color,
-            red_controller=red_controller,
-            blue_controller=blue_controller,
-        )
+    def init_agents(self, world: World) -> World:
 
         if self.physically_different:
             blue_agents = self.get_physically_different_agents()
@@ -379,7 +499,7 @@ class Scenario(BaseScenario):
             agent = FootballAgent(
                 name=f"agent_red_{i}",
                 shape=Sphere(radius=self.agent_size),
-                action_script=self.red_controller.run if self.ai_red_agents else None,
+                action_script=(self.red_controller.run if self.ai_red_agents else None),
                 u_multiplier=(
                     [self.u_multiplier, self.u_multiplier]
                     if not self.enable_shooting or self.ai_red_agents
@@ -402,7 +522,7 @@ class Scenario(BaseScenario):
             )
             world = world.add_agent(agent)
 
-        return self, world
+        return world
 
     def get_physically_different_agents(self):
         assert self.n_blue_agents == 5, "Physical differences only for 5 agents"
@@ -415,7 +535,9 @@ class Scenario(BaseScenario):
             return FootballAgent(
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size + attacker_radius_decrease),
-                action_script=self.blue_controller.run if self.ai_blue_agents else None,
+                action_script=(
+                    self.blue_controller.run if self.ai_blue_agents else None
+                ),
                 u_multiplier=(
                     [
                         self.u_multiplier + attacker_multiplier_increase,
@@ -443,7 +565,9 @@ class Scenario(BaseScenario):
             return FootballAgent(
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size),
-                action_script=self.blue_controller.run if self.ai_blue_agents else None,
+                action_script=(
+                    self.blue_controller.run if self.ai_blue_agents else None
+                ),
                 u_multiplier=(
                     [self.u_multiplier, self.u_multiplier]
                     if not self.enable_shooting
@@ -471,7 +595,9 @@ class Scenario(BaseScenario):
             return FootballAgent(
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size + goalie_radius_increase),
-                action_script=self.blue_controller.run if self.ai_blue_agents else None,
+                action_script=(
+                    self.blue_controller.run if self.ai_blue_agents else None
+                ),
                 u_multiplier=(
                     [
                         self.u_multiplier + goalie_multiplier_decrease,
@@ -515,6 +641,7 @@ class Scenario(BaseScenario):
                 )
                 blue_agents.append(agent)
             self = self.replace(blue_agents=blue_agents)
+
         if (
             self.spawn_in_formation and self.only_blue_formation
         ) or not self.spawn_in_formation:
@@ -595,37 +722,37 @@ class Scenario(BaseScenario):
         )
 
     def reset_controllers(self, env_index: int | None = None):
-        if self.red_controller is not None:
-            if not self.red_controller.initialised:
-                self.red_controller.init(self.world)
-            self.red_controller.reset(env_index)
-        if self.blue_controller is not None:
-            if not self.blue_controller.initialised:
-                self.blue_controller.init(self.world)
-            self.blue_controller.reset(env_index)
+        red_controller = self.red_controller
+        blue_controller = self.blue_controller
+        if red_controller is not None:
+            if not red_controller.initialised:
+                red_controller = red_controller.init(self)
+            red_controller = red_controller.reset(env_index)
+        if blue_controller is not None:
+            if not blue_controller.initialised:
+                blue_controller = blue_controller.init(self)
+            blue_controller = blue_controller.reset(env_index)
+        self = self.replace(
+            red_controller=red_controller, blue_controller=blue_controller
+        )
+        return self
 
     def init_ball(self, world: World):
         # Add Ball
-        ball = Agent(
+        ball = BallAgent(
             name="Ball",
             shape=Sphere(radius=self.ball_size),
-            action_script=ball_action_script,
+            action_script=get_ball_action_script(
+                self.agent_size, self.pitch_width, self.pitch_length, self.goal_size
+            ),
             max_speed=self.ball_max_speed,
             mass=self.ball_mass,
             alpha=1,
             color=Color.BLACK,
+            dim_p=world.dim_p,
         )
-        ball.pos_rew_blue = jnp.zeros(
-            world.batch_dim,
-        )
-        ball.pos_rew_red = ball.pos_rew_blue.clone()
-        ball.pos_rew_agent_blue = ball.pos_rew_blue.clone()
-        ball.pos_rew_agent_red = ball.pos_rew_red.clone()
-
-        ball.kicking_action = jnp.zeros(world.batch_dim, world.dim_p)
-        world.add_agent(ball)
-        world.ball = ball
-        self.ball = ball
+        world = world.add_agent(ball)
+        return world
 
     def reset_ball(self, env_index: int | None = None):
         if not self.ai_blue_agents:
@@ -633,35 +760,50 @@ class Scenario(BaseScenario):
                 self.blue_agents, env_index
             )
             if env_index is None:
-                self.min_agent_dist_to_ball_blue = min_agent_dist_to_ball_blue
+                self = self.replace(
+                    min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
+                )
             else:
-                self.min_agent_dist_to_ball_blue[env_index] = (
-                    min_agent_dist_to_ball_blue
+                min_agent_dist_to_ball_blue[env_index] = min_agent_dist_to_ball_blue
+                self = self.replace(
+                    min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
                 )
         if not self.ai_red_agents:
             min_agent_dist_to_ball_red = self.get_closest_agent_to_ball(
                 self.red_agents, env_index
             )
             if env_index is None:
-                self.min_agent_dist_to_ball_red = min_agent_dist_to_ball_red
+                self = self.replace(
+                    min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
+                )
             else:
-                self.min_agent_dist_to_ball_red[env_index] = min_agent_dist_to_ball_red
+                min_agent_dist_to_ball_red[env_index] = min_agent_dist_to_ball_red
+                self = self.replace(
+                    min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
+                )
 
         if env_index is None:
             if not self.ai_blue_agents:
-                self.ball.pos_shaping_blue = (
+                ball = self.ball
+                pos_shaping_blue = (
                     jnp.linalg.vector_norm(
                         self.ball.state.pos - self.right_goal_pos,
                         axis=-1,
                     )
                     * self.pos_shaping_factor_ball_goal
                 )
-                self.ball.pos_shaping_agent_blue = (
+                pos_shaping_agent_blue = (
                     self.min_agent_dist_to_ball_blue
                     * self.pos_shaping_factor_agent_ball
                 )
+                ball = ball.replace(
+                    pos_shaping_blue=pos_shaping_blue,
+                    pos_shaping_agent_blue=pos_shaping_agent_blue,
+                )
+                self = self.replace(ball=ball)
             if not self.ai_red_agents:
-                self.ball.pos_shaping_red = (
+                ball = self.ball
+                pos_shaping_red = (
                     jnp.linalg.vector_norm(
                         self.ball.state.pos - self.left_goal_pos,
                         axis=-1,
@@ -669,39 +811,67 @@ class Scenario(BaseScenario):
                     * self.pos_shaping_factor_ball_goal
                 )
 
-                self.ball.pos_shaping_agent_red = (
+                pos_shaping_agent_red = (
                     self.min_agent_dist_to_ball_red * self.pos_shaping_factor_agent_ball
                 )
+                ball = ball.replace(
+                    pos_shaping_red=pos_shaping_red,
+                    pos_shaping_agent_red=pos_shaping_agent_red,
+                )
+                self = self.replace(ball=ball)
+
             if self.enable_shooting:
-                self.ball.kicking_action[:] = 0.0
+                ball = self.ball
+                kicking_action = ball.kicking_action.at[:].set(0.0)
+                ball = ball.replace(kicking_action=kicking_action)
+                self = self.replace(ball=ball)
         else:
             if not self.ai_blue_agents:
-                self.ball.pos_shaping_blue[env_index] = (
+                ball = self.ball
+                pos_shaping_blue = (
                     jnp.linalg.vector_norm(
                         self.ball.state.pos[env_index] - self.right_goal_pos
                     )
                     * self.pos_shaping_factor_ball_goal
                 )
-                self.ball.pos_shaping_agent_blue[env_index] = (
+                pos_shaping_agent_blue = (
                     self.min_agent_dist_to_ball_blue[env_index]
                     * self.pos_shaping_factor_agent_ball
                 )
+                ball = ball.replace(
+                    pos_shaping_blue=pos_shaping_blue,
+                    pos_shaping_agent_blue=pos_shaping_agent_blue,
+                )
+                self = self.replace(ball=ball)
             if not self.ai_red_agents:
-                self.ball.pos_shaping_red[env_index] = (
+                ball = self.ball
+                pos_shaping_red = (
                     jnp.linalg.vector_norm(
                         self.ball.state.pos[env_index] - self.left_goal_pos
                     )
                     * self.pos_shaping_factor_ball_goal
                 )
 
-                self.ball.pos_shaping_agent_red[env_index] = (
+                pos_shaping_agent_red = (
                     self.min_agent_dist_to_ball_red[env_index]
                     * self.pos_shaping_factor_agent_ball
                 )
+                ball = ball.replace(
+                    pos_shaping_red=pos_shaping_red,
+                    pos_shaping_agent_red=pos_shaping_agent_red,
+                )
+                self = self.replace(ball=ball)
             if self.enable_shooting:
-                self.ball.kicking_action[env_index] = 0.0
+                ball = self.ball
+                kicking_action = ball.kicking_action.at[env_index].set(0.0)
+                ball = ball.replace(kicking_action=kicking_action)
+                self = self.replace(ball=ball)
 
-    def get_closest_agent_to_ball(self, team, env_index):
+        return self
+
+    def get_closest_agent_to_ball(
+        self, team: list[Agent], env_index: int | None = None
+    ):
         pos = jnp.stack(
             [a.state.pos for a in team], axis=-2
         )  # shape == (batch_dim, n_agents, 2)
@@ -718,7 +888,7 @@ class Scenario(BaseScenario):
 
     def init_background(self):
         # Add landmarks
-        self.background = Landmark(
+        background = Landmark(
             name="Background",
             collide=False,
             movable=False,
@@ -726,7 +896,7 @@ class Scenario(BaseScenario):
             color=Color.GREEN,
         )
 
-        self.centre_circle_outer = Landmark(
+        centre_circle_outer = Landmark(
             name="Centre Circle Outer",
             collide=False,
             movable=False,
@@ -734,7 +904,7 @@ class Scenario(BaseScenario):
             color=Color.WHITE,
         )
 
-        self.centre_circle_inner = Landmark(
+        centre_circle_inner = Landmark(
             name="Centre Circle Inner",
             collide=False,
             movable=False,
@@ -782,26 +952,37 @@ class Scenario(BaseScenario):
             color=Color.WHITE,
         )
 
-        self.background_entities = [
-            self.background,
-            self.centre_circle_outer,
-            self.centre_circle_inner,
+        background_entities = [
+            background,
+            centre_circle_outer,
+            centre_circle_inner,
             centre_line,
             right_line,
             left_line,
             top_line,
             bottom_line,
         ]
+        self = self.replace(background_entities=background_entities)
+        return self
 
     def render_field(self, render: bool):
-        self._render_field = render
-        self.left_top_wall.is_rendering[:] = render
-        self.left_bottom_wall.is_rendering[:] = render
-        self.right_top_wall.is_rendering[:] = render
-        self.right_bottom_wall.is_rendering[:] = render
+        _render_field = render
+        left_top_wall = self.left_top_wall.is_rendering.at[:].set(render)
+        left_bottom_wall = self.left_bottom_wall.is_rendering.at[:].set(render)
+        right_top_wall = self.right_top_wall.is_rendering.at[:].set(render)
+        right_bottom_wall = self.right_bottom_wall.is_rendering.at[:].set(render)
 
-    def init_walls(self, world):
-        self.right_top_wall = Landmark(
+        self = self.replace(
+            _render_field=_render_field,
+            left_top_wall=left_top_wall,
+            left_bottom_wall=left_bottom_wall,
+            right_top_wall=right_top_wall,
+            right_bottom_wall=right_bottom_wall,
+        )
+        return self
+
+    def init_walls(self, world: World):
+        right_top_wall = Landmark(
             name="Right Top Wall",
             collide=True,
             movable=False,
@@ -810,9 +991,9 @@ class Scenario(BaseScenario):
             ),
             color=Color.WHITE,
         )
-        world.add_landmark(self.right_top_wall)
+        world = world.add_landmark(right_top_wall)
 
-        self.left_top_wall = Landmark(
+        left_top_wall = Landmark(
             name="Left Top Wall",
             collide=True,
             movable=False,
@@ -821,9 +1002,9 @@ class Scenario(BaseScenario):
             ),
             color=Color.WHITE,
         )
-        world.add_landmark(self.left_top_wall)
+        world = world.add_landmark(left_top_wall)
 
-        self.right_bottom_wall = Landmark(
+        right_bottom_wall = Landmark(
             name="Right Bottom Wall",
             collide=True,
             movable=False,
@@ -832,9 +1013,9 @@ class Scenario(BaseScenario):
             ),
             color=Color.WHITE,
         )
-        world.add_landmark(self.right_bottom_wall)
+        world = world.add_landmark(right_bottom_wall)
 
-        self.left_bottom_wall = Landmark(
+        left_bottom_wall = Landmark(
             name="Left Bottom Wall",
             collide=True,
             movable=False,
@@ -843,12 +1024,15 @@ class Scenario(BaseScenario):
             ),
             color=Color.WHITE,
         )
-        world.add_landmark(self.left_bottom_wall)
+        world = world.add_landmark(left_bottom_wall)
 
-    def reset_walls(self, env_index: int = None):
+        return world
+
+    def reset_walls(self, env_index: int | None = None):
+        landmarks = []
         for landmark in self.world.landmarks:
             if landmark.name == "Left Top Wall":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2,
@@ -857,13 +1041,13 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
-
+                landmarks.append(landmark)
             elif landmark.name == "Left Bottom Wall":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2,
@@ -872,13 +1056,13 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
-
+                landmarks.append(landmark)
             elif landmark.name == "Right Top Wall":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2,
@@ -887,12 +1071,13 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Right Bottom Wall":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2,
@@ -901,12 +1086,17 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
+            else:
+                landmarks.append(landmark)
+        self = self.replace(world=self.world.replace(landmarks=landmarks))
+        return self
 
-    def init_goals(self, world):
+    def init_goals(self, world: World):
         right_goal_back = Landmark(
             name="Right Goal Back",
             collide=True,
@@ -914,7 +1104,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_size),
             color=Color.WHITE,
         )
-        world.add_landmark(right_goal_back)
+        world = world.add_landmark(right_goal_back)
 
         left_goal_back = Landmark(
             name="Left Goal Back",
@@ -923,7 +1113,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_size),
             color=Color.WHITE,
         )
-        world.add_landmark(left_goal_back)
+        world = world.add_landmark(left_goal_back)
 
         right_goal_top = Landmark(
             name="Right Goal Top",
@@ -932,7 +1122,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_depth),
             color=Color.WHITE,
         )
-        world.add_landmark(right_goal_top)
+        world = world.add_landmark(right_goal_top)
 
         left_goal_top = Landmark(
             name="Left Goal Top",
@@ -941,7 +1131,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_depth),
             color=Color.WHITE,
         )
-        world.add_landmark(left_goal_top)
+        world = world.add_landmark(left_goal_top)
 
         right_goal_bottom = Landmark(
             name="Right Goal Bottom",
@@ -950,7 +1140,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_depth),
             color=Color.WHITE,
         )
-        world.add_landmark(right_goal_bottom)
+        world = world.add_landmark(right_goal_bottom)
 
         left_goal_bottom = Landmark(
             name="Left Goal Bottom",
@@ -959,7 +1149,7 @@ class Scenario(BaseScenario):
             shape=Line(length=self.goal_depth),
             color=Color.WHITE,
         )
-        world.add_landmark(left_goal_bottom)
+        world = world.add_landmark(left_goal_bottom)
 
         blue_net = Landmark(
             name="Blue Net",
@@ -968,7 +1158,7 @@ class Scenario(BaseScenario):
             shape=Box(length=self.goal_depth, width=self.goal_size),
             color=(0.5, 0.5, 0.5, 0.5),
         )
-        world.add_landmark(blue_net)
+        world = world.add_landmark(blue_net)
 
         red_net = Landmark(
             name="Red Net",
@@ -977,17 +1167,15 @@ class Scenario(BaseScenario):
             shape=Box(length=self.goal_depth, width=self.goal_size),
             color=(0.5, 0.5, 0.5, 0.5),
         )
-        world.add_landmark(red_net)
+        world = world.add_landmark(red_net)
 
-        self.blue_net = blue_net
-        self.red_net = red_net
-        world.blue_net = blue_net
-        world.red_net = red_net
+        return world
 
-    def reset_goals(self, env_index: int = None):
+    def reset_goals(self, env_index: int | None = None):
+        landmarks = []
         for landmark in self.world.landmarks:
             if landmark.name == "Left Goal Back":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2 - self.goal_depth + self.agent_size,
@@ -996,12 +1184,13 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Right Goal Back":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2 + self.goal_depth - self.agent_size,
@@ -1010,12 +1199,13 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
-                landmark.set_rot(
+                landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Left Goal Top":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2
@@ -1026,8 +1216,9 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Left Goal Bottom":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2
@@ -1038,8 +1229,9 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Right Goal Top":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2
@@ -1050,8 +1242,9 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Right Goal Bottom":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2
@@ -1062,8 +1255,9 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Red Net":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             self.pitch_length / 2
@@ -1074,8 +1268,9 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
             elif landmark.name == "Blue Net":
-                landmark.set_pos(
+                landmark = landmark.set_pos(
                     jnp.asarray(
                         [
                             -self.pitch_length / 2
@@ -1086,12 +1281,15 @@ class Scenario(BaseScenario):
                     ),
                     batch_index=env_index,
                 )
+                landmarks.append(landmark)
+            else:
+                landmarks.append(landmark)
+        self = self.replace(world=self.world.replace(landmarks=landmarks))
+        return self
 
-    def init_traj_pts(self, world):
-        world.traj_points = {"Red": {}, "Blue": {}}
+    def init_traj_pts(self, world: World):
         if self.ai_red_agents:
-            for i, agent in enumerate(world.red_agents):
-                world.traj_points["Red"][agent] = []
+            for i in range(self.n_red_agents):
                 for j in range(self.n_traj_points):
                     pointj = Landmark(
                         name="Red {agent} Trajectory {pt}".format(agent=i, pt=j),
@@ -1100,11 +1298,9 @@ class Scenario(BaseScenario):
                         shape=Sphere(radius=0.01),
                         color=Color.GRAY,
                     )
-                    world.add_landmark(pointj)
-                    world.traj_points["Red"][agent].append(pointj)
+                    world = world.add_landmark(pointj)
         if self.ai_blue_agents:
-            for i, agent in enumerate(world.blue_agents):
-                world.traj_points["Blue"][agent] = []
+            for i in range(self.n_blue_agents):
                 for j in range(self.n_traj_points):
                     pointj = Landmark(
                         name="Blue {agent} Trajectory {pt}".format(agent=i, pt=j),
@@ -1113,55 +1309,49 @@ class Scenario(BaseScenario):
                         shape=Sphere(radius=0.01),
                         color=Color.GRAY,
                     )
-                    world.add_landmark(pointj)
-                    world.traj_points["Blue"][agent].append(pointj)
+                    world = world.add_landmark(pointj)
+        return world
 
-    def process_action(self, agent: Agent):
+    def process_action(self, agent: "FootballAgent"):
         if agent is self.ball:
-            return
+            return self, agent
         blue = agent in self.blue_agents
         if agent.action_script is None and not blue:  # Non AI
-            agent.action.u[..., X] = -agent.action.u[
-                ..., X
-            ]  # Red agents have the action X flipped
+            u_x = -agent.action.u[..., X]  # Red agents have the action X flipped
+            u = agent.action.u.at[..., X].set(u_x)
+            agent = agent.replace(action=agent.action.replace(u=u))
             if self.enable_shooting:
-                agent.action.u[..., 2] = -agent.action.u[
+                u_rot = -agent.action.u[
                     ..., 2
                 ]  # Red agents have the action rotation flipped
+                u = agent.action.u.at[..., 2].set(u_rot)
+                agent = agent.replace(action=agent.action.replace(u=u))
 
         # You can shoot the ball only if you hae that action, are the closest to the ball, and the ball is within range and angle
         if self.enable_shooting and agent.action_script is None:
-            agents_exclude_ball = [a for a in self.world.agents if a is not self.ball]
-            if self._agents_rel_pos_to_ball is None:
-                self._agents_rel_pos_to_ball = jnp.stack(
-                    [self.ball.state.pos - a.state.pos for a in agents_exclude_ball],
-                    axis=1,
-                )
-                self._agent_dist_to_ball = jnp.linalg.norm(
-                    self._agents_rel_pos_to_ball, axis=-1
-                )
-                self._agents_closest_to_ball = (
-                    self._agent_dist_to_ball
-                    == self._agent_dist_to_ball.min(axis=-1, keepdims=True)[0]
-                )
-            agent_index = agents_exclude_ball.index(agent)
+            agent_index = [
+                i for i, a in enumerate(self.world.agents) if a.name == agent.name
+            ][0]
             rel_pos = self._agents_rel_pos_to_ball[:, agent_index]
-            agent.ball_within_range = (
+            ball_within_range = (
                 self._agent_dist_to_ball[:, agent_index] <= self.shooting_radius
             )
+            agent = agent.replace(ball_within_range=ball_within_range)
 
             rel_pos_angle = jnp.arctan2(rel_pos[Y], rel_pos[X])
             a = (agent.state.rot.squeeze(-1) - rel_pos_angle + jnp.pi) % (
                 2 * jnp.pi
             ) - jnp.pi
-            agent.ball_within_angle = (-self.shooting_angle / 2 <= a) * (
+            ball_within_angle = (-self.shooting_angle / 2 <= a) * (
                 a <= self.shooting_angle / 2
             )
+            agent = agent.replace(ball_within_angle=ball_within_angle)
 
             shoot_force = jnp.zeros((self.world.batch_dim, 2))
-            shoot_force[..., X] = agent.action.u[..., -1] + self.u_shoot_multiplier
+            _shoot_force = agent.action.u[..., -1] + self.u_shoot_multiplier
+            shoot_force = shoot_force.at[..., X].set(_shoot_force)
             shoot_force = JaxUtils.rotate_vector(shoot_force, agent.state.rot)
-            agent.shoot_force = shoot_force
+            agent = agent.replace(shoot_force=shoot_force)
             shoot_force = jnp.where(
                 (
                     agent.ball_within_angle
@@ -1172,20 +1362,42 @@ class Scenario(BaseScenario):
                 0.0,
             )
 
-            self.ball.kicking_action += shoot_force
-            agent.action.u = agent.action.u[:, :-1]
+            kicking_action = self.ball.kicking_action + shoot_force
+            self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
+            u = agent.action.u[:, :-1]
+            agent = agent.replace(action=agent.action.replace(u=u))
+
+        return self, agent
 
     def pre_step(self):
         if self.enable_shooting:
-            self._agents_rel_pos_to_ball = (
-                None  # Make sure the global elements in precess_actions are recomputed
-            )
-            self.ball.action.u += self.ball.kicking_action
-            self.ball.kicking_action[:] = 0
+            agents_exclude_ball = [a for a in self.world.agents if a is not self.ball]
 
-    def reward(self, agent: Agent):
+            _agents_rel_pos_to_ball = jnp.stack(
+                [self.ball.state.pos - a.state.pos for a in agents_exclude_ball],
+                axis=1,
+            )
+            _agent_dist_to_ball = jnp.linalg.norm(_agents_rel_pos_to_ball, axis=-1)
+            _agents_closest_to_ball = (
+                _agent_dist_to_ball
+                == _agent_dist_to_ball.min(axis=-1, keepdims=True)[0]
+            )
+            self = self.replace(
+                _agents_rel_pos_to_ball=_agents_rel_pos_to_ball,
+                _agent_dist_to_ball=_agent_dist_to_ball,
+                _agents_closest_to_ball=_agents_closest_to_ball,
+            )
+
+            u = self.ball.action.u + self.ball.kicking_action
+            self.ball = self.ball.replace(action=self.ball.action.replace(u=u))
+            kicking_action = self.ball.kicking_action.at[:].set(0)
+            self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
+
+        return self
+
+    def reward(self, agent: "FootballAgent"):
         # Called with agent=None when only AIs are playing to compute the _done
-        if agent is None or agent == self.world.agents[0]:
+        if agent is None or agent.name == self.world.agents[0].name:
             # Sparse Reward
             over_right_line = (
                 self.ball.state.pos[:, X] > self.pitch_length / 2 + self.ball_size / 2
@@ -1198,26 +1410,35 @@ class Scenario(BaseScenario):
             )
             blue_score = over_right_line * goal_mask
             red_score = over_left_line * goal_mask
-            self._sparse_reward_blue = (
+            _sparse_reward_blue = (
                 self.scoring_reward * blue_score - self.scoring_reward * red_score
             )
-            self._sparse_reward_red = -self._sparse_reward_blue
+            _sparse_reward_red = -_sparse_reward_blue
 
-            self._done = blue_score | red_score
+            _done = blue_score | red_score
             # Dense Reward
-            self._dense_reward_blue = 0
-            self._dense_reward_red = 0
+            _dense_reward_blue = 0
+            _dense_reward_red = 0
+            self = self.replace(
+                _sparse_reward_blue=_sparse_reward_blue,
+                _sparse_reward_red=_sparse_reward_red,
+                _done=_done,
+            )
             if self.dense_reward and agent is not None:
                 if not self.ai_blue_agents:
-                    self._dense_reward_blue = self.reward_ball_to_goal(
+                    _dense_reward_blue = self.reward_ball_to_goal(
                         blue=True
                     ) + self.reward_all_agent_to_ball(blue=True)
                 if not self.ai_red_agents:
-                    self._dense_reward_red = self.reward_ball_to_goal(
+                    _dense_reward_red = self.reward_ball_to_goal(
                         blue=False
                     ) + self.reward_all_agent_to_ball(blue=False)
+            self = self.replace(
+                _dense_reward_blue=_dense_reward_blue,
+                _dense_reward_red=_dense_reward_red,
+            )
 
-        blue = agent in self.blue_agents
+        blue = agent.name in [a.name for a in self.blue_agents]
         if blue:
             reward = self._sparse_reward_blue + self._dense_reward_blue
         else:
@@ -1227,28 +1448,42 @@ class Scenario(BaseScenario):
 
     def reward_ball_to_goal(self, blue: bool):
         if blue:
-            self.ball.distance_to_goal_blue = jnp.linalg.norm(
+            distance_to_goal_blue = jnp.linalg.norm(
                 self.ball.state.pos - self.right_goal_pos,
                 axis=-1,
             )
-            distance_to_goal = self.ball.distance_to_goal_blue
+            distance_to_goal = distance_to_goal_blue
+            # self = self.replace(
+            #     ball=self.ball.replace(distance_to_goal_blue=distance_to_goal_blue)
+            # )
         else:
-            self.ball.distance_to_goal_red = jnp.linalg.norm(
+            distance_to_goal_red = jnp.linalg.norm(
                 self.ball.state.pos - self.left_goal_pos,
                 axis=-1,
             )
-            distance_to_goal = self.ball.distance_to_goal_red
+            distance_to_goal = distance_to_goal_red
+            # self = self.replace(
+            #     ball=self.ball.replace(distance_to_goal_red=distance_to_goal_red)
+            # )
 
         pos_shaping = distance_to_goal * self.pos_shaping_factor_ball_goal
 
         if blue:
-            self.ball.pos_rew_blue = self.ball.pos_shaping_blue - pos_shaping
-            self.ball.pos_shaping_blue = pos_shaping
-            pos_rew = self.ball.pos_rew_blue
+            pos_rew_blue = self.ball.pos_shaping_blue - pos_shaping
+            # self = self.replace(
+            #     ball=self.ball.replace(
+            #         pos_shaping_blue=pos_shaping, pos_rew_blue=pos_rew_blue
+            #     )
+            # )
+            pos_rew = pos_rew_blue
         else:
-            self.ball.pos_rew_red = self.ball.pos_shaping_red - pos_shaping
-            self.ball.pos_shaping_red = pos_shaping
-            pos_rew = self.ball.pos_rew_red
+            pos_rew_red = self.ball.pos_shaping_red - pos_shaping
+            # self = self.replace(
+            #     ball=self.ball.replace(
+            #         pos_shaping_red=pos_shaping, pos_rew_red=pos_rew_red
+            #     )
+            # )
+            pos_rew = pos_rew_red
         return pos_rew
 
     def reward_all_agent_to_ball(self, blue: bool):
@@ -1256,29 +1491,37 @@ class Scenario(BaseScenario):
             team=self.blue_agents if blue else self.red_agents, env_index=None
         )
         if blue:
-            self.min_agent_dist_to_ball_blue = min_dist_to_ball
+            self = self.replace(min_agent_dist_to_ball_blue=min_dist_to_ball)
         else:
-            self.min_agent_dist_to_ball_red = min_dist_to_ball
+            self = self.replace(min_agent_dist_to_ball_red=min_dist_to_ball)
         pos_shaping = min_dist_to_ball * self.pos_shaping_factor_agent_ball
 
         ball_moving = jnp.linalg.norm(self.ball.state.vel, axis=-1) > 1e-6
         agent_close_to_goal = min_dist_to_ball < self.distance_to_ball_trigger
 
         if blue:
-            self.ball.pos_rew_agent_blue = jnp.where(
-                agent_close_to_goal + ball_moving,
-                0.0,
-                self.ball.pos_shaping_agent_blue - pos_shaping,
+            self = self.replace(
+                ball=self.ball.replace(
+                    pos_rew_agent_blue=jnp.where(
+                        agent_close_to_goal + ball_moving,
+                        0.0,
+                        self.ball.pos_shaping_agent_blue - pos_shaping,
+                    ),
+                    pos_shaping_agent_blue=pos_shaping,
+                )
             )
-            self.ball.pos_shaping_agent_blue = pos_shaping
             pos_rew_agent = self.ball.pos_rew_agent_blue
         else:
-            self.ball.pos_rew_agent_red = jnp.where(
-                agent_close_to_goal + ball_moving,
-                0.0,
-                self.ball.pos_shaping_agent_red - pos_shaping,
+            self = self.replace(
+                ball=self.ball.replace(
+                    pos_rew_agent_red=jnp.where(
+                        agent_close_to_goal + ball_moving,
+                        0.0,
+                        self.ball.pos_shaping_agent_red - pos_shaping,
+                    ),
+                    pos_shaping_agent_red=pos_shaping,
+                )
             )
-            self.ball.pos_shaping_agent_red = pos_shaping
             pos_rew_agent = self.ball.pos_rew_agent_red
 
         return pos_rew_agent
@@ -1303,9 +1546,9 @@ class Scenario(BaseScenario):
         env_index=Ellipsis,
     ):
         if blue:
-            assert agent in self.blue_agents
+            assert agent.name in [a.name for a in self.blue_agents]
         else:
-            blue = agent in self.blue_agents
+            assert agent.name in [a.name for a in self.red_agents]
 
         if not blue:
             my_team, other_team = (self.red_agents, self.blue_agents)
@@ -1370,20 +1613,20 @@ class Scenario(BaseScenario):
 
     def observation_base(
         self,
-        agent_pos,
-        agent_rot,
-        agent_vel,
-        agent_force,
-        teammate_poses,
-        teammate_forces,
-        teammate_vels,
-        adversary_poses,
-        adversary_forces,
-        adversary_vels,
-        ball_pos,
-        ball_vel,
-        ball_force,
-        goal_pos,
+        agent_pos: Array,
+        agent_rot: Array,
+        agent_vel: Array,
+        agent_force: Array,
+        teammate_poses: Array,
+        teammate_forces: Array,
+        teammate_vels: Array,
+        adversary_poses: Array,
+        adversary_forces: Array,
+        adversary_vels: Array,
+        ball_pos: Array,
+        ball_vel: Array,
+        ball_force: Array,
+        goal_pos: Array,
         blue: bool,
     ):
         # Make all inputs same batch size (this is needed when this function is called for rendering
@@ -1413,14 +1656,14 @@ class Scenario(BaseScenario):
                     input[j] = jnp.broadcast_to(
                         input[j][None], (batch_dim, *input[j].shape)
                     )
-                input[j] = input[j].clone()
+                input[j] = input[j].copy()
 
             else:
                 o = input[j]
                 for i in range(len(o)):
                     if len(o[i].shape) == 1:
                         o[i] = jnp.broadcast_to(o[i][None], (batch_dim, *o[i].shape))
-                    o[i] = o[i].clone()
+                    o[i] = o[i].copy()
 
         (
             agent_pos,
@@ -1443,7 +1686,22 @@ class Scenario(BaseScenario):
         if (
             not blue
         ):  # If agent is red we have to flip the x of sign of each observation
-            for tensor in (
+            [
+                agent_pos,
+                agent_vel,
+                agent_force,
+                ball_pos,
+                ball_vel,
+                ball_force,
+                goal_pos,
+                teammate_poses,
+                teammate_forces,
+                teammate_vels,
+                adversary_poses,
+                adversary_forces,
+                adversary_vels,
+            ] = jax.tree.map(
+                lambda jax_array: jax_array.at[..., X].set(-jax_array[..., X]),
                 [
                     agent_pos,
                     agent_vel,
@@ -1452,15 +1710,15 @@ class Scenario(BaseScenario):
                     ball_vel,
                     ball_force,
                     goal_pos,
-                ]
-                + teammate_poses
-                + teammate_forces
-                + teammate_vels
-                + adversary_poses
-                + adversary_forces
-                + adversary_vels
-            ):
-                tensor[..., X] = -tensor[..., X]
+                    teammate_poses,
+                    teammate_forces,
+                    teammate_vels,
+                    adversary_poses,
+                    adversary_forces,
+                    adversary_vels,
+                ],
+            )
+
             agent_rot = agent_rot - jnp.pi
         obs = {
             "obs": [
@@ -1641,8 +1899,8 @@ class Scenario(BaseScenario):
 
         return geoms
 
-    def _get_background_geoms(self, objects):
-        def _get_geom(entity, pos, rot=0.0):
+    def _get_background_geoms(self, landmarks: list[Entity]) -> list[Geom]:
+        def _get_geom(entity: Entity, pos: Array, rot: Array = 0.0):
             from jaxvmas.simulator import rendering
 
             geom = entity.shape.get_geometry()
@@ -1654,8 +1912,8 @@ class Scenario(BaseScenario):
             geom.set_color(*color)
             return geom
 
-        geoms = []
-        for landmark in objects:
+        geoms: list[Geom] = []
+        for landmark in landmarks:
             if landmark.name == "Centre Line":
                 geoms.append(_get_geom(landmark, [0.0, 0.0], jnp.pi / 2))
             elif landmark.name == "Right Line":
@@ -1690,67 +1948,72 @@ class Scenario(BaseScenario):
 # Ball Physics
 
 
-def ball_action_script(ball, world):
-    # Avoid getting stuck against the wall
-    dist_thres = world.agent_size * 2
-    vel_thres = 0.3
-    impulse = 0.05
-    upper = (
-        1
-        - jnp.minimum(
-            world.pitch_width / 2 - ball.state.pos[:, 1],
-            jnp.array(dist_thres),
+def get_ball_action_script(
+    agent_size: float, pitch_width: float, pitch_length: float, goal_size: float
+):
+    def ball_action_script(ball: "BallAgent", world: World):
+        # Avoid getting stuck against the wall
+        dist_thres = agent_size * 2
+        vel_thres = 0.3
+        impulse = 0.05
+        upper = (
+            1
+            - jnp.minimum(
+                pitch_width / 2 - ball.state.pos[:, 1],
+                jnp.array(dist_thres),
+            )
+            / dist_thres
         )
-        / dist_thres
-    )
-    lower = (
-        1
-        - jnp.minimum(
-            world.pitch_width / 2 + ball.state.pos[:, 1],
-            jnp.array(dist_thres),
+        lower = (
+            1
+            - jnp.minimum(
+                pitch_width / 2 + ball.state.pos[:, 1],
+                jnp.array(dist_thres),
+            )
+            / dist_thres
         )
-        / dist_thres
-    )
-    right = (
-        1
-        - jnp.minimum(
-            world.pitch_length / 2 - ball.state.pos[:, 0],
-            jnp.array(dist_thres),
+        right = (
+            1
+            - jnp.minimum(
+                pitch_length / 2 - ball.state.pos[:, 0],
+                jnp.array(dist_thres),
+            )
+            / dist_thres
         )
-        / dist_thres
-    )
-    left = (
-        1
-        - jnp.minimum(
-            world.pitch_length / 2 + ball.state.pos[:, 0],
-            jnp.array(dist_thres),
+        left = (
+            1
+            - jnp.minimum(
+                pitch_length / 2 + ball.state.pos[:, 0],
+                jnp.array(dist_thres),
+            )
+            / dist_thres
         )
-        / dist_thres
-    )
-    vertical_vel = (
-        1
-        - jnp.minimum(
-            jnp.abs(ball.state.vel[:, 1]),
-            jnp.array(vel_thres),
+        vertical_vel = (
+            1
+            - jnp.minimum(
+                jnp.abs(ball.state.vel[:, 1]),
+                jnp.array(vel_thres),
+            )
+            / vel_thres
         )
-        / vel_thres
-    )
-    horizontal_vel = (
-        1
-        - jnp.minimum(
-            jnp.abs(ball.state.vel[:, 1]),
-            jnp.array(vel_thres),
+        horizontal_vel = (
+            1
+            - jnp.minimum(
+                jnp.abs(ball.state.vel[:, 1]),
+                jnp.array(vel_thres),
+            )
+            / vel_thres
         )
-        / vel_thres
-    )
-    dist_action = jnp.stack([left - right, lower - upper], axis=1)
-    vel_action = jnp.stack([horizontal_vel, vertical_vel], axis=1)
-    actions = dist_action * vel_action * impulse
-    goal_mask = (ball.state.pos[:, 1] < world.goal_size / 2) * (
-        ball.state.pos[:, 1] > -world.goal_size / 2
-    )
-    actions[goal_mask, 0] = 0
-    ball.action.u = actions
+        dist_action = jnp.stack([left - right, lower - upper], axis=1)
+        vel_action = jnp.stack([horizontal_vel, vertical_vel], axis=1)
+        actions = dist_action * vel_action * impulse
+        goal_mask = (ball.state.pos[:, 1] < goal_size / 2) * (
+            ball.state.pos[:, 1] > -goal_size / 2
+        )
+        actions[goal_mask, 0] = 0
+        ball.action.u = actions
+
+    return ball_action_script
 
 
 class FootballAgent(Agent):
@@ -1769,203 +2032,378 @@ class FootballAgent(Agent):
         )
 
 
+class BallAgent(Agent):
+    pos_rew_blue: Array
+    pos_rew_red: Array
+    pos_rew_agent_blue: Array
+    pos_rew_agent_red: Array
+    kicking_action: Array
+    pos_shaping_blue: Array
+    pos_shaping_red: Array
+    # distance_to_goal_blue: Array
+    # distance_to_goal_red: Array
+
+    @classmethod
+    def create(cls, batch_dim: int, **kwargs):
+        dim_p = kwargs.pop("dim_p")
+        base_agent = Agent.create(batch_dim=batch_dim, dim_p=dim_p, **kwargs)
+        return cls(
+            **asdict(base_agent),
+            pos_rew_blue=jnp.zeros(batch_dim),
+            pos_rew_red=jnp.zeros(batch_dim),
+            pos_rew_agent_blue=jnp.zeros(batch_dim),
+            pos_rew_agent_red=jnp.zeros(batch_dim),
+            kicking_action=jnp.zeros(batch_dim, dim_p),
+            pos_shaping_blue=jnp.zeros(batch_dim),
+            pos_shaping_red=jnp.zeros(batch_dim),
+            distance_to_goal_blue=jnp.zeros(batch_dim),
+            distance_to_goal_red=jnp.zeros(batch_dim),
+        )
+
+
 # Agent Policy
 
 
-class AgentPolicy:
-    def __init__(
-        self,
+class AgentPolicy(PyTreeNode):
+    team_name: str
+    otherteam_name: str
+    speed_strength: float
+    decision_strength: float
+    precision_strength: float
+    strength_multiplier: float
+    pos_lookahead: float
+    vel_lookahead: float
+    possession_lookahead: float
+    dribble_speed: float
+    shooting_radius: float
+    shooting_angle: float
+    take_shot_angle: float
+    max_shot_dist: float
+    nsamples: int
+    sigma: float
+    replan_margin: float
+    initialised: bool
+    disabled: bool
+    team_color: Color | None
+    enable_shooting: bool
+    objectives: dict[str, dict[str, Array]]
+    agent_possession: dict[str, Array]
+    team_possession: Array | None
+    team_disps: dict[str, Array]
+
+    @classmethod
+    def create(
+        cls,
         team: str,
         speed_strength=1.0,
         decision_strength=1.0,
         precision_strength=1.0,
         disabled: bool = False,
     ):
-        self.team_name = team
-        self.otherteam_name = "Blue" if (self.team_name == "Red") else "Red"
+        team_name = team
+        otherteam_name = "Blue" if (team_name == "Red") else "Red"
 
         # affects the speed of the agents
-        self.speed_strength = speed_strength**2
+        speed_strength = speed_strength**2
 
         # affects off-the-ball movement
         # (who is assigned to the ball and the positioning of the non-dribbling agents)
         # so with poor decision strength they might decide that an agent that is actually in a worse position should go for the ball
-        self.decision_strength = decision_strength
+        decision_strength = decision_strength
 
         # affects the ability to execute planned manoeuvres,
         # it will add some error to the target position and velocity
-        self.precision_strength = precision_strength
+        precision_strength = precision_strength
 
-        self.strength_multiplier = 25.0
+        strength_multiplier = 25.0
 
-        self.pos_lookahead = 0.01
-        self.vel_lookahead = 0.01
-        self.possession_lookahead = 0.5
+        pos_lookahead = 0.01
 
-        self.dribble_speed = 0.16 + 0.16 * speed_strength
+        vel_lookahead = 0.01
 
-        self.shooting_radius = 0.08
-        self.shooting_angle = jnp.pi / 2
-        self.take_shot_angle = jnp.pi / 4
-        self.max_shot_dist = 0.5
+        possession_lookahead = 0.5
 
-        self.nsamples = 2
-        self.sigma = 0.5
-        self.replan_margin = 0.0
+        dribble_speed = 0.16 + 0.16 * speed_strength
 
-        self.initialised = False
-        self.disabled = disabled
+        shooting_radius = 0.08
 
-    def init(self, world):
-        self.initialised = True
-        self.world = world
+        shooting_angle = jnp.pi / 2
 
-        self.ball = self.world.ball
-        if self.team_name == "Red":
-            self.teammates = self.world.red_agents
-            self.opposition = self.world.blue_agents
-            self.own_net = self.world.red_net
-            self.target_net = self.world.blue_net
-        elif self.team_name == "Blue":
-            self.teammates = self.world.blue_agents
-            self.opposition = self.world.red_agents
-            self.own_net = self.world.blue_net
-            self.target_net = self.world.red_net
+        take_shot_angle = jnp.pi / 4
 
-        self.team_color = self.teammates[0].color if len(self.teammates) > 0 else None
-        self.enable_shooting = (
-            self.teammates[0].action_size == 4 if len(self.teammates) > 0 else False
+        max_shot_dist = 0.5
+
+        nsamples = 2
+
+        sigma = 0.5
+
+        replan_margin = 0.0
+
+        initialised = False
+
+        disabled = disabled
+
+        team_color = None
+
+        enable_shooting = False
+
+        objectives = {}
+
+        agent_possession = {}
+
+        team_possession = None
+
+        team_disps = {}
+
+        return cls(
+            team_name=team_name,
+            otherteam_name=otherteam_name,
+            speed_strength=speed_strength,
+            decision_strength=decision_strength,
+            precision_strength=precision_strength,
+            strength_multiplier=strength_multiplier,
+            pos_lookahead=pos_lookahead,
+            vel_lookahead=vel_lookahead,
+            possession_lookahead=possession_lookahead,
+            dribble_speed=dribble_speed,
+            shooting_radius=shooting_radius,
+            shooting_angle=shooting_angle,
+            take_shot_angle=take_shot_angle,
+            max_shot_dist=max_shot_dist,
+            nsamples=nsamples,
+            sigma=sigma,
+            replan_margin=replan_margin,
+            initialised=initialised,
+            disabled=disabled,
+            team_color=team_color,
+            enable_shooting=enable_shooting,
+            objectives=objectives,
+            agent_possession=agent_possession,
+            team_possession=team_possession,
+            team_disps=team_disps,
         )
 
-        self.objectives = {
-            agent: {
-                "shot_power": jnp.zeros(self.world.batch_dim),
-                "target_ang": jnp.zeros(self.world.batch_dim),
-                "target_pos_rel": jnp.zeros(self.world.batch_dim, self.world.dim_p),
-                "target_pos": jnp.zeros(self.world.batch_dim, self.world.dim_p),
-                "target_vel": jnp.zeros(self.world.batch_dim, self.world.dim_p),
-                "start_pos": jnp.zeros(self.world.batch_dim, self.world.dim_p),
-                "start_vel": jnp.zeros(self.world.batch_dim, self.world.dim_p),
+    def get_dynamic_params(self, scenario: Scenario):
+        ball = scenario.ball
+        if self.team_name == "Red":
+            teammates = scenario.red_agents
+            opposition = scenario.blue_agents
+            own_net = scenario.red_net
+            target_net = scenario.blue_net
+        elif self.team_name == "Blue":
+            teammates = scenario.blue_agents
+            opposition = scenario.red_agents
+            own_net = scenario.blue_net
+            target_net = scenario.red_net
+
+        return ball, teammates, opposition, own_net, target_net, scenario.world
+
+    def init(self, scenario: Scenario) -> "AgentPolicy":
+        initialised = True
+
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
+
+        team_color = teammates[0].color if len(teammates) > 0 else None
+        enable_shooting = teammates[0].action_size == 4 if len(teammates) > 0 else False
+
+        objectives = {
+            agent.name: {
+                "shot_power": jnp.zeros(world.batch_dim),
+                "target_ang": jnp.zeros(world.batch_dim),
+                "target_pos_rel": jnp.zeros(world.batch_dim, world.dim_p),
+                "target_pos": jnp.zeros(world.batch_dim, world.dim_p),
+                "target_vel": jnp.zeros(world.batch_dim, world.dim_p),
+                "start_pos": jnp.zeros(world.batch_dim, world.dim_p),
+                "start_vel": jnp.zeros(world.batch_dim, world.dim_p),
             }
-            for agent in self.teammates
+            for agent in teammates
         }
 
-        self.agent_possession = {
-            agent: jnp.zeros(self.world.batch_dim, dtype=jnp.bool_)
-            for agent in self.teammates
+        agent_possession = {
+            agent.name: jnp.zeros(world.batch_dim, dtype=jnp.bool_)
+            for agent in teammates
         }
 
-        self.team_possession = jnp.zeros(self.world.batch_dim, dtype=jnp.bool_)
+        team_possession = jnp.zeros(world.batch_dim, dtype=jnp.bool_)
 
-        self.team_disps = {}
+        team_disps = {}
 
-    def reset(self, env_index=Ellipsis):
-        self.team_disps = {}
+        return self.replace(
+            initialised=initialised,
+            team_color=team_color,
+            enable_shooting=enable_shooting,
+            objectives=objectives,
+            agent_possession=agent_possession,
+            team_possession=team_possession,
+            team_disps=team_disps,
+        )
+
+    def reset(self, scenario: Scenario, env_index=Ellipsis) -> "AgentPolicy":
+        team_disps = {}
+        objectives = dict(self.objectives)
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
         for agent in self.teammates:
-            self.objectives[agent]["shot_power"][env_index] = 0
-            self.objectives[agent]["target_ang"][env_index] = 0
-            self.objectives[agent]["target_pos_rel"][env_index] = jnp.zeros(
-                self.world.dim_p
-            )
-            self.objectives[agent]["target_pos"][env_index] = jnp.zeros(
-                self.world.dim_p
-            )
-            self.objectives[agent]["target_vel"][env_index] = jnp.zeros(
-                self.world.dim_p
-            )
-            self.objectives[agent]["start_pos"][env_index] = jnp.zeros(self.world.dim_p)
-            self.objectives[agent]["start_vel"][env_index] = jnp.zeros(self.world.dim_p)
+            objectives[agent]["shot_power"][env_index] = 0
+            objectives[agent]["target_ang"][env_index] = 0
+            objectives[agent]["target_pos_rel"][env_index] = jnp.zeros(world.dim_p)
+            objectives[agent]["target_pos"][env_index] = jnp.zeros(world.dim_p)
+            objectives[agent]["target_vel"][env_index] = jnp.zeros(world.dim_p)
+            objectives[agent]["start_pos"][env_index] = jnp.zeros(world.dim_p)
+            objectives[agent]["start_vel"][env_index] = jnp.zeros(world.dim_p)
+        return self.replace(objectives=objectives, team_disps=team_disps)
 
-    def dribble_policy(self, agent):
-        possession_mask = self.agent_possession[agent]
-        self.dribble_to_goal(agent, env_index=possession_mask)
+    def dribble_policy(
+        self, agent: "FootballAgent", scenario: Scenario
+    ) -> tuple["AgentPolicy", Scenario]:
+        possession_mask = self.agent_possession[agent.name]
+        self, scenario = self.dribble_to_goal(
+            agent, scenario, env_index=possession_mask
+        )
         move_mask = ~possession_mask
-        best_pos = self.check_better_positions(agent, env_index=move_mask)
-        self.go_to(
+        self, best_pos = self.check_better_positions(
+            agent, scenario, env_index=move_mask
+        )
+        self, scenario = self.go_to(
             agent,
+            scenario,
             pos=best_pos,
             aggression=1.0,
             env_index=move_mask,
         )
+        return self, scenario
 
-    def passing_policy(self, agent):
-        possession_mask = self.agent_possession[agent]
+    def passing_policy(
+        self, agent: "FootballAgent", scenario: Scenario
+    ) -> tuple["AgentPolicy", Scenario]:
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
+        possession_mask = self.agent_possession[agent.name]
         otheragent = None
-        for a in self.teammates:
+        for a in teammates:
             if a != agent:
                 otheragent = a
                 break
         # min_dist_mask = (agent.state.pos - otheragent.state.pos).norm(dim=-1) > self.max_shot_dist * 0.75
-        self.shoot(agent, otheragent.state.pos, env_index=possession_mask)
+        self, scenario = self.shoot(
+            agent, otheragent.state.pos, env_index=possession_mask
+        )
         move_mask = ~possession_mask
-        best_pos = self.check_better_positions(agent, env_index=move_mask)
-        self.go_to(
+        self, best_pos = self.check_better_positions(
+            agent, scenario=scenario, env_index=move_mask
+        )
+        self, scenario = self.go_to(
             agent,
+            scenario,
             pos=best_pos,
             aggression=1.0,
             env_index=move_mask,
         )
+        return self, scenario
 
     def disable(self):
-        self.disabled = True
+        return self.replace(disabled=True)
 
     def enable(self):
-        self.disabled = False
+        return self.replace(disabled=False)
 
-    def run(self, agent, world):
+    def run(
+        self, agent: "FootballAgent", scenario: Scenario
+    ) -> tuple["AgentPolicy", Scenario]:
         if not self.disabled:
             if "0" in agent.name:
                 self.team_disps = {}
-                self.check_possession()
-            self.dribble_policy(agent)
+                self = self.check_possession(scenario)
+            self, scenario = self.dribble_policy(agent, scenario)
             control = self.get_action(agent)
             control = jnp.clip(control, min=-agent.u_range, max=agent.u_range)
-            agent.action.u = control * agent.action.u_multiplier_jax_array[None].expand(
+            u = control * agent.action.u_multiplier_jax_array[None].expand(
                 *control.shape
             )
+            agent = agent.replace(action=agent.action.replace(u=u))
         else:
-            agent.action.u = jnp.zeros((self.world.batch_dim, agent.action_size))
+            agent = agent.replace(
+                action=agent.action.replace(
+                    u=jnp.zeros((self.world.batch_dim, agent.action_size))
+                )
+            )
+        return self, scenario
 
-    def dribble_to_goal(self, agent, env_index=Ellipsis):
-        self.dribble(agent, self.target_net.state.pos[env_index], env_index=env_index)
-
-    def dribble(self, agent, pos, env_index=Ellipsis):
-        self.update_dribble(
+    def dribble_to_goal(
+        self, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", Scenario]:
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
+        self, scenario = self.dribble(
             agent,
+            scenario,
+            target_net.state.pos[env_index],
+            env_index=env_index,
+        )
+        return self, scenario
+
+    def dribble(
+        self, agent: "FootballAgent", scenario: Scenario, pos: Array, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", Scenario]:
+        self, scenario = self.update_dribble(
+            agent,
+            scenario,
             pos=pos,
             env_index=env_index,
         )
+        return self, scenario
 
-    def update_dribble(self, agent, pos, env_index=Ellipsis):
+    def update_dribble(
+        self, agent: "FootballAgent", scenario: Scenario, pos: Array, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", Scenario]:
         # Specifies a new location to dribble towards.
         agent_pos = agent.state.pos[env_index]
-        ball_pos = self.ball.state.pos[env_index]
+        ball_pos = scenario.ball.state.pos[env_index]
         ball_disp = pos - ball_pos
-        ball_dist = ball_disp.norm(dim=-1)
+        ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         direction = ball_disp / ball_dist[:, None]
         hit_vel = direction * self.dribble_speed
         start_vel = self.get_start_vel(ball_pos, hit_vel, agent_pos, aggression=0.0)
-        start_vel_mag = start_vel.norm(dim=-1)
+        start_vel_mag = jnp.linalg.norm(start_vel, axis=-1)
         # Calculate hit_pos, the adjusted position to strike the ball so it goes where we want
-        offset = start_vel.clone()
+        offset = start_vel.copy()
         start_vel_mag_mask = start_vel_mag > 0
-        offset[start_vel_mag_mask] /= start_vel_mag.unsqueeze(-1)[start_vel_mag_mask]
+        offset[start_vel_mag_mask] /= start_vel_mag[..., None][start_vel_mag_mask]
         new_direction = direction + 0.5 * offset
-        new_direction /= new_direction.norm(dim=-1)[:, None]
+        new_direction /= jnp.linalg.norm(new_direction, axis=-1)[:, None]
         hit_pos = (
             ball_pos
-            - new_direction * (self.ball.shape.radius + agent.shape.radius) * 0.7
+            - new_direction * (scenario.ball.shape.radius + agent.shape.radius) * 0.7
         )
         # Execute dribble with a go_to command
-        self.go_to(agent, hit_pos, hit_vel, start_vel=start_vel, env_index=env_index)
+        self, scenario = self.go_to(
+            agent,
+            scenario,
+            hit_pos,
+            hit_vel,
+            start_vel=start_vel,
+            env_index=env_index,
+        )
+        return self, scenario
 
-    def shoot(self, agent, pos, env_index=Ellipsis):
+    def shoot(
+        self,
+        agent: "FootballAgent",
+        scenario: Scenario,
+        pos: Array,
+        env_index=Ellipsis,
+    ) -> tuple["AgentPolicy", Scenario]:
         agent_pos = agent.state.pos
-        ball_disp = self.ball.state.pos - agent_pos
-        ball_dist = ball_disp.norm(dim=-1)
+        ball_disp = scenario.ball.state.pos - agent_pos
+        ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         within_range_mask = ball_dist <= self.shooting_radius
         target_disp = pos - agent_pos
-        target_dist = target_disp.norm(dim=-1)
+        target_dist = jnp.linalg.norm(target_disp, axis=-1)
         ball_rel_angle = self.get_rel_ang(ang1=agent.state.rot, vec2=ball_disp)
         target_rel_angle = self.get_rel_ang(ang1=agent.state.rot, vec2=target_disp)
         ball_within_angle_mask = jnp.abs(ball_rel_angle) < self.shooting_angle / 2
@@ -1973,16 +2411,18 @@ class AgentPolicy:
         shooting_mask = (
             within_range_mask & ball_within_angle_mask & rot_within_angle_mask
         )
+        objectives = dict(self.objectives)
         # Pre-shooting
-        self.objectives[agent]["target_ang"][env_index] = jnp.atan2(
+        objectives[agent]["target_ang"][env_index] = jnp.atan2(
             target_disp[:, 1], target_disp[:, 0]
         )[env_index]
-        self.dribble(agent, pos, env_index=env_index)
+        self, scenario = self.dribble(agent, scenario, pos, env_index=env_index)
         # Shooting
-        self.objectives[agent]["shot_power"][:] = -1
-        self.objectives[agent]["shot_power"][
-            self.combine_mask(shooting_mask, env_index)
-        ] = jnp.minimum(target_dist[shooting_mask] / self.max_shot_dist, 1.0)
+        objectives[agent]["shot_power"][:] = -1
+        objectives[agent]["shot_power"][self.combine_mask(shooting_mask, env_index)] = (
+            jnp.minimum(target_dist[shooting_mask] / self.max_shot_dist, 1.0)
+        )
+        return self.replace(objectives=objectives), scenario
 
     def combine_mask(self, mask, env_index):
         if env_index == Ellipsis:
@@ -1994,19 +2434,24 @@ class AgentPolicy:
         raise ValueError("Expected env_index to be : or boolean tensor")
 
     def go_to(
-        self, agent, pos, vel=None, start_vel=None, aggression=1.0, env_index=Ellipsis
+        self,
+        agent: "FootballAgent",
+        scenario: Scenario,
+        pos: Array,
+        vel: Array | None = None,
+        start_vel: Array | None = None,
+        aggression: float = 1.0,
+        env_index=Ellipsis,
     ):
         start_pos = agent.state.pos[env_index]
         if vel is None:
             vel = jnp.zeros_like(pos)
         if start_vel is None:
-            aggression = ((pos - start_pos).norm(dim=-1) > 0.1).float() * aggression
+            aggression = (jnp.linalg.norm(pos - start_pos, axis=-1) > 0.1) * aggression
             start_vel = self.get_start_vel(pos, vel, start_pos, aggression=aggression)
-        diff = (
-            (self.objectives[agent]["target_pos"][env_index] - pos)
-            .norm(dim=-1)
-            .unsqueeze(-1)
-        )
+        diff = jnp.linalg.norm(
+            self.objectives[agent]["target_pos"][env_index] - pos, axis=-1
+        )[..., None]
         if self.precision_strength != 1:
             exp_diff = jnp.exp(-diff)
             pos += (
@@ -2021,16 +2466,21 @@ class AgentPolicy:
                 * (1 - self.precision_strength)
                 * (1 - exp_diff)
             )
-        self.objectives[agent]["target_pos_rel"][env_index] = (
-            pos - self.ball.state.pos[env_index]
+        objectives = dict(self.objectives)
+        objectives[agent]["target_pos_rel"][env_index] = (
+            pos - scenario.ball.state.pos[env_index]
         )
-        self.objectives[agent]["target_pos"][env_index] = pos
-        self.objectives[agent]["target_vel"][env_index] = vel
-        self.objectives[agent]["start_pos"][env_index] = start_pos
-        self.objectives[agent]["start_vel"][env_index] = start_vel
-        self.plot_traj(agent, env_index=env_index)
+        objectives[agent]["target_pos"][env_index] = pos
+        objectives[agent]["target_vel"][env_index] = vel
+        objectives[agent]["start_pos"][env_index] = start_pos
+        objectives[agent]["start_vel"][env_index] = start_vel
+        self = self.replace(objectives=objectives)
+        scenario = self.plot_traj(agent, scenario, env_index=env_index)
+        return self, scenario
 
-    def get_start_vel(self, pos, vel, start_pos, aggression=0.0):
+    def get_start_vel(
+        self, pos: Array, vel: Array, start_pos: Array, aggression: float = 0.0
+    ):
         # Calculates the starting velocity for a planned trajectory ending at position pos at velocity vel
         # The initial velocity is not directly towards the goal because we want a curved path
         #     that reaches the goal at the moment it achieves a given velocity.
@@ -2038,23 +2488,23 @@ class AgentPolicy:
         #     overall speed. To modulate this, we introduce an aggression parameter.
         # aggression=0 will set the magnitude of the initial velocity to the current velocity, while
         #     aggression=1 will set the magnitude of the initial velocity to 1.0.
-        vel_mag = 1.0 * aggression + vel.norm(dim=-1) * (1 - aggression)
+        vel_mag = 1.0 * aggression + jnp.linalg.norm(vel, axis=-1) * (1 - aggression)
         goal_disp = pos - start_pos
-        goal_dist = goal_disp.norm(dim=-1)
-        vel_dir = vel.clone()
+        goal_dist = jnp.linalg.norm(goal_disp, axis=-1)
+        vel_dir = vel.copy()
         vel_mag_great_0 = vel_mag > 0
         vel_dir[vel_mag_great_0] /= vel_mag[vel_mag_great_0, None]
         dist_behind_target = 0.6 * goal_dist
         target_pos = pos - vel_dir * dist_behind_target[:, None]
         target_disp = target_pos - start_pos
-        target_dist = target_disp.norm(dim=1)
+        target_dist = jnp.linalg.norm(target_disp, axis=-1)
         start_vel_aug_dir = target_disp
         target_dist_great_0 = target_dist > 0
         start_vel_aug_dir[target_dist_great_0] /= target_dist[target_dist_great_0, None]
         start_vel = start_vel_aug_dir * vel_mag[:, None]
         return start_vel
 
-    def get_action(self, agent, env_index=Ellipsis):
+    def get_action(self, agent: "FootballAgent", env_index=Ellipsis):
         # Gets the action computed by the policy for the given agent.
         # All the logic in AgentPolicy (dribbling, moving, shooting, etc) uses the go_to command
         #     as an interface to specify a desired trajectory.
@@ -2104,7 +2554,13 @@ class AgentPolicy:
         control = jnp.concatenate([movement_control, shooting_control], axis=-1)
         return control
 
-    def get_rel_ang(self, vec1=None, vec2=None, ang1=None, ang2=None):
+    def get_rel_ang(
+        self,
+        vec1: Array | None = None,
+        vec2: Array | None = None,
+        ang1: Array | None = None,
+        ang2: Array | None = None,
+    ):
         if vec1 is not None:
             ang1 = jnp.atan2(vec1[:, 1], vec1[:, 0])
         if vec2 is not None:
@@ -2115,11 +2571,21 @@ class AgentPolicy:
             ang2 = ang2.squeeze(-1)
         return (ang1 - ang2 + jnp.pi) % (2 * jnp.pi) - jnp.pi
 
-    def plot_traj(self, agent, env_index=0):
+    def plot_traj(
+        self, agent: "FootballAgent", scenario: Scenario, env_index=0
+    ) -> tuple["AgentPolicy", Scenario]:
         for i, u in enumerate(
-            jnp.linspace(0, 1, len(self.world.traj_points[self.team_name][agent]))
+            jnp.linspace(
+                0,
+                1,
+                len(scenario.traj_points[self.team_name][agent.name]),
+            )
         ):
-            pointi = self.world.traj_points[self.team_name][agent][i]
+            pointi = scenario.traj_points[self.team_name][agent.name][i]
+            traj_points = dict(scenario.traj_points)
+            traj_points[self.team_name][agent.name] = dict(
+                traj_points[self.team_name][agent.name]
+            )
             posi = Splines.hermite(
                 self.objectives[agent]["start_pos"][env_index, :],
                 self.objectives[agent]["target_pos"][env_index, :],
@@ -2133,18 +2599,18 @@ class AgentPolicy:
                 and env_index.dtype == jnp.bool_
                 and jnp.all(env_index)
             ):
-                pointi.set_pos(
+                pointi = pointi.set_pos(
                     jnp.asarray(posi),
                     batch_index=None,
                 )
             elif isinstance(env_index, int):
-                pointi.set_pos(
+                pointi = pointi.set_pos(
                     jnp.asarray(posi),
                     batch_index=env_index,
                 )
             elif isinstance(env_index, list):
                 for envi in env_index:
-                    pointi.set_pos(
+                    pointi = pointi.set_pos(
                         jnp.asarray(posi)[envi, :],
                         batch_index=env_index[envi],
                     )
@@ -2155,117 +2621,151 @@ class AgentPolicy:
             ):
                 envs = jnp.where(env_index)
                 for i, envi in enumerate(envs):
-                    pointi.set_pos(
+                    pointi = pointi.set_pos(
                         jnp.asarray(posi)[i, :],
                         batch_index=envi[0],
                     )
+            traj_points[self.team_name][agent.name] = pointi
+        scenario = scenario.replace(traj_points=traj_points)
+        return scenario
 
-    def clamp_pos(self, pos, return_bool=False):
-        orig_pos = pos.clone()
-        agent_size = self.world.agent_size
-        pitch_y = self.world.pitch_width / 2 - agent_size
-        pitch_x = self.world.pitch_length / 2 - agent_size
-        goal_y = self.world.goal_size / 2 - agent_size
-        goal_x = self.world.goal_depth
-        pos[:, Y] = jnp.clamp(pos[:, Y], -pitch_y, pitch_y)
+    def clamp_pos(
+        self, scenario: Scenario, pos: Array, return_bool: bool = False
+    ) -> Array:
+        orig_pos = pos.copy()
+
+        agent_size = scenario.agent_size
+        pitch_y = scenario.pitch_width / 2 - agent_size
+        pitch_x = scenario.pitch_length / 2 - agent_size
+        goal_y = scenario.goal_size / 2 - agent_size
+        goal_x = scenario.goal_depth
+        pos = pos.at[:, Y].set(jnp.clip(pos[:, Y], -pitch_y, pitch_y))
         inside_goal_y_mask = jnp.abs(pos[:, Y]) < goal_y
-        pos[~inside_goal_y_mask, X] = jnp.clamp(
-            pos[~inside_goal_y_mask, X], -pitch_x, pitch_x
+        pos = pos.at[~inside_goal_y_mask, X].set(
+            jnp.clip(pos[~inside_goal_y_mask, X], -pitch_x, pitch_x)
         )
-        pos[inside_goal_y_mask, X] = jnp.clamp(
-            pos[inside_goal_y_mask, X], -pitch_x - goal_x, pitch_x + goal_x
+        pos = pos.at[inside_goal_y_mask, X].set(
+            jnp.clip(pos[inside_goal_y_mask, X], -pitch_x - goal_x, pitch_x + goal_x)
         )
         if return_bool:
             return jnp.any(pos != orig_pos, axis=-1)
         else:
             return pos
 
-    def check_possession(self):
+    def check_possession(self, scenario: Scenario):
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
         agents_pos = jnp.stack(
-            [agent.state.pos for agent in self.teammates + self.opposition],
+            [agent.state.pos for agent in teammates + opposition],
             axis=1,
         )
         agents_vel = jnp.stack(
-            [agent.state.vel for agent in self.teammates + self.opposition],
+            [agent.state.vel for agent in teammates + opposition],
             axis=1,
         )
-        ball_pos = self.ball.state.pos
-        ball_vel = self.ball.state.vel
+        ball_pos = ball.state.pos
+        ball_vel = ball.state.vel
         ball_disps = ball_pos[:, None, :] - agents_pos
         relvels = ball_vel[:, None, :] - agents_vel
         dists = (ball_disps + relvels * self.possession_lookahead).norm(dim=-1)
-        mindist_team = jnp.argmin(dists, axis=-1) < len(self.teammates)
-        self.team_possession = mindist_team
-        net_disps = self.target_net.state.pos[:, None, :] - agents_pos
-        ball_dir = ball_disps / ball_disps.norm(dim=-1, keepdim=True)
-        net_dir = net_disps / net_disps.norm(dim=-1, keepdim=True)
+        mindist_team = jnp.argmin(dists, axis=-1) < len(teammates)
+        team_possession = mindist_team
+        self = self.replace(team_possession=team_possession)
+        net_disps = target_net.state.pos[:, None, :] - agents_pos
+        ball_dir = ball_disps / jnp.linalg.norm(ball_disps, axis=-1, keepdims=True)
+        net_dir = net_disps / jnp.linalg.norm(net_disps, axis=-1, keepdims=True)
         side_dot_prod = (ball_dir * net_dir).sum(axis=-1)
         dists -= 0.5 * side_dot_prod * self.decision_strength
         if self.decision_strength != 1:
             dists += (
-                0.5 * jnp.random.randn(dists.shape) * (1 - self.decision_strength) ** 2
+                0.5
+                * jax.random.normal(shape=dists.shape)
+                * (1 - self.decision_strength) ** 2
             )
-        mindist_agents = jnp.argmin(dists[:, : len(self.teammates)], axis=-1)
-        for i, agent in enumerate(self.teammates):
-            self.agent_possession[agent] = mindist_agents == i
+        mindist_agents = jnp.argmin(dists[:, : len(teammates)], axis=-1)
+        agent_possession = dict(self.agent_possession)
+        for i, agent in enumerate(teammates):
+            agent_possession[agent.name] = mindist_agents == i
+        self = self.replace(agent_possession=agent_possession)
+        return self
 
-    def check_better_positions(self, agent, env_index=Ellipsis):
-        ball_pos = self.ball.state.pos[env_index]
+    def check_better_positions(
+        self, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", Array]:
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
+        ball_pos = ball.state.pos[env_index]
         curr_target = self.objectives[agent]["target_pos_rel"][env_index] + ball_pos
         samples = (
-            jnp.random.randn(
-                ball_pos.shape[0],
-                self.nsamples,
-                self.world.dim_p,
+            jax.random.normal(
+                shape=(ball_pos.shape[0], self.nsamples, world.dim_p),
             )
             * self.sigma
             * (1 + 3 * (1 - self.decision_strength))
         )
-        samples[:, ::2] += ball_pos[:, None]
-        samples[:, 1::2] += agent.state.pos[env_index, None]
+        samples = samples.at[:, ::2].set(samples[:, ::2] + ball_pos[:, None])
+        samples = samples.at[:, 1::2].set(
+            samples[:, 1::2] + agent.state.pos[env_index, None]
+        )
         test_pos = jnp.concatenate([curr_target[:, None, :], samples], axis=1)
         test_pos_shape = test_pos.shape
         test_pos = self.clamp_pos(
-            test_pos.view(test_pos_shape[0] * test_pos_shape[1], test_pos_shape[2])
+            scenario,
+            test_pos.view(test_pos_shape[0] * test_pos_shape[1], test_pos_shape[2]),
         ).view(*test_pos_shape)
-        values = self.get_pos_value(test_pos, agent=agent, env_index=env_index)
-        values[:, 0] += self.replan_margin + 3 * (1 - self.decision_strength)
+        self, values = self.get_pos_value(
+            test_pos, agent=agent, scenario=scenario, env_index=env_index
+        )
+        values = values.at[:, 0].set(
+            values[:, 0] + self.replan_margin + 3 * (1 - self.decision_strength)
+        )
         highest_value = values.argmax(axis=1)
         best_pos = jnp.take(
             test_pos,
             axis=1,
             index=highest_value[None, ..., None].expand(-1, -1, self.world.dim_p),
         )
-        return best_pos[0]
+        return self, best_pos[0]
 
-    def get_pos_value(self, pos, agent, env_index=Ellipsis):
-        ball_pos = self.ball.state.pos[env_index, None]
-        target_net_pos = self.target_net.state.pos[env_index, None]
-        own_net_pos = self.own_net.state.pos[env_index, None]
+    def get_pos_value(
+        self, pos: Array, agent: "FootballAgent", scenario: Scenario, env_index=Ellipsis
+    ) -> tuple["AgentPolicy", Array]:
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
+        ball_pos = ball.state.pos[env_index, None]
+        target_net_pos = target_net.state.pos[env_index, None]
+        own_net_pos = own_net.state.pos[env_index, None]
         ball_vec = ball_pos - pos
-        ball_vec /= ball_vec.norm(dim=-1, keepdim=True)
-        ball_vec[ball_vec.isnan()] = 0
+        ball_vec /= jnp.linalg.norm(ball_vec, axis=-1, keepdims=True)
+        ball_vec[jnp.isnan(ball_vec)] = 0
 
         # ball_dist_value prioritises positions relatively close to the ball
-        ball_dist = (pos - ball_pos).norm(dim=-1)
+        ball_dist = jnp.linalg.norm(pos - ball_pos, axis=-1)
         ball_dist_value = jnp.exp(-2 * ball_dist**4)
 
         # side_value prevents being between the ball and the target goal
         net_vec = target_net_pos - pos
-        net_vec /= net_vec.norm(dim=-1, keepdim=True)
-        side_dot_prod = (ball_vec * net_vec).sum(dim=-1)
+        net_vec /= jnp.linalg.norm(net_vec, axis=-1, keepdims=True)
+        side_dot_prod = (ball_vec * net_vec).sum(axis=-1)
         side_value = jnp.minimum(side_dot_prod + 1.25, jnp.array(1))
 
         # defend_value prioritises being between the ball and your own goal while on defence
         own_net_vec = own_net_pos - pos
-        own_net_vec /= net_vec.norm(dim=-1, keepdim=True)
-        defend_dot_prod = (ball_vec * -own_net_vec).sum(dim=-1)
+        own_net_vec /= jnp.linalg.norm(own_net_vec, axis=-1, keepdims=True)
+        defend_dot_prod = (ball_vec * -own_net_vec).sum(axis=-1)
         defend_value = jnp.maximum(defend_dot_prod, jnp.array(0))
 
         # other_agent_value disincentivises being close to a teammate
-        if len(self.teammates) > 1:
-            agent_index = self.teammates.index(agent)
-            team_disps = self.get_separations(teammate=True)
+        if len(teammates) > 1:
+            agent_index = [
+                i
+                for i, a in enumerate(teammates)
+                if a.name != agent.name and a.state.pos[env_index, :] != pos
+            ][0]
+            self, team_disps = self.get_separations(scenario, teammate=True)
             team_disps = jnp.concatenate(
                 [team_disps[:, 0:agent_index], team_disps[:, agent_index + 1 :]], axis=1
             )
@@ -2284,49 +2784,65 @@ class AgentPolicy:
         ) / 5
         if self.decision_strength != 1:
             value += jnp.random.randn(value.shape) * (1 - self.decision_strength)
-        return value
+        return self, value
 
-    def get_wall_separations(self, pos):
+    def get_wall_separations(self, pos: Array) -> Array:
         top_wall_dist = -pos[:, Y] + self.world.pitch_width / 2
         bottom_wall_dist = pos[:, Y] + self.world.pitch_width / 2
         left_wall_dist = pos[:, X] + self.world.pitch_length / 2
         right_wall_dist = -pos[:, X] + self.world.pitch_length / 2
         vertical_wall_disp = jnp.zeros(pos.shape)
-        vertical_wall_disp[:, Y] = jnp.minimum(top_wall_dist, bottom_wall_dist)
-        vertical_wall_disp[bottom_wall_dist < top_wall_dist, Y] *= -1
+        vertical_wall_disp = vertical_wall_disp.at[:, Y].set(
+            jnp.minimum(top_wall_dist, bottom_wall_dist)
+        )
+        vertical_wall_disp = vertical_wall_disp.at[
+            bottom_wall_dist < top_wall_dist, Y
+        ].set(vertical_wall_disp[bottom_wall_dist < top_wall_dist, Y] * -1)
         horizontal_wall_disp = jnp.zeros(pos.shape)
-        horizontal_wall_disp[:, X] = jnp.minimum(left_wall_dist, right_wall_dist)
-        horizontal_wall_disp[left_wall_dist < right_wall_dist, X] *= -1
+        horizontal_wall_disp = horizontal_wall_disp.at[:, X].set(
+            jnp.minimum(left_wall_dist, right_wall_dist)
+        )
+        horizontal_wall_disp = horizontal_wall_disp.at[
+            left_wall_dist < right_wall_dist, X
+        ].set(horizontal_wall_disp[left_wall_dist < right_wall_dist, X] * -1)
         return jnp.stack([vertical_wall_disp, horizontal_wall_disp], axis=-2)
 
     def get_separations(
         self,
+        scenario: Scenario,
         teammate=False,
         opposition=False,
         vel=False,
-    ):
+    ) -> tuple["AgentPolicy", Array]:
         assert teammate or opposition, "One of teammate or opposition must be True"
+        ball, teammates, opposition, own_net, target_net, world = (
+            self.get_dynamic_params(scenario)
+        )
         key = (teammate, opposition, vel)
         if key in self.team_disps:
             return self.team_disps[key]
         disps = []
         if teammate:
-            for otheragent in self.teammates:
+            for otheragent in teammates:
                 if vel:
                     agent_disp = otheragent.state.vel
                 else:
                     agent_disp = otheragent.state.pos
                 disps.append(agent_disp)
         if opposition:
-            for otheragent in self.opposition:
+            for otheragent in opposition:
                 if vel:
                     agent_disp = otheragent.state.vel
                 else:
                     agent_disp = otheragent.state.pos
                 disps.append(agent_disp)
         out = jnp.stack(disps, axis=1)
-        self.team_disps[key] = out
-        return out
+
+        team_disps = dict(self.team_disps)
+        team_disps[key] = out
+        self = self.replace(team_disps=team_disps)
+
+        return self, out
 
 
 # Helper Functions
@@ -2344,7 +2860,9 @@ class Splines:
     U_matmul_A = {}
 
     @classmethod
-    def hermite(cls, p0, p1, p0dot, p1dot, u=0.1, deriv=0):
+    def hermite(
+        cls, p0: Array, p1: Array, p0dot: Array, p1dot: Array, u: float, deriv: int
+    ):
         # A trajectory specified by the initial pos p0, initial vel p0dot, end pos p1,
         #     and end vel p1dot.
         # Evaluated at the given value of u, which is between 0 and 1 (0 being the start
@@ -2354,13 +2872,13 @@ class Splines:
         assert isinstance(u, float)
         U_matmul_A = cls.U_matmul_A.get((deriv, u), None)
         if U_matmul_A is None:
-            u_tensor = jnp.asarray([u])
+            u_jax_array = jnp.asarray([u])
             U = jnp.stack(
                 [
-                    cls.nPr(3, deriv) * (u_tensor ** max(0, 3 - deriv)),
-                    cls.nPr(2, deriv) * (u_tensor ** max(0, 2 - deriv)),
-                    cls.nPr(1, deriv) * (u_tensor ** max(0, 1 - deriv)),
-                    cls.nPr(0, deriv) * (u_tensor**0),
+                    cls.nPr(3, deriv) * (u_jax_array ** max(0, 3 - deriv)),
+                    cls.nPr(2, deriv) * (u_jax_array ** max(0, 2 - deriv)),
+                    cls.nPr(1, deriv) * (u_jax_array ** max(0, 1 - deriv)),
+                    cls.nPr(0, deriv) * (u_jax_array**0),
                 ],
                 axis=1,
             )
@@ -2370,13 +2888,13 @@ class Splines:
         P = jnp.stack([p0, p1, p0dot, p1dot], axis=1)
 
         ans = (
-            U_matmul_A.expand(P.shape[0], 1, 4) @ P
+            U_matmul_A.broadcast_to((P.shape[0], 1, 4)) @ P
         )  # Matmul [batch x 1 x 4] @ [batch x 4 x 2] -> [batch x 1 x 2]
         ans = ans.squeeze(1)
         return ans
 
     @classmethod
-    def nPr(cls, n, r):
+    def nPr(cls, n: int, r: int) -> int:
         # calculates n! / (n-r)!
         if r > n:
             return 0

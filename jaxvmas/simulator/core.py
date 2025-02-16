@@ -73,7 +73,7 @@ class Shape(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_geometry(self):
+    def get_geometry(self) -> "Geom":
         raise NotImplementedError
 
     @abstractmethod
