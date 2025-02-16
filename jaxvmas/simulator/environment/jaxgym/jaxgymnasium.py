@@ -8,6 +8,7 @@ Ensures all operations are jittable and compatible with JAX transformations.
 """
 
 
+import jax
 from jaxtyping import Array, PyTree
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
@@ -57,7 +58,9 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
     def unwrapped(self) -> Environment:
         return self.env
 
-    def step(self, action: list) -> tuple["JaxGymnasiumWrapper", EnvData]:
+    def step(
+        self, PRNG_key: Array, action: list
+    ) -> tuple["JaxGymnasiumWrapper", EnvData]:
         """Take a step in the environment.
 
         Args:
@@ -69,7 +72,10 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         """
         # Convert action to expected format and step environment
         action = self._action_list_to_array(action)
-        env, (obs, rews, terminated, truncated, info) = self.env.step(action)
+        PRNG_key, subkey = jax.random.split(PRNG_key)
+        env, (obs, rews, terminated, truncated, info) = self.env.step(
+            PRNG_key=subkey, actions=action
+        )
         self = self.replace(env=env)
 
         # Convert outputs to appropriate format

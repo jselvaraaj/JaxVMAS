@@ -167,7 +167,9 @@ class BaseJaxGymWrapper(PyTreeNode):
             for agent, act in zip(self.env.agents, actions)
         ]
 
-    def step(self, action: PyTree) -> tuple["BaseJaxGymWrapper", EnvData]:
+    def step(
+        self, PRNG_key: Array, action: PyTree
+    ) -> tuple["BaseJaxGymWrapper", EnvData]:
         """Take a step in the environment."""
         raise NotImplementedError
 

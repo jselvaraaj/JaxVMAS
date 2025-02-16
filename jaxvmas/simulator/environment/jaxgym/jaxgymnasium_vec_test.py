@@ -84,13 +84,14 @@ class TestJaxGymnasiumVecWrapper:
         """Test jitted step function."""
 
         @eqx.filter_jit
-        def step(wrapper: JaxGymnasiumVecWrapper, action):
-            return wrapper.step(action)
+        def step(key_step_i: Array, wrapper: JaxGymnasiumVecWrapper, action):
+            return wrapper.step(key_step_i, action)
 
         action = [jnp.ones((2, 2)), jnp.zeros((2, 2))]
         PRNG_key = jax.random.PRNGKey(0)
-        wrapper, _ = wrapper.reset(PRNG_key=PRNG_key)
-        new_wrapper, env_data = step(wrapper, action)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        wrapper, _ = wrapper.reset(PRNG_key=key_step_i)
+        new_wrapper, env_data = step(key_step_i, wrapper, action)
 
         assert isinstance(new_wrapper, JaxGymnasiumVecWrapper)
         assert isinstance(env_data, EnvData)
@@ -129,14 +130,16 @@ class TestJaxGymnasiumVecWrapper:
         agent_1 = Agent.create(name="agent_1", batch_dim=2, dim_c=2, dim_p=2)
         env = env.replace(world=env.world.add_agent(agent_0).add_agent(agent_1))
         wrapper = JaxGymnasiumVecWrapper.create(env=env)
-        wrapper, _ = wrapper.reset(PRNG_key=PRNG_key)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        wrapper, _ = wrapper.reset(PRNG_key=key_step_i)
 
         @eqx.filter_jit
-        def step(wrapper: JaxGymnasiumVecWrapper, action):
-            return wrapper.step(action)
+        def step(key_step_i: Array, wrapper: JaxGymnasiumVecWrapper, action):
+            return wrapper.step(key_step_i, action)
 
         action = [jnp.ones((2, 2)), jnp.zeros((2, 2))]
-        new_wrapper, env_data = step(wrapper, action)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        new_wrapper, env_data = step(key_step_i, wrapper, action)
 
         assert isinstance(env_data.obs, list)
         assert isinstance(env_data.rews, list)

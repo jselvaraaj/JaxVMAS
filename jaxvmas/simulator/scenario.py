@@ -1,7 +1,6 @@
 #  Copyright (c) 2022-2025.
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
-from abc import abstractmethod
 from typing import Generic, TypeVar
 
 import jax.numpy as jnp
@@ -110,7 +109,6 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
 
         return self, agent
 
-    @abstractmethod
     def make_world(self, batch_dim: int, **kwargs) -> WorldType:
         """
         This function needs to be implemented when creating a scenario.
@@ -126,7 +124,6 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
-    @abstractmethod
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "BaseScenario":
         """Resets the world at the specified env_index.
 
@@ -142,7 +139,6 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
-    @abstractmethod
     def observation(self, agent: Agent) -> AGENT_OBS_TYPE:
         """This function computes the observations for ``agent`` in a vectorized way.
 
@@ -157,7 +153,6 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
-    @abstractmethod
     def reward(self, agent: Agent) -> AGENT_REWARD_TYPE:
         """This function computes the reward for ``agent`` in a vectorized way.
 

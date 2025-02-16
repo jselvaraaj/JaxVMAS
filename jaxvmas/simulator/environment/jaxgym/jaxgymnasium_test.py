@@ -84,15 +84,17 @@ class TestJaxGymnasiumWrapper:
 
     def test_step_jit(self, wrapper: JaxGymnasiumWrapper):
         """Test jitted step function."""
+        PRNG_key = jax.random.PRNGKey(0)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
 
         @eqx.filter_jit
-        def step(wrapper: JaxGymnasiumWrapper, action):
-            return wrapper.step(action)
+        def step(key_step_i: Array, wrapper: JaxGymnasiumWrapper, action):
+            return wrapper.step(key_step_i, action)
 
         action = [jnp.ones((1, 2)), jnp.zeros((1, 2))]
-        PRNG_key = jax.random.PRNGKey(0)
-        wrapper, _ = wrapper.reset(PRNG_key=PRNG_key)
-        new_wrapper, env_data = step(wrapper, action)
+        wrapper, _ = wrapper.reset(PRNG_key=key_step_i)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        new_wrapper, env_data = step(key_step_i, wrapper, action)
 
         assert isinstance(new_wrapper, JaxGymnasiumWrapper)
         assert isinstance(env_data, EnvData)
@@ -134,11 +136,12 @@ class TestJaxGymnasiumWrapper:
         wrapper = JaxGymnasiumWrapper.create(env=env)
 
         @eqx.filter_jit
-        def step(wrapper: JaxGymnasiumWrapper, action):
-            return wrapper.step(action)
+        def step(key_step_i: Array, wrapper: JaxGymnasiumWrapper, action):
+            return wrapper.step(key_step_i, action)
 
         action = [jnp.ones((1, 2)), jnp.zeros((1, 2))]
-        new_wrapper, env_data = step(wrapper, action)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        new_wrapper, env_data = step(key_step_i, wrapper, action)
 
         assert isinstance(env_data.obs, list)
         assert isinstance(env_data.rews, list)

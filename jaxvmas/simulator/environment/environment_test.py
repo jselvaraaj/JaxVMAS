@@ -75,12 +75,16 @@ class TestEnvironment:
         scenario = MockScenario.create()
         batch_dim = 32
         PRNG_key = jax.random.PRNGKey(0)
-        return Environment.create(
-            scenario=scenario,
-            num_envs=batch_dim,
-            max_steps=100,
-            continuous_actions=True,
-            PRNG_key=PRNG_key,
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
+        return (
+            Environment.create(
+                scenario=scenario,
+                num_envs=batch_dim,
+                max_steps=100,
+                continuous_actions=True,
+                PRNG_key=sub_key,
+            ),
+            PRNG_key,
         )
 
     @pytest.fixture
@@ -88,99 +92,117 @@ class TestEnvironment:
         """Environment fixture with discrete actions"""
         scenario = MockScenario.create()
         PRNG_key = jax.random.PRNGKey(0)
-        return Environment.create(
-            scenario=scenario,
-            num_envs=32,
-            max_steps=100,
-            continuous_actions=False,
-            PRNG_key=PRNG_key,
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
+        return (
+            Environment.create(
+                scenario=scenario,
+                num_envs=32,
+                max_steps=100,
+                continuous_actions=False,
+                PRNG_key=sub_key,
+            ),
+            PRNG_key,
         )
 
-    def test_create(self, basic_env: Environment):
+    def test_create(self, basic_env: tuple[Environment, Array]):
         """Test environment creation and initialization"""
-        assert basic_env.num_envs == 32
-        assert basic_env.max_steps == 100
-        assert basic_env.continuous_actions is True
-        assert basic_env.n_agents == 2
-        assert isinstance(basic_env.PRNG_key, jax.Array)
-        assert basic_env.steps.shape == (32,)
-        assert jnp.all(basic_env.steps == 0)
+        env, PRNG_key = basic_env
+        assert env.num_envs == 32
+        assert env.max_steps == 100
+        assert env.continuous_actions is True
+        assert env.n_agents == 2
+        assert isinstance(PRNG_key, jax.Array)
+        assert env.steps.shape == (32,)
+        assert jnp.all(env.steps == 0)
 
-    def test_reset(self, basic_env: Environment):
+    def test_reset(self, basic_env: tuple[Environment, Array]):
         """Test environment reset functionality"""
         # Full reset
-        PRNG_key = jax.random.PRNGKey(0)
+        env, PRNG_key = basic_env
         key_step, key_step_i = jax.random.split(PRNG_key)
-        env, obs = basic_env.reset(PRNG_key=key_step_i)
+        env, obs = env.reset(PRNG_key=key_step_i)
         assert isinstance(obs, list)
-        assert len(obs) == basic_env.n_agents
-        assert obs[0].shape == (basic_env.num_envs, 2)  # pos observation
+        assert len(obs) == env.n_agents
+        assert obs[0].shape == (env.num_envs, 2)  # pos observation
         assert jnp.all(env.steps == 0)
 
         # Reset with info
         key_step, key_step_i = jax.random.split(PRNG_key)
-        env, result = basic_env.reset(PRNG_key=key_step_i, return_info=True)
+        env, result = env.reset(PRNG_key=key_step_i, return_info=True)
         obs, info = result
         assert isinstance(info, list)
-        assert len(info) == basic_env.n_agents
+        assert len(info) == env.n_agents
 
         # Reset with dones
         key_step, key_step_i = jax.random.split(PRNG_key)
-        env, result = basic_env.reset(PRNG_key=key_step_i, return_dones=True)
+        env, result = env.reset(PRNG_key=key_step_i, return_dones=True)
         obs, dones = result
-        assert dones.shape == (basic_env.num_envs,)
+        assert dones.shape == (env.num_envs,)
 
-    def test_reset_at(self, basic_env: Environment):
+    def test_reset_at(self, basic_env: tuple[Environment, Array]):
         """Test resetting specific environment"""
+        env, PRNG_key = basic_env
+
         # Step environment first
-        actions = [jnp.ones((32, 2)) for _ in range(basic_env.n_agents)]
-        basic_env, _ = basic_env.step(actions)
+        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, _ = env.step(PRNG_key=key_step_i, actions=actions)
 
         # Reset specific environment
-        PRNG_key = jax.random.PRNGKey(0)
-        key_step, key_step_i = jax.random.split(PRNG_key)
-        env, result = basic_env.reset_at(PRNG_key=key_step_i, index=0)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.reset_at(PRNG_key=key_step_i, index=0)
         assert isinstance(result, list)
-        assert len(result) == basic_env.n_agents
+        assert len(result) == env.n_agents
         assert jnp.all(env.steps[0] == 0)
         assert jnp.all(env.steps[1:] == 1)
 
         # Test invalid index
         with pytest.raises(AssertionError):
-            basic_env.reset_at(PRNG_key=key_step_i, index=32)
+            PRNG_key, key_step_i = jax.random.split(PRNG_key)
+            env.reset_at(PRNG_key=key_step_i, index=32)
 
-    def test_step(self, basic_env: Environment):
+    def test_step(self, basic_env: tuple[Environment, Array]):
         """Test environment stepping"""
+        env, PRNG_key = basic_env
         # Test with valid actions
-        actions = [jnp.ones((32, 2)) for _ in range(basic_env.n_agents)]
-        env, result = basic_env.step(actions)
+        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions)
         obs, rewards, dones, infos = result
 
-        assert len(obs) == basic_env.n_agents
-        assert len(rewards) == basic_env.n_agents
-        assert dones.shape == (basic_env.num_envs,)
-        assert len(infos) == basic_env.n_agents
+        assert len(obs) == env.n_agents
+        assert len(rewards) == env.n_agents
+        assert dones.shape == (env.num_envs,)
+        assert len(infos) == env.n_agents
 
         # Test with dict actions
         actions_dict = {f"agent_{i+1}": act for i, act in enumerate(actions)}
-        env, result = basic_env.step(actions_dict)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions_dict)
         obs, rewards, dones, infos = result
 
-        assert len(obs) == basic_env.n_agents
-        assert len(rewards) == basic_env.n_agents
+        assert len(obs) == env.n_agents
+        assert len(rewards) == env.n_agents
 
         # Test invalid action shape
         with pytest.raises(AssertionError):
-            invalid_actions = [jnp.ones((31, 2)) for _ in range(basic_env.n_agents)]
-            env, result = basic_env.step(invalid_actions)
+            invalid_actions = [jnp.ones((31, 2)) for _ in range(env.n_agents)]
+            PRNG_key, key_step_i = jax.random.split(PRNG_key)
+            env, result = env.step(PRNG_key=key_step_i, actions=invalid_actions)
             obs, rewards, dones, infos = result
 
-    def test_action_space(self, basic_env: Environment, discrete_env: Environment):
+    def test_action_space(
+        self,
+        basic_env: tuple[Environment, Array],
+        discrete_env: tuple[Environment, Array],
+    ):
         """Test action space configuration"""
+        env, PRNG_key = basic_env
+        discrete_env, PRNG_key = discrete_env
         # Test continuous action space
-        assert isinstance(basic_env.action_space, Tuple)
-        assert len(basic_env.action_space.spaces) == basic_env.n_agents
-        assert isinstance(basic_env.action_space.spaces[0], Box)
+        assert isinstance(env.action_space, Tuple)
+        assert len(env.action_space.spaces) == env.n_agents
+        assert isinstance(env.action_space.spaces[0], Box)
 
         # Test discrete action space
         assert isinstance(discrete_env.action_space, Tuple)
@@ -188,41 +210,50 @@ class TestEnvironment:
         assert isinstance(discrete_env.action_space.spaces[0], Discrete)
 
         # Test with dict spaces
-        PRNG_key = jax.random.PRNGKey(0)
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
         dict_env = Environment.create(
             scenario=MockScenario.create(),
-            PRNG_key=PRNG_key,
+            PRNG_key=sub_key,
             num_envs=32,
             dict_spaces=True,
         )
         assert isinstance(dict_env.action_space, Dict)
         assert len(dict_env.action_space.spaces) == dict_env.n_agents
 
-    def test_observation_space(self, basic_env: Environment):
+    def test_observation_space(self, basic_env: tuple[Environment, Array]):
         """Test observation space configuration"""
-        assert isinstance(basic_env.observation_space, Tuple)
-        assert len(basic_env.observation_space.spaces) == basic_env.n_agents
+        env, PRNG_key = basic_env
+        assert isinstance(env.observation_space, Tuple)
+        assert len(env.observation_space.spaces) == env.n_agents
 
         # Test with dict spaces
-        PRNG_key = jax.random.PRNGKey(0)
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
         dict_env = Environment.create(
             scenario=MockScenario.create(),
-            PRNG_key=PRNG_key,
+            PRNG_key=sub_key,
             num_envs=32,
             dict_spaces=True,
         )
         assert isinstance(dict_env.observation_space, Dict)
         assert len(dict_env.observation_space.spaces) == dict_env.n_agents
 
-    def test_random_actions(self, basic_env: Environment, discrete_env: Environment):
+    def test_random_actions(
+        self,
+        basic_env: tuple[Environment, Array],
+        discrete_env: tuple[Environment, Array],
+    ):
         """Test random action generation"""
         # Test continuous actions
-        random_actions = basic_env.get_random_actions()
-        assert len(random_actions) == basic_env.n_agents
-        assert random_actions[0].shape == (basic_env.num_envs, 2)
+        env, PRNG_key = basic_env
+        discrete_env, PRNG_key = discrete_env
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        random_actions = env.get_random_actions(PRNG_key=key_step_i)
+        assert len(random_actions) == env.n_agents
+        assert random_actions[0].shape == (env.num_envs, 2)
 
         # Test discrete actions
-        random_discrete = discrete_env.get_random_actions()
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        random_discrete = discrete_env.get_random_actions(PRNG_key=key_step_i)
         assert len(random_discrete) == discrete_env.n_agents
         assert random_discrete[0].shape == (discrete_env.num_envs,)
 
@@ -238,23 +269,26 @@ class TestEnvironment:
 
         # Step until max steps
         actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
-        env, result = env.step(actions)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, dones, _ = result
         assert not jnp.any(dones)
 
-        env, result = env.step(actions)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, dones, _ = result
         assert jnp.all(dones)
 
     def test_multidiscrete_actions(self):
         """Test multidiscrete action space"""
         PRNG_key = jax.random.PRNGKey(0)
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
         env = Environment.create(
             scenario=MockScenario.create(),
             num_envs=32,
             continuous_actions=False,
             multidiscrete_actions=True,
-            PRNG_key=PRNG_key,
+            PRNG_key=sub_key,
         )
 
         # Test action space
@@ -264,23 +298,26 @@ class TestEnvironment:
             assert space.shape == (2,)  # Default 2D actions
 
         # Test random actions
-        random_actions = env.get_random_actions()
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
+        random_actions = env.get_random_actions(PRNG_key=sub_key)
         assert len(random_actions) == env.n_agents
         assert random_actions[0].shape == (env.num_envs, 2)
 
     def test_terminated_truncated(self):
         """Test terminated/truncated functionality"""
         PRNG_key = jax.random.PRNGKey(0)
+        PRNG_key, sub_key = jax.random.split(PRNG_key)
         env = Environment.create(
             scenario=MockScenario.create(),
             num_envs=32,
             max_steps=2,
             terminated_truncated=True,
-            PRNG_key=PRNG_key,
+            PRNG_key=sub_key,
         )
 
         actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
-        env, result = env.step(actions)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, terminated, truncated, _ = result
 
         assert terminated.shape == (env.num_envs,)
@@ -288,58 +325,62 @@ class TestEnvironment:
         assert not jnp.any(terminated)
         assert not jnp.any(truncated)
 
-        env, result = env.step(actions)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, terminated, truncated, _ = result
         assert not jnp.any(terminated)
         assert jnp.all(truncated)
 
-    def test_is_jittable(self, basic_env: Environment):
+    def test_is_jittable(self, basic_env: tuple[Environment, Array]):
         """Test jit compatibility of all major functions"""
-        PRNG_key = jax.random.PRNGKey(0)
+        env, PRNG_key = basic_env
 
         # Test jit compatibility of reset
         @eqx.filter_jit
         def reset_env(env: Environment, PRNG_key: Array):
             return env.reset(PRNG_key=PRNG_key)
 
-        key_step, key_step_i = jax.random.split(PRNG_key)
-        env, obs = reset_env(basic_env, key_step_i)
-        assert len(obs) == basic_env.n_agents
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, obs = reset_env(env, key_step_i)
+        assert len(obs) == env.n_agents
 
         # Test jit compatibility of reset_at
         @eqx.filter_jit
         def reset_at_env(env: Environment, PRNG_key: Array, index: int):
             return env.reset_at(PRNG_key=PRNG_key, index=index)
 
-        key_step, key_step_i = jax.random.split(PRNG_key)
-        env, obs = reset_at_env(basic_env, key_step_i, 0)
-        assert len(obs) == basic_env.n_agents
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        env, obs = reset_at_env(env, key_step_i, 0)
+        assert len(obs) == env.n_agents
 
         # Test jit compatibility of step
         @eqx.filter_jit
-        def step_env(env: Environment, actions: list):
-            return env.step(actions)
+        def step_env(env: Environment, PRNG_key: Array, actions: list):
+            return env.step(PRNG_key=PRNG_key, actions=actions)
 
-        actions = [jnp.ones((32, 2)) for _ in range(basic_env.n_agents)]
-        env, result = step_env(basic_env, actions)
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        env, result = step_env(env, key_step_i, actions)
         obs, rewards, dones, infos = result
-        assert len(obs) == basic_env.n_agents
+        assert len(obs) == env.n_agents
 
         # Test jit compatibility of random actions
         @eqx.filter_jit
-        def get_random_actions(env: Environment):
-            return env.get_random_actions()
+        def get_random_actions(PRNG_key: Array, env: Environment):
+            PRNG_key, sub_key = jax.random.split(PRNG_key)
+            return env.get_random_actions(PRNG_key=sub_key)
 
-        random_actions = get_random_actions(basic_env)
-        assert len(random_actions) == basic_env.n_agents
+        PRNG_key, key_step_i = jax.random.split(PRNG_key)
+        random_actions = get_random_actions(key_step_i, env)
+        assert len(random_actions) == env.n_agents
 
         # Test jit compatibility of done computation
         @eqx.filter_jit
         def compute_done(env: Environment):
             return env.done()
 
-        done = compute_done(basic_env)
-        assert done.shape == (basic_env.num_envs,)
+        done = compute_done(env)
+        assert done.shape == (env.num_envs,)
 
         # Test jit compatibility of get_from_scenario
         @eqx.filter_jit
@@ -351,5 +392,5 @@ class TestEnvironment:
                 get_dones=True,
             )
 
-        result = get_scenario_data(basic_env)
+        result = get_scenario_data(env)
         assert len(result) == 4  # obs, rewards, dones, infos

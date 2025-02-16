@@ -1035,6 +1035,7 @@ class World(JaxVectorizedObject):
         torque_constraint_force: float = TORQUE_CONSTRAINT_FORCE,
         contact_margin: float = 1e-3,
         gravity: tuple[float, float] = (0.0, 0.0),
+        **kwargs,
     ):
         assert batch_dim > 0, f"Batch dim must be greater than 0, got {batch_dim}"
         # list of agents and entities static params(can change at execution-time!)

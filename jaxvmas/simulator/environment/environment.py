@@ -35,7 +35,6 @@ from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
 # environment for all agents in the multiagent world
 # currently code assumes that no agents will be created/destroyed at runtime!
 class Environment(JaxVectorizedObject):
-    PRNG_key: jax.random.PRNGKey
     metadata: dict[str, list[str] | bool]
     scenario: BaseScenario
     num_envs: int
@@ -97,7 +96,6 @@ class Environment(JaxVectorizedObject):
         steps = jnp.zeros(num_envs)
         self = cls(
             batch_dim=num_envs,
-            PRNG_key=PRNG_key,
             metadata=metadata,
             scenario=scenario,
             num_envs=num_envs,
@@ -118,7 +116,6 @@ class Environment(JaxVectorizedObject):
         )
 
         PRNG_key, PRNG_key_reset = jax.random.split(PRNG_key)
-        self = self.replace(PRNG_key=PRNG_key)
 
         self, observations = self.reset(PRNG_key=PRNG_key_reset)
 
@@ -263,7 +260,9 @@ class Environment(JaxVectorizedObject):
 
         return [data for data in result if data is not None]
 
-    def step(self, actions: list | dict) -> tuple["Environment", list | dict]:
+    def step(
+        self, PRNG_key: Array, actions: list | dict
+    ) -> tuple["Environment", list | dict]:
         """Performs a vectorized step on all sub environments using `actions`.
         Args:
             actions: Is a list on len 'self.n_agents' of which each element is a torch.Tensor of shape
@@ -324,7 +323,8 @@ class Environment(JaxVectorizedObject):
         # set action for each agent
         agents = []
         for i, agent in enumerate(self.agents):
-            self, agent = self._set_action(actions[i], agent)
+            PRNG_key, subkey = jax.random.split(PRNG_key)
+            self, agent = self._set_action(subkey, actions[i], agent)
             agents.append(agent)
         self = self.replace(agents=agents)
 
@@ -458,7 +458,7 @@ class Environment(JaxVectorizedObject):
                 f"Invalid type of observation {obs} for agent {agent.name}"
             )
 
-    def get_random_action(self, agent: Agent) -> Array:
+    def get_random_action(self, PRNG_key: Array, agent: Agent) -> Array:
         """Returns a random action for the given agent.
 
         Args:
@@ -471,8 +471,7 @@ class Environment(JaxVectorizedObject):
         if self.continuous_actions:
             actions = []
             for action_index in range(agent.action_size):
-                key, subkey = jax.random.split(self.PRNG_key)
-                self = self.replace(PRNG_key=key)
+                PRNG_key, subkey = jax.random.split(PRNG_key)
                 actions.append(
                     jax.random.uniform(
                         key=subkey,
@@ -484,8 +483,7 @@ class Environment(JaxVectorizedObject):
             if self.world.dim_c != 0 and not agent.silent:
                 # If the agent needs to communicate
                 for _ in range(self.world.dim_c):
-                    key, subkey = jax.random.split(self.PRNG_key)
-                    self = self.replace(PRNG_key=key)
+                    PRNG_key, subkey = jax.random.split(PRNG_key)
                     actions.append(
                         jax.random.uniform(
                             key=subkey,
@@ -498,11 +496,12 @@ class Environment(JaxVectorizedObject):
         else:
             action_space = self.get_agent_action_space(agent)
             if self.multidiscrete_actions and isinstance(action_space, MultiDiscrete):
-                key = jax.random.split(self.PRNG_key, action_space.shape[0] + 1)
-                self = self.replace(PRNG_key=key[-1])
+                PRNG_key, *subkey = jax.random.split(
+                    PRNG_key, action_space.shape[0] + 1
+                )
                 actions = [
                     jax.random.randint(
-                        key=key[action_index],
+                        key=subkey[action_index],
                         minval=0,
                         maxval=action_space.num_categories[action_index],
                         shape=(agent.batch_dim,),
@@ -515,8 +514,7 @@ class Environment(JaxVectorizedObject):
                     raise ValueError(
                         f"Agent {agent.name} does not have a discrete or multidiscrete action space"
                     )
-                key, subkey = jax.random.split(self.PRNG_key)
-                self = self.replace(PRNG_key=key)
+                PRNG_key, subkey = jax.random.split(PRNG_key)
                 action = jax.random.randint(
                     key=subkey,
                     minval=0,
@@ -525,7 +523,7 @@ class Environment(JaxVectorizedObject):
                 )
         return action
 
-    def get_random_actions(self) -> list[Array]:
+    def get_random_actions(self, PRNG_key: Array) -> list[Array]:
         """Returns random actions for all agents that you can feed to :class:`step`
 
         Returns:
@@ -547,7 +545,11 @@ class Environment(JaxVectorizedObject):
             ...     obs, rews, dones, info = env.step(env.get_random_actions())
 
         """
-        return [self.get_random_action(agent) for agent in self.agents]
+        PRNG_key, *subkey = jax.random.split(PRNG_key, len(self.agents) + 1)
+        return [
+            self.get_random_action(subkey[i], self.agents[i])
+            for i in range(len(self.agents))
+        ]
 
     def _check_discrete_action(
         self, action: Array, low: int, high: int, type: str
@@ -557,7 +559,9 @@ class Environment(JaxVectorizedObject):
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
 
     # set env action for a particular agent
-    def _set_action(self, action: Array, agent: Agent) -> tuple["Environment", Agent]:
+    def _set_action(
+        self, PRNG_key: Array, action: Array, agent: Agent
+    ) -> tuple["Environment", Agent]:
         action = action.copy()
 
         u = jnp.zeros(
@@ -652,8 +656,7 @@ class Environment(JaxVectorizedObject):
         agent = agent.replace(action=agent.action.replace(u=u))
 
         if agent.action.u_noise > 0:
-            key, subkey = jax.random.split(self.PRNG_key)
-            self = self.replace(PRNG_key=key)
+            PRNG_key, subkey = jax.random.split(PRNG_key)
             noise = (
                 jax.random.normal(
                     key=subkey,
@@ -682,8 +685,7 @@ class Environment(JaxVectorizedObject):
                 ), "Comm actions are out of range [0,1]"
                 agent = agent.replace(action=agent.action.replace(c=comm_action))
             if agent.c_noise > 0:
-                key, subkey = jax.random.split(self.PRNG_key)
-                self = self.replace(PRNG_key=key)
+                PRNG_key, subkey = jax.random.split(PRNG_key)
                 noise = (
                     jax.random.normal(
                         key=subkey,
