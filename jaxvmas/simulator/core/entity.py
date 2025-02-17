@@ -157,8 +157,8 @@ class Entity(JaxVectorizedObject):
             entity,
         )
 
-    def _spawn(self, *args, **kwargs) -> "Entity":
-        return self.replace(state=self.state._spawn(*args, **kwargs))
+    def _spawn(self, **kwargs) -> "Entity":
+        return self.replace(state=self.state._spawn(**kwargs))
 
     def _reset(self, env_index: int | float = jnp.nan):
         return self.replace(state=self.state._reset(env_index))

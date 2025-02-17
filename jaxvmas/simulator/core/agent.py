@@ -2,7 +2,6 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 import chex
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
@@ -204,8 +203,6 @@ class Agent(Entity):
     def u_range(self):
         return self.action.u_range
 
-    @chex.chexify
-    @eqx.filter_jit
     def action_callback(
         self, PRNG_key: Array, world: "World"
     ) -> tuple["Agent", "World"]:
@@ -222,7 +219,7 @@ class Agent(Entity):
             <= self.action.u_range_jax_array
         )
         chex.assert_trees_all_equal(
-            [condition, jnp.ones_like(condition, dtype=jnp.bool)]
+            condition, jnp.full_like(condition, True, dtype=jnp.bool)
         )
         return self, world
 
@@ -233,7 +230,7 @@ class Agent(Entity):
             ), f"Agent {self.name} must be silent when world has no communication"
         if self.silent:
             dim_c = 0
-        return super(Agent, self)._spawn(dim_c, dim_p)
+        return super(Agent, self)._spawn(dim_c=dim_c, dim_p=dim_p)
 
     def _reset(self, env_index: int) -> "Agent":
         self = self.replace(action=self.action._reset(env_index))
