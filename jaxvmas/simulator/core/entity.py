@@ -19,6 +19,7 @@ from jaxvmas.simulator.core.states import EntityState
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import (
     Color,
+    JaxUtils,
 )
 
 
@@ -144,9 +145,11 @@ class Entity(JaxVectorizedObject):
     def moment_of_inertia(self):
         return self.shape.moment_of_inertia(self.mass)
 
+    @jaxtyped(typechecker=beartype)
     def reset_render(self):
         return self.replace(_render=jnp.full((self.batch_dim,), True))
 
+    @jaxtyped(typechecker=beartype)
     def collides(self, entity: "Entity"):
         # Here collision_filter is a static variable but entity is not.
         # So we need to use equinox_filter_cond to handle this.
@@ -157,24 +160,31 @@ class Entity(JaxVectorizedObject):
             entity,
         )
 
+    @jaxtyped(typechecker=beartype)
     def _spawn(self, **kwargs) -> "Entity":
         return self.replace(state=self.state._spawn(**kwargs))
 
+    @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan):
         return self.replace(state=self.state._reset(env_index))
 
+    @jaxtyped(typechecker=beartype)
     def set_pos(self, pos: Array, batch_index: int | float = jnp.nan):
         return self._set_state_property("pos", pos, batch_index)
 
+    @jaxtyped(typechecker=beartype)
     def set_vel(self, vel: Array, batch_index: int | float = jnp.nan):
         return self._set_state_property("vel", vel, batch_index)
 
+    @jaxtyped(typechecker=beartype)
     def set_rot(self, rot: Array, batch_index: int | float = jnp.nan):
         return self._set_state_property("rot", rot, batch_index)
 
+    @jaxtyped(typechecker=beartype)
     def set_ang_vel(self, ang_vel: Array, batch_index: int | float = jnp.nan):
         return self._set_state_property("ang_vel", ang_vel, batch_index)
 
+    @jaxtyped(typechecker=beartype)
     def _set_state_property(
         self, prop_name: str, new: Array, batch_index: int | float = jnp.nan
     ):
@@ -195,12 +205,14 @@ class Entity(JaxVectorizedObject):
         def batch_index_is_not_nan(
             old_state: EntityState, batch_index: float, new: Array
         ):
-            # Replace nan with a safe dummy index (e.g. 0) for tracing. Note, at this point, env_index should never be nan during execution.
-            safe_index = jnp.where(jnp.isnan(batch_index), 0, batch_index).astype(
-                jnp.int32
-            )
             value = getattr(old_state, prop_name)
-            new_state = old_state.replace(**{prop_name: value.at[safe_index].set(new)})
+
+            new = jnp.broadcast_to(
+                new, value.shape
+            )  # This should never happen. Here to make jax jit happy
+
+            new_value = JaxUtils.where_from_index(batch_index, new, value)
+            new_state = old_state.replace(**{prop_name: new_value})
             return new_state
 
         new_state = equinox_filter_cond_return_pytree_node(
