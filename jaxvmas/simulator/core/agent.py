@@ -198,9 +198,6 @@ class Agent(Entity):
             )
         )
 
-        sensors = [sensor.replace(agent=agent) for sensor in sensors]
-        agent = agent.replace(sensors=sensors)
-
         return agent
 
     @property
