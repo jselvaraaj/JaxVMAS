@@ -1,7 +1,11 @@
 {
     "python.testing.pytestArgs": [
         "-n",
-        "auto"
+        "auto",
+        "-v",
+        "--cov=jaxvmas",
+        "--cov-report=xml",
+        "jaxvmas"
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true

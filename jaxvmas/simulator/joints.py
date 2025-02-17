@@ -11,7 +11,7 @@ from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator import rendering
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Entity
+    from jaxvmas.simulator.core.core import Entity
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
 
@@ -97,7 +97,7 @@ class Joint(PyTreeNode):
                 ),
             )
         else:
-            from jaxvmas.simulator.core import Box, Landmark, Line
+            from jaxvmas.simulator.core.core import Box, Landmark, Line
 
             self = self.replace(
                 landmark=Landmark.create(

@@ -19,7 +19,9 @@ from jax import numpy as jnp
 from jaxtyping import Array
 
 import jaxvmas
-from jaxvmas.simulator.core import Agent, JaxVectorizedObject, World
+from jaxvmas.simulator.core.agent import Agent
+from jaxvmas.simulator.core.jax_vectorized_object import JaxVectorizedObject
+from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.environment.jaxgym.spaces import (
     Box,
     Dict,

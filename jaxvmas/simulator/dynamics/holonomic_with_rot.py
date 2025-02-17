@@ -5,7 +5,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Agent
+    from jaxvmas.simulator.core.core import Agent
 from jaxvmas.simulator.dynamics.common import Dynamics
 
 

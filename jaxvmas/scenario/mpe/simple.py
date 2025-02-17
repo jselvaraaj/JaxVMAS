@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from jaxvmas.interactive_rendering import render_interactively
-from jaxvmas.simulator.core import Agent, Landmark, World
+from jaxvmas.simulator.core.core import Agent, Landmark, World
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
 

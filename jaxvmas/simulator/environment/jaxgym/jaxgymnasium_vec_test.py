@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
 
-from jaxvmas.simulator.core import Agent, World
+from jaxvmas.simulator.core.agent import Agent
+from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.environment.environment import Environment
 from jaxvmas.simulator.environment.jaxgym.base import EnvData
 from jaxvmas.simulator.environment.jaxgym.jaxgymnasium_vec import JaxGymnasiumVecWrapper

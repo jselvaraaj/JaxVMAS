@@ -189,10 +189,38 @@ class JaxUtils:
         return {key: JaxUtils.recursive_clone(val) for key, val in value.items()}
 
     @staticmethod
-    def where_from_index(env_index, new_value, old_value):
-        mask = jnp.zeros_like(old_value, dtype=jnp.bool)
-        mask = mask.at[env_index].set(True)
-        return jnp.where(mask, new_value, old_value)
+    def where_from_index(env_index: int | float, new_value: Array, old_value: Array):
+        """If env_index is nan, return new_value, otherwise return old_value in the env_index position and new_value in all other positions.
+
+        Args:
+            env_index (int | float): The environment index to use.
+            new_value (Array): The value to return if env_index is nan or to use in all positions if env_index is not nan.
+            old_value (Array): The value to return in env_index position if env_index is not nan.
+        """
+
+        def env_index_is_nan(
+            env_index: int | float, new_value: Array, old_value: Array
+        ):
+            return new_value
+
+        def env_index_is_not_nan(
+            env_index: int | float, new_value: Array, old_value: Array
+        ):
+            # Replace nan with a safe dummy index (e.g. 0) for tracing. Note, at this point, env_index should never be nan during execution.
+            safe_index = jnp.where(jnp.isnan(env_index), 0, env_index).astype(jnp.int32)
+
+            mask = jnp.zeros_like(old_value, dtype=jnp.bool)
+            mask = mask.at[safe_index].set(True)
+            return jnp.where(mask, new_value, old_value)
+
+        return jax.lax.cond(
+            jnp.isnan(env_index),
+            env_index_is_nan,
+            env_index_is_not_nan,
+            env_index,
+            new_value,
+            old_value,
+        )
 
 
 class ScenarioUtils:

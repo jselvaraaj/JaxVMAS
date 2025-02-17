@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Agent
+    from jaxvmas.simulator.core.core import Agent
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import JaxUtils, X
 

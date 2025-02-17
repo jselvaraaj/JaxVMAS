@@ -6,7 +6,7 @@ import warnings
 
 import jax.numpy as jnp
 
-from jaxvmas.simulator.core import Agent, World
+from jaxvmas.simulator.core.core import Agent, World
 from jaxvmas.simulator.utils import JaxUtils
 
 

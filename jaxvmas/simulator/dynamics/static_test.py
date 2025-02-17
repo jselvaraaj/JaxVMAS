@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
 
-from jaxvmas.simulator.core import Agent
+from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.dynamics.static import Static
 
 

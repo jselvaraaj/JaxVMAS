@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Agent, World
+    from jaxvmas.simulator.core.core import Agent, World
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import JaxUtils, X, Y
 

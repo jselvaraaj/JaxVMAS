@@ -10,7 +10,7 @@ from jaxtyping import Array
 from jaxvmas.equinox_utils import PyTreeNode
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Agent
+    from jaxvmas.simulator.core.core import Agent
 
 
 class Dynamics(PyTreeNode, ABC):

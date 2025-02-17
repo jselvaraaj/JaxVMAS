@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core import Agent
+    from jaxvmas.simulator.core.core import Agent
 from jaxvmas.simulator.dynamics.common import Dynamics
 
 dim_batch = "batch"

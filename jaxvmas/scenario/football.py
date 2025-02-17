@@ -11,7 +11,15 @@ from jaxtyping import Array
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
-from jaxvmas.simulator.core import Agent, Box, Entity, Landmark, Line, Sphere, World
+from jaxvmas.simulator.core.core import (
+    Agent,
+    Box,
+    Entity,
+    Landmark,
+    Line,
+    Sphere,
+    World,
+)
 from jaxvmas.simulator.dynamics.holonomic import Holonomic
 from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 from jaxvmas.simulator.rendering import Geom

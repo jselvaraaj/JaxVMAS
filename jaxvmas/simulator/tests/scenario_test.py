@@ -4,7 +4,9 @@ import jax.numpy as jnp
 import pytest
 from jaxtyping import Array, Float
 
-from jaxvmas.simulator.core import Agent, Landmark, World
+from jaxvmas.simulator.core.agent import Agent
+from jaxvmas.simulator.core.landmark import Landmark
+from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.rendering import Geom, Line
 from jaxvmas.simulator.scenario import BaseScenario, batch, pos
 from jaxvmas.simulator.utils import INITIAL_VIEWER_SIZE, VIEWER_DEFAULT_ZOOM
