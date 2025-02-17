@@ -77,8 +77,8 @@ class TestBaseScenario:
 
     def test_make_world(self, scenario: MockScenario):
         assert isinstance(scenario.world, World)
-        assert len(scenario.world._agents) == 1
-        assert len(scenario.world._landmarks) == 1
+        assert len(scenario.world.agents) == 1
+        assert len(scenario.world.landmarks) == 1
         assert scenario.world.batch_dim == 2
 
     def test_reset_world(self, scenario: MockScenario):

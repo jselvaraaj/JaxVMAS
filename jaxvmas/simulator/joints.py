@@ -11,7 +11,7 @@ from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator import rendering
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core.core import Entity
+    from jaxvmas.simulator.core.entity import Entity
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
 
