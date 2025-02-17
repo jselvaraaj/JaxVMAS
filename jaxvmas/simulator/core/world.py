@@ -1,8 +1,9 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from beartype import beartype
 from beartype.typing import Callable
-from jaxtyping import Array
+from jaxtyping import Array, jaxtyped
 
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
@@ -42,6 +43,7 @@ from jaxvmas.simulator.utils import (
 
 
 # Multi-agent world
+@jaxtyped(typechecker=beartype)
 class World(JaxVectorizedObject):
 
     agents: list[Agent]
@@ -158,6 +160,7 @@ class World(JaxVectorizedObject):
             _torque_dict,
         )
 
+    @jaxtyped(typechecker=beartype)
     def add_agent(
         self,
         agent: Agent,
@@ -169,6 +172,7 @@ class World(JaxVectorizedObject):
         self = self.replace(agents=self.agents + [agent])
         return self
 
+    @jaxtyped(typechecker=beartype)
     def add_landmark(
         self,
         landmark: Landmark,
@@ -179,6 +183,7 @@ class World(JaxVectorizedObject):
         self = self.replace(landmarks=self.landmarks + [landmark])
         return self
 
+    @jaxtyped(typechecker=beartype)
     def add_joint(self, joint: Joint):
         assert self.substeps > 1, "For joints, world substeps needs to be more than 1"
         if joint.landmark is not None:
@@ -194,6 +199,7 @@ class World(JaxVectorizedObject):
             )
         return self
 
+    @jaxtyped(typechecker=beartype)
     def reset(self, env_index: int | None = None):
         entities = []
         for e in self.entities:
@@ -231,6 +237,7 @@ class World(JaxVectorizedObject):
     def scripted_agents(self) -> list[Agent]:
         return [agent for agent in self.agents if agent.action_script is not None]
 
+    @jaxtyped(typechecker=beartype)
     def cast_ray(
         self,
         entity: Entity,
@@ -271,6 +278,7 @@ class World(JaxVectorizedObject):
         dist, _ = jnp.min(jnp.stack(dists, dim=-1), dim=-1)
         return dist
 
+    @jaxtyped(typechecker=beartype)
     def cast_rays(
         self,
         entity: Entity,
@@ -391,6 +399,7 @@ class World(JaxVectorizedObject):
         dist, _ = jnp.min(dists, axis=-1)
         return dist
 
+    @jaxtyped(typechecker=beartype)
     def get_distance_from_point(
         self,
         entity: Entity,
@@ -428,6 +437,7 @@ class World(JaxVectorizedObject):
             return_value = return_value[env_index]
         return return_value
 
+    @jaxtyped(typechecker=beartype)
     def get_distance(
         self,
         entity_a: Entity,
@@ -518,6 +528,7 @@ class World(JaxVectorizedObject):
             raise RuntimeError("Distance not computable for given entities")
         return return_value
 
+    @jaxtyped(typechecker=beartype)
     def is_overlapping(
         self,
         entity_a: Entity,
@@ -728,6 +739,7 @@ class World(JaxVectorizedObject):
         return self
 
     # gather agent action forces
+    @jaxtyped(typechecker=beartype)
     def _apply_action_force(self, agent: Agent):
         forces_dict = {**self._force_dict}
         if agent.movable:
@@ -740,6 +752,7 @@ class World(JaxVectorizedObject):
             agent = agent.replace(state=agent.state.replace(force=force))
         return agent, self.replace(force_dict=forces_dict)
 
+    @jaxtyped(typechecker=beartype)
     def _apply_action_torque(self, agent: Agent):
         torques_dict = {**self._torque_dict}
         if agent.rotatable:
@@ -761,6 +774,7 @@ class World(JaxVectorizedObject):
             torques_dict[agent.name] = torques_dict[agent.name] + agent.state.torque
         return agent, self.replace(torque_dict=torques_dict)
 
+    @jaxtyped(typechecker=beartype)
     def _apply_gravity(
         self,
         entity: Entity,
@@ -775,6 +789,7 @@ class World(JaxVectorizedObject):
                 )
         return entity, self.replace(force_dict=forces_dict)
 
+    @jaxtyped(typechecker=beartype)
     def _apply_friction_force(
         self,
         entity: Entity,
@@ -832,6 +847,7 @@ class World(JaxVectorizedObject):
 
         return entity, self.replace(force_dict=forces_dict, torque_dict=torques_dict)
 
+    @jaxtyped(typechecker=beartype)
     def _apply_vectorized_enviornment_force(self):
         s_s = []
         l_s = []
@@ -939,14 +955,15 @@ class World(JaxVectorizedObject):
 
         return self
 
+    @jaxtyped(typechecker=beartype)
     def update_env_forces(
         self,
         entity_a: Entity,
-        f_a,
-        t_a,
+        f_a: Array,
+        t_a: Array,
         entity_b: Entity,
-        f_b,
-        t_b,
+        f_b: Array,
+        t_b: Array,
     ):
         new_forces_dict = dict(self._force_dict)
         new_torques_dict = dict(self._torque_dict)
@@ -962,6 +979,7 @@ class World(JaxVectorizedObject):
 
         return self.replace(force_dict=new_forces_dict, torque_dict=new_torques_dict)
 
+    @jaxtyped(typechecker=beartype)
     def _vectorized_joint_constraints(
         self,
         joints: list[Joint],
@@ -1069,7 +1087,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _sphere_sphere_vectorized_collision(self, s_s, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _sphere_sphere_vectorized_collision(
+        self,
+        s_s: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(s_s):
             pos_s_a = []
             pos_s_b = []
@@ -1111,7 +1134,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _sphere_line_vectorized_collision(self, l_s, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _sphere_line_vectorized_collision(
+        self,
+        l_s: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(l_s):
             pos_l = []
             pos_s = []
@@ -1167,7 +1195,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _line_line_vectorized_collision(self, l_l, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _line_line_vectorized_collision(
+        self,
+        l_l: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(l_l):
             pos_l_a = []
             pos_l_b = []
@@ -1235,7 +1268,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_sphere_vectorized_collision(self, b_s, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _box_sphere_vectorized_collision(
+        self,
+        b_s: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(b_s):
             pos_box = []
             pos_sphere = []
@@ -1332,7 +1370,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_line_vectorized_collision(self, b_l, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _box_line_vectorized_collision(
+        self,
+        b_l: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(b_l):
             pos_box = []
             pos_line = []
@@ -1436,7 +1479,12 @@ class World(JaxVectorizedObject):
 
         return self
 
-    def _box_box_vectorized_collision(self, b_b, collision_mask):
+    @jaxtyped(typechecker=beartype)
+    def _box_box_vectorized_collision(
+        self,
+        b_b: list[tuple[Entity, Entity]],
+        collision_mask: Array,
+    ):
         if len(b_b):
             pos_box = []
             pos_box2 = []
@@ -1571,6 +1619,7 @@ class World(JaxVectorizedObject):
 
         return self
 
+    @jaxtyped(typechecker=beartype)
     def collides(self, a: Entity, b: Entity) -> bool:
         # Early exit conditions
         collides_check = jnp.logical_and(a.collides(b), b.collides(a))
@@ -1605,6 +1654,7 @@ class World(JaxVectorizedObject):
         # Combine all checks
         return jnp.all(conditions)  # Using all instead of logical_and.reduce
 
+    @jaxtyped(typechecker=beartype)
     def _get_constraint_forces(
         self,
         pos_a: Array,
@@ -1652,6 +1702,7 @@ class World(JaxVectorizedObject):
 
         return force, -force
 
+    @jaxtyped(typechecker=beartype)
     def _get_constraint_torques(
         self,
         rot_a: Array,
@@ -1673,6 +1724,7 @@ class World(JaxVectorizedObject):
 
     # integrate physical state
     # uses semi-implicit euler with sub-stepping
+    @jaxtyped(typechecker=beartype)
     def _integrate_state(
         self,
         entity: Entity,
@@ -1755,7 +1807,8 @@ class World(JaxVectorizedObject):
 
         return entity
 
-    def _update_comm_state(self, agent: "Agent"):
+    @jaxtyped(typechecker=beartype)
+    def _update_comm_state(self, agent: Agent):
         # set communication state (directly for now)
         if not agent.silent:
             agent = agent.replace(state=agent.state.replace(c=agent.action.c))

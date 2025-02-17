@@ -120,6 +120,7 @@ class AgentState(EntityState):
             torque,
         )
 
+    @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "AgentState":
 
         def env_index_is_nan(self, env_index: float):
@@ -174,6 +175,7 @@ class AgentState(EntityState):
 
         return self
 
+    @jaxtyped(typechecker=beartype)
     def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
 
         def dim_c_is_greater_than_0(self: "AgentState", dim_c: int):

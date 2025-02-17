@@ -96,6 +96,7 @@ class Action(JaxVectorizedObject):
                     " (one per action) all with same length"
                 )
 
+    @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "Action":
         u = self.u
         u_reset = jnp.where(

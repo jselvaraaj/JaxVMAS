@@ -1,7 +1,8 @@
 import chex
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, jaxtyped
 
 from jaxvmas.simulator.core.entity import Entity
 from jaxvmas.simulator.core.shapes import Box, Line, Sphere
@@ -14,6 +15,7 @@ from jaxvmas.simulator.utils import (
 
 
 @eqx.filter_jit
+@jaxtyped(typechecker=beartype)
 def cast_ray_to_box(
     box: Entity,
     ray_origin: Array,
@@ -60,6 +62,7 @@ def cast_ray_to_box(
 
 
 @chex.assert_max_traces(1)
+@jaxtyped(typechecker=beartype)
 def cast_rays_to_box(
     batch_dim: int,
     box_pos: Array,
@@ -151,6 +154,7 @@ def cast_rays_to_box(
 
 
 @eqx.filter_jit
+@jaxtyped(typechecker=beartype)
 def cast_ray_to_sphere(
     sphere: Entity,
     ray_origin: Array,
@@ -192,6 +196,7 @@ def cast_ray_to_sphere(
 
 
 @chex.assert_max_traces(1)
+@jaxtyped(typechecker=beartype)
 def cast_rays_to_sphere(
     batch_dim: int,
     sphere_pos: Array,
@@ -268,6 +273,7 @@ def cast_rays_to_sphere(
 
 
 @eqx.filter_jit
+@jaxtyped(typechecker=beartype)
 def cast_ray_to_line(
     line: Entity,
     ray_origin: Array,
@@ -315,6 +321,7 @@ def cast_ray_to_line(
 
 
 @chex.assert_max_traces(1)
+@jaxtyped(typechecker=beartype)
 def cast_rays_to_line(
     batch_dim: int,
     line_pos: Array,

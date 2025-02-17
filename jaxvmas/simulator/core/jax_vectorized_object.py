@@ -1,4 +1,6 @@
 import chex
+from beartype import beartype
+from jaxtyping import jaxtyped
 
 from jaxvmas.equinox_utils import (
     PyTreeNode,
@@ -16,6 +18,7 @@ lines_dim = "lines"
 dots_dim = "..."
 
 
+@jaxtyped(typechecker=beartype)
 class JaxVectorizedObject(PyTreeNode):
     batch_dim: int
 
@@ -24,5 +27,6 @@ class JaxVectorizedObject(PyTreeNode):
         chex.assert_scalar_positive(batch_dim)
         return cls(batch_dim)
 
+    @jaxtyped(typechecker=beartype)
     def _check_batch_index(self, batch_index: int):
         chex.assert_scalar_in(batch_index, 0, self.batch_dim)

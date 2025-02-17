@@ -203,6 +203,7 @@ class Agent(Entity):
     def u_range(self):
         return self.action.u_range
 
+    @jaxtyped(typechecker=beartype)
     def action_callback(
         self, PRNG_key: Array, world: "World"
     ) -> tuple["Agent", "World"]:
@@ -223,6 +224,7 @@ class Agent(Entity):
         )
         return self, world
 
+    @jaxtyped(typechecker=beartype)
     def _spawn(self, dim_c: int, dim_p: int) -> "Agent":
         if dim_c == 0:
             assert (
@@ -232,12 +234,14 @@ class Agent(Entity):
             dim_c = 0
         return super(Agent, self)._spawn(dim_c=dim_c, dim_p=dim_p)
 
+    @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int) -> "Agent":
         self = self.replace(action=self.action._reset(env_index))
         self = self.replace(dynamics=self.dynamics.reset(env_index))
         return super(Agent, self)._reset(env_index)
 
     @chex.assert_max_traces(0)
+    @jaxtyped(typechecker=beartype)
     def render(self, env_index: int = 0) -> "list[Geom]":
         from jaxvmas.simulator import rendering
 

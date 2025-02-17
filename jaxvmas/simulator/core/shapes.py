@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, jaxtyped
 
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import X, Y
@@ -42,15 +43,19 @@ class Box(Shape):
     def width(self):
         return self._width
 
+    @jaxtyped(typechecker=beartype)
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
         return jnp.asarray([anchor[X] * self.length / 2, anchor[Y] * self.width / 2])
 
+    @jaxtyped(typechecker=beartype)
     def moment_of_inertia(self, mass: float):
         return (1 / 12) * mass * (self.length**2 + self.width**2)
 
+    @jaxtyped(typechecker=beartype)
     def circumscribed_radius(self):
         return jnp.sqrt((self.length / 2) ** 2 + (self.width / 2) ** 2)
 
+    @jaxtyped(typechecker=beartype)
     def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
 
@@ -73,6 +78,7 @@ class Sphere(Shape):
     def radius(self):
         return self._radius
 
+    @jaxtyped(typechecker=beartype)
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
         delta = jnp.array([anchor[X] * self.radius, anchor[Y] * self.radius])
         delta_norm = jnp.linalg.vector_norm(delta)
@@ -82,12 +88,14 @@ class Sphere(Shape):
         )
         return delta
 
+    @jaxtyped(typechecker=beartype)
     def moment_of_inertia(self, mass: float):
         return (1 / 2) * mass * self.radius**2
 
     def circumscribed_radius(self):
         return self.radius
 
+    @jaxtyped(typechecker=beartype)
     def get_geometry(self) -> "Geom":
         from jaxvmas.simulator import rendering
 
@@ -109,12 +117,15 @@ class Line(Shape):
     def width(self):
         return self._width
 
+    @jaxtyped(typechecker=beartype)
     def moment_of_inertia(self, mass: float) -> float:
         return (1 / 12) * mass * (self.length**2)
 
+    @jaxtyped(typechecker=beartype)
     def circumscribed_radius(self) -> float:
         return self.length / 2
 
+    @jaxtyped(typechecker=beartype)
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
         return jnp.asarray([anchor[X] * self.length / 2, 0.0])
 
