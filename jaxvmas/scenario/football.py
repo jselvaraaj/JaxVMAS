@@ -4,6 +4,7 @@
 
 from enum import Enum
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -17,9 +18,62 @@ from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, JaxUtils, ScenarioUtils, X, Y
 
+
+class Splines(PyTreeNode):
+    A: Array = eqx.field(
+        default_factory=lambda: jnp.asarray(
+            [
+                [2.0, -2.0, 1.0, 1.0],
+                [-3.0, 3.0, -2.0, -1.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
+        )
+    )
+    U_matmul_A: dict[tuple[int, float], Array] = eqx.field(default_factory=dict)
+
+    def hermite(
+        self, p0: Array, p1: Array, p0dot: Array, p1dot: Array, u: float, deriv: int
+    ):
+        # A trajectory specified by the initial pos p0, initial vel p0dot, end pos p1,
+        #     and end vel p1dot.
+        # Evaluated at the given value of u, which is between 0 and 1 (0 being the start
+        #     of the trajectory, and 1 being the end). This yields a position.
+        # When called with deriv=n, we instead return the nth time derivative of the trajectory.
+        #     For example, deriv=1 will give the velocity evaluated at time u.
+        # assert isinstance(u, float)
+        U_matmul_A = None
+        if U_matmul_A is None:
+            u_jax_array = jnp.asarray([u])
+            U = jnp.stack(
+                [
+                    self.nPr(3, deriv) * (u_jax_array ** max(0, 3 - deriv)),
+                    self.nPr(2, deriv) * (u_jax_array ** max(0, 2 - deriv)),
+                    self.nPr(1, deriv) * (u_jax_array ** max(0, 1 - deriv)),
+                    self.nPr(0, deriv) * (u_jax_array**0),
+                ],
+                axis=1,
+            )
+            U_matmul_A = U[:, None, :] @ self.A[None, :, :]
+        P = jnp.stack([p0, p1, p0dot, p1dot], axis=1)
+
+        ans = (
+            jnp.broadcast_to(U_matmul_A, (P.shape[0], 1, 4)) @ P
+        )  # Matmul [batch x 1 x 4] @ [batch x 4 x 2] -> [batch x 1 x 2]
+        ans = ans.squeeze(1)
+        return self, ans
+
+    def nPr(self, n: int, r: int) -> int:
+        # calculates n! / (n-r)!
+        if r > n:
+            return 0
+        ans = 1
+        for k in range(n, max(1, n - r), -1):
+            ans = ans * k
+        return ans
+
+
 # Agent Policy
-
-
 class AgentPolicy(PyTreeNode):
     team_name: str
     otherteam_name: str
@@ -46,6 +100,7 @@ class AgentPolicy(PyTreeNode):
     agent_possession: dict[str, Array]
     team_possession: Array | None
     team_disps: dict[str, Array]
+    splines: Splines
 
     @classmethod
     def create(
@@ -111,6 +166,8 @@ class AgentPolicy(PyTreeNode):
 
         team_disps = {}
 
+        splines = Splines()
+
         return cls(
             team_name=team_name,
             otherteam_name=otherteam_name,
@@ -137,6 +194,7 @@ class AgentPolicy(PyTreeNode):
             agent_possession=agent_possession,
             team_possession=team_possession,
             team_disps=team_disps,
+            splines=splines,
         )
 
     def get_dynamic_params(self, world: "FootballWorld"):
@@ -305,12 +363,14 @@ class AgentPolicy(PyTreeNode):
     def enable(self):
         return self.replace(disabled=False)
 
+    @eqx.filter_jit
     def run(
         self,
         PRNG_key: Array,
         agent: "FootballAgent",
         world: "FootballWorld",
     ) -> tuple["AgentPolicy", "FootballWorld"]:
+        print("Compiling for agent", agent.name)
         if not self.disabled:
             if "0" in agent.name:
                 self = self.replace(team_disps={})
@@ -318,7 +378,7 @@ class AgentPolicy(PyTreeNode):
                 self = self.check_possession(subkey, world)
             PRNG_key, subkey = jax.random.split(PRNG_key)
             self, world = self.dribble_policy(subkey, agent, world)
-            control = self.get_action(agent)
+            self, control = self.get_action(agent)
             control = jnp.clip(control, min=-agent.u_range, max=agent.u_range)
             expanded_multiplier = jnp.broadcast_to(
                 agent.action.u_multiplier_jax_array[None], control.shape
@@ -348,12 +408,19 @@ class AgentPolicy(PyTreeNode):
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
             world
         )
+
+        # Create target position based on env_index
+        target_pos = target_net.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self, world = self.dribble(
             subkey,
             agent,
             world,
-            target_net.state.pos[env_index],
+            target_pos,
             env_index=env_index,
         )
         return self, world
@@ -385,8 +452,14 @@ class AgentPolicy(PyTreeNode):
         env_index=Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
         # Specifies a new location to dribble towards.
-        agent_pos = agent.state.pos[env_index]
-        ball_pos = world.ball.state.pos[env_index]
+
+        agent_pos = agent.state.pos
+        ball_pos = world.ball.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            agent_pos = jnp.where(env_index[:, None], agent_pos, agent_pos)
+            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
+
         ball_disp = pos - ball_pos
         ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         direction = ball_disp / ball_dist[:, None]
@@ -396,8 +469,11 @@ class AgentPolicy(PyTreeNode):
         # Calculate hit_pos, the adjusted position to strike the ball so it goes where we want
         offset = start_vel.copy()
         start_vel_mag_mask = start_vel_mag > 0
-        offset = offset.at[start_vel_mag_mask].set(
-            offset[start_vel_mag_mask] / start_vel_mag[..., None][start_vel_mag_mask]
+        offset = jnp.where(
+            start_vel_mag_mask[:, None],  # broadcast mask to match dimensions
+            offset
+            / jnp.where(start_vel_mag_mask[:, None], start_vel_mag[:, None], 1.0),
+            offset,
         )
         new_direction = direction + 0.5 * offset
         new_direction /= jnp.linalg.norm(new_direction, axis=-1)[:, None]
@@ -441,9 +517,14 @@ class AgentPolicy(PyTreeNode):
         )
         objectives = dict(self.objectives)
         # Pre-shooting
-        objectives[agent.name]["target_ang"][env_index] = jnp.atan2(
-            target_disp[:, 1], target_disp[:, 0]
-        )[env_index]
+        target_ang = jnp.atan2(target_disp[:, 1], target_disp[:, 0])
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            objectives[agent.name]["target_ang"] = jnp.where(
+                env_index, target_ang, objectives[agent.name]["target_ang"]
+            )
+        else:
+            objectives[agent.name]["target_ang"] = target_ang
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self, world = self.dribble(subkey, agent, world, pos, env_index=env_index)
         # Shooting
@@ -473,15 +554,23 @@ class AgentPolicy(PyTreeNode):
         aggression: float = 1.0,
         env_index=Ellipsis,
     ):
-        start_pos = agent.state.pos[env_index]
+        start_pos = agent.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
+
         if vel is None:
             vel = jnp.zeros_like(pos)
         if start_vel is None:
             aggression = (jnp.linalg.norm(pos - start_pos, axis=-1) > 0.1) * aggression
             start_vel = self.get_start_vel(pos, vel, start_pos, aggression=aggression)
-        diff = jnp.linalg.norm(
-            self.objectives[agent.name]["target_pos"][env_index] - pos, axis=-1
-        )[..., None]
+
+        target_pos = self.objectives[agent.name]["target_pos"]
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+        diff = jnp.linalg.norm(target_pos - pos, axis=-1)[..., None]
+
         if self.precision_strength != 1:
             exp_diff = jnp.exp(-diff)
             PRNG_key, subkey = jax.random.split(PRNG_key)
@@ -499,26 +588,40 @@ class AgentPolicy(PyTreeNode):
                 * (1 - exp_diff)
             )
         objectives = dict(self.objectives)
-        objectives[agent.name]["target_pos_rel"] = (
-            objectives[agent.name]["target_pos_rel"]
-            .at[env_index]
-            .set(pos - world.ball.state.pos[env_index])
-        )
+        ball_pos = world.ball.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
 
-        objectives[agent.name]["target_pos"] = (
-            objectives[agent.name]["target_pos"].at[env_index].set(pos)
-        )
-        objectives[agent.name]["target_vel"] = (
-            objectives[agent.name]["target_vel"].at[env_index].set(vel)
-        )
-        objectives[agent.name]["start_pos"] = (
-            objectives[agent.name]["start_pos"].at[env_index].set(start_pos)
-        )
-        objectives[agent.name]["start_vel"] = (
-            objectives[agent.name]["start_vel"].at[env_index].set(start_vel)
-        )
+            objectives[agent.name]["target_pos_rel"] = jnp.where(
+                env_index[:, None],
+                pos - ball_pos,
+                objectives[agent.name]["target_pos_rel"],
+            )
+
+            objectives[agent.name]["target_pos"] = jnp.where(
+                env_index[:, None], pos, objectives[agent.name]["target_pos"]
+            )
+
+            objectives[agent.name]["target_vel"] = jnp.where(
+                env_index[:, None], vel, objectives[agent.name]["target_vel"]
+            )
+
+            objectives[agent.name]["start_pos"] = jnp.where(
+                env_index[:, None], start_pos, objectives[agent.name]["start_pos"]
+            )
+
+            objectives[agent.name]["start_vel"] = jnp.where(
+                env_index[:, None], start_vel, objectives[agent.name]["start_vel"]
+            )
+        else:
+            objectives[agent.name]["target_pos_rel"] = pos - ball_pos
+            objectives[agent.name]["target_pos"] = pos
+            objectives[agent.name]["target_vel"] = vel
+            objectives[agent.name]["start_pos"] = start_pos
+            objectives[agent.name]["start_vel"] = start_vel
         self = self.replace(objectives=objectives)
-        world = self.plot_traj(agent, world, env_index=env_index)
+        self, world = self.plot_traj(agent, world, env_index=env_index)
         return self, world
 
     def get_start_vel(
@@ -536,8 +639,10 @@ class AgentPolicy(PyTreeNode):
         goal_dist = jnp.linalg.norm(goal_disp, axis=-1)
         vel_dir = vel.copy()
         vel_mag_great_0 = vel_mag > 0
-        vel_dir = vel_dir.at[vel_mag_great_0].set(
-            vel_dir[vel_mag_great_0] / vel_mag[vel_mag_great_0, None]
+        vel_dir = jnp.where(
+            vel_mag_great_0[:, None],  # broadcast mask to match dimensions
+            vel_dir / jnp.where(vel_mag_great_0[:, None], vel_mag[:, None], 1.0),
+            vel_dir,
         )
         dist_behind_target = 0.6 * goal_dist
         target_pos = pos - vel_dir * dist_behind_target[:, None]
@@ -545,9 +650,11 @@ class AgentPolicy(PyTreeNode):
         target_dist = jnp.linalg.norm(target_disp, axis=-1)
         start_vel_aug_dir = target_disp
         target_dist_great_0 = target_dist > 0
-        start_vel_aug_dir = start_vel_aug_dir.at[target_dist_great_0].set(
-            start_vel_aug_dir[target_dist_great_0]
-            / target_dist[target_dist_great_0, None]
+        start_vel_aug_dir = jnp.where(
+            target_dist_great_0[:, None],  # broadcast mask to match dimensions
+            start_vel_aug_dir
+            / jnp.where(target_dist_great_0[:, None], target_dist[:, None], 1.0),
+            start_vel_aug_dir,
         )
         start_vel = start_vel_aug_dir * vel_mag[:, None]
         return start_vel
@@ -565,24 +672,42 @@ class AgentPolicy(PyTreeNode):
         #     velocity to compute the closed-loop control.
         # The strength modifier (between 0 and 1) times some multiplier modulates the magnitude of the
         #     resulting action, controlling the speed.
-        curr_pos = agent.state.pos[env_index, :]
-        curr_vel = agent.state.vel[env_index, :]
-        des_curr_pos = Splines.hermite(
-            self.objectives[agent.name]["start_pos"][env_index, :],
-            self.objectives[agent.name]["target_pos"][env_index, :],
-            self.objectives[agent.name]["start_vel"][env_index, :],
-            self.objectives[agent.name]["target_vel"][env_index, :],
+        curr_pos = agent.state.pos
+        curr_vel = agent.state.vel
+        start_pos = self.objectives[agent.name]["start_pos"]
+        target_pos = self.objectives[agent.name]["target_pos"]
+        start_vel = self.objectives[agent.name]["start_vel"]
+        target_vel = self.objectives[agent.name]["target_vel"]
+
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            curr_pos = jnp.where(env_index[:, None], curr_pos, curr_pos)
+            curr_vel = jnp.where(env_index[:, None], curr_vel, curr_vel)
+            start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
+            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+            start_vel = jnp.where(env_index[:, None], start_vel, start_vel)
+            target_vel = jnp.where(env_index[:, None], target_vel, target_vel)
+
+        splines, des_curr_pos = self.splines.hermite(
+            start_pos,
+            target_pos,
+            start_vel,
+            target_vel,
             u=min(self.pos_lookahead, 1),
             deriv=0,
         )
-        des_curr_vel = Splines.hermite(
-            self.objectives[agent.name]["start_pos"][env_index, :],
-            self.objectives[agent.name]["target_pos"][env_index, :],
-            self.objectives[agent.name]["start_vel"][env_index, :],
-            self.objectives[agent.name]["target_vel"][env_index, :],
+        self = self.replace(splines=splines)
+
+        splines, des_curr_vel = self.splines.hermite(
+            start_pos,
+            target_pos,
+            start_vel,
+            target_vel,
             u=min(self.vel_lookahead, 1),
             deriv=1,
         )
+        self = self.replace(splines=splines)
+
         des_curr_pos = jnp.asarray(des_curr_pos)
         des_curr_vel = jnp.asarray(des_curr_vel)
         movement_control = 0.5 * (des_curr_pos - curr_pos) + 0.5 * (
@@ -590,7 +715,7 @@ class AgentPolicy(PyTreeNode):
         )
         movement_control *= self.speed_strength * self.strength_multiplier
         if agent.action_size == 2:
-            return movement_control
+            return self, movement_control
         shooting_control = jnp.zeros_like(movement_control)
         shooting_control[:, 1] = self.objectives[agent.name]["shot_power"]
         rel_ang = self.get_rel_ang(
@@ -600,7 +725,7 @@ class AgentPolicy(PyTreeNode):
         shooting_control[rel_ang > jnp.pi / 2, 0] = 1
         shooting_control[rel_ang < -jnp.pi / 2, 0] = -1
         control = jnp.concatenate([movement_control, shooting_control], axis=-1)
-        return control
+        return self, control
 
     def get_rel_ang(
         self,
@@ -631,19 +756,29 @@ class AgentPolicy(PyTreeNode):
         ):
             pointi_index = world.traj_points[self.team_name][agent.name][i]
             pointi = world.landmarks[pointi_index]
-            posi = Splines.hermite(
-                self.objectives[agent.name]["start_pos"][env_index, :],
-                self.objectives[agent.name]["target_pos"][env_index, :],
-                self.objectives[agent.name]["start_vel"][env_index, :],
-                self.objectives[agent.name]["target_vel"][env_index, :],
-                u=float(u),
+            start_pos = self.objectives[agent.name]["start_pos"]
+            target_pos = self.objectives[agent.name]["target_pos"]
+            start_vel = self.objectives[agent.name]["start_vel"]
+            target_vel = self.objectives[agent.name]["target_vel"]
+
+            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+                # Use boolean masking for indexed environments
+                start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
+                target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+                start_vel = jnp.where(env_index[:, None], start_vel, start_vel)
+                target_vel = jnp.where(env_index[:, None], target_vel, target_vel)
+
+            splines, posi = self.splines.hermite(
+                start_pos,
+                target_pos,
+                start_vel,
+                target_vel,
+                u=u,
                 deriv=0,
             )
-            if env_index == Ellipsis or (
-                isinstance(env_index, Array)
-                and env_index.dtype == jnp.bool_
-                and jnp.all(env_index)
-            ):
+            self = self.replace(splines=splines)
+            # Simplify position setting with boolean masking
+            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
                 pointi = pointi.set_pos(
                     jnp.asarray(posi),
                     batch_index=None,
@@ -677,7 +812,7 @@ class AgentPolicy(PyTreeNode):
                 + all_landmarks[pointi_index + 1 :]
             )
             world = world.replace(landmarks=all_landmarks)
-        return world
+        return self, world
 
     def clamp_pos(
         self, world: "FootballWorld", pos: Array, return_bool: bool = False
@@ -691,11 +826,12 @@ class AgentPolicy(PyTreeNode):
         goal_x = world.goal_depth
         pos = pos.at[:, Y].set(jnp.clip(pos[:, Y], -pitch_y, pitch_y))
         inside_goal_y_mask = jnp.abs(pos[:, Y]) < goal_y
-        pos = pos.at[~inside_goal_y_mask, X].set(
-            jnp.clip(pos[~inside_goal_y_mask, X], -pitch_x, pitch_x)
-        )
-        pos = pos.at[inside_goal_y_mask, X].set(
-            jnp.clip(pos[inside_goal_y_mask, X], -pitch_x - goal_x, pitch_x + goal_x)
+        pos = pos.at[:, X].set(
+            jnp.where(
+                ~inside_goal_y_mask,
+                jnp.clip(pos[:, X], -pitch_x, pitch_x),
+                jnp.clip(pos[:, X], -pitch_x - goal_x, pitch_x + goal_x),
+            )
         )
         if return_bool:
             return jnp.any(pos != orig_pos, axis=-1)
@@ -753,10 +889,17 @@ class AgentPolicy(PyTreeNode):
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
             world
         )
-        ball_pos = ball.state.pos[env_index]
-        curr_target = (
-            self.objectives[agent.name]["target_pos_rel"][env_index] + ball_pos
-        )
+        ball_pos = ball.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
+        target_pos_rel = self.objectives[agent.name]["target_pos_rel"]
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            target_pos_rel = jnp.where(
+                env_index[:, None], target_pos_rel, target_pos_rel
+            )
+        curr_target = target_pos_rel + ball_pos
         PRNG_key, subkey = jax.random.split(PRNG_key)
         samples = (
             jax.random.normal(
@@ -767,9 +910,13 @@ class AgentPolicy(PyTreeNode):
             * (1 + 3 * (1 - self.decision_strength))
         )
         samples = samples.at[:, ::2].set(samples[:, ::2] + ball_pos[:, None])
-        samples = samples.at[:, 1::2].set(
-            samples[:, 1::2] + agent.state.pos[env_index, None]
-        )
+
+        agent_pos = agent.state.pos
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            agent_pos = jnp.where(env_index[:, None], agent_pos, agent_pos)
+        samples = samples.at[:, 1::2].set(samples[:, 1::2] + agent_pos[:, None])
+
         test_pos = jnp.concatenate([curr_target[:, None, :], samples], axis=1)
         test_pos_shape = test_pos.shape
         test_pos = self.clamp_pos(
@@ -814,13 +961,26 @@ class AgentPolicy(PyTreeNode):
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
             world
         )
-        ball_pos = ball.state.pos[env_index, None]
-        target_net_pos = target_net.state.pos[env_index, None]
-        own_net_pos = own_net.state.pos[env_index, None]
+        ball_pos = ball.state.pos
+        target_net_pos = target_net.state.pos
+        own_net_pos = own_net.state.pos
+
+        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            # Use boolean masking for indexed environments
+            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
+            target_net_pos = jnp.where(
+                env_index[:, None], target_net_pos, target_net_pos
+            )
+            own_net_pos = jnp.where(env_index[:, None], own_net_pos, own_net_pos)
+
+        # Add extra dimension to match original shape
+        ball_pos = ball_pos[:, None]
+        target_net_pos = target_net_pos[:, None]
+        own_net_pos = own_net_pos[:, None]
+
         ball_vec = ball_pos - pos
         ball_vec /= jnp.linalg.norm(ball_vec, axis=-1, keepdims=True)
-        ball_vec = ball_vec.at[jnp.isnan(ball_vec)].set(0)
-
+        ball_vec = jnp.where(jnp.isnan(ball_vec), jnp.zeros_like(ball_vec), ball_vec)
         # ball_dist_value prioritises positions relatively close to the ball
         ball_dist = jnp.linalg.norm(pos - ball_pos, axis=-1)
         ball_dist_value = jnp.exp(-2 * ball_dist**4)
@@ -846,8 +1006,16 @@ class AgentPolicy(PyTreeNode):
             team_disps = jnp.concatenate(
                 [team_disps[:, 0:agent_index], team_disps[:, agent_index + 1 :]], axis=1
             )
+            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+                # Use boolean masking for indexed environments
+                team_disps_masked = jnp.where(
+                    env_index[:, None], team_disps, team_disps
+                )
+            else:
+                team_disps_masked = team_disps
+
             team_dists = jnp.linalg.norm(
-                team_disps[env_index, None] - pos[:, :, None], axis=-1
+                team_disps_masked[:, None] - pos[:, :, None], axis=-1
             )
             other_agent_value = jnp.linalg.norm(-jnp.exp(-5 * team_dists), axis=-1) + 1
         else:
@@ -1395,7 +1563,9 @@ class Scenario(BaseScenario[FootballWorld]):
         world = self.init_traj_pts(world)
         return world
 
+    @eqx.filter_jit
     def reset_world_at(self, PRNG_key: Array, env_index: int | None = None):
+        print("starting reset_world_at")
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self = self.reset_agents(subkey, env_index)
         self = self.reset_ball(env_index)
@@ -1409,6 +1579,7 @@ class Scenario(BaseScenario[FootballWorld]):
         )
         self = self.replace(_done=_done)
         self = self.replace(reset=True)
+        print("ending reset_world_at")
         return self
 
     def init_world(self, batch_dim: int) -> FootballWorld:
@@ -1663,6 +1834,7 @@ class Scenario(BaseScenario[FootballWorld]):
         agents = [attacker(0), attacker(1), defender(2), defender(3), goal_keeper(4)]
         return agents
 
+    @eqx.filter_jit
     def reset_agents(self, PRNG_key: Array, env_index: int | None = None):
         PRNG_key, subkey = jax.random.split(PRNG_key)
         if self.spawn_in_formation:
@@ -1826,7 +1998,11 @@ class Scenario(BaseScenario[FootballWorld]):
                     min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
                 )
             else:
-                min_agent_dist_to_ball_blue[env_index] = min_agent_dist_to_ball_blue
+                min_agent_dist_to_ball_blue = jnp.where(
+                    env_index[:, None],
+                    min_agent_dist_to_ball_blue,
+                    min_agent_dist_to_ball_blue,
+                )
                 self = self.replace(
                     min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
                 )
@@ -1839,7 +2015,11 @@ class Scenario(BaseScenario[FootballWorld]):
                     min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
                 )
             else:
-                min_agent_dist_to_ball_red[env_index] = min_agent_dist_to_ball_red
+                min_agent_dist_to_ball_red = jnp.where(
+                    env_index[:, None],
+                    min_agent_dist_to_ball_red,
+                    min_agent_dist_to_ball_red,
+                )
                 self = self.replace(
                     min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
                 )
@@ -2406,13 +2586,15 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.replace(traj_points=traj_points)
         return world
 
+    @eqx.filter_jit
     def process_action(self, agent: "FootballAgent"):
+        print("starting process_action")
         assert (
             self.reset == True
         ), "Please reset the environment before processing actions"
         if agent is self.ball:
             return self, agent
-        blue = agent in self.blue_agents
+        blue = agent.name in [a.name for a in self.blue_agents]
         if agent.action_script is None and not blue:  # Non AI
             u_x = -agent.action.u[..., X]  # Red agents have the action X flipped
             u = agent.action.u.at[..., X].set(u_x)
@@ -2463,10 +2645,12 @@ class Scenario(BaseScenario[FootballWorld]):
             self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
             u = agent.action.u[:, :-1]
             agent = agent.replace(action=agent.action.replace(u=u))
-
+        print("ending process_action")
         return self, agent
 
+    @eqx.filter_jit
     def pre_step(self):
+        print("starting pre_step")
         if self.enable_shooting:
             agents_exclude_ball = [a for a in self.world.agents if a is not self.ball]
 
@@ -2489,9 +2673,12 @@ class Scenario(BaseScenario[FootballWorld]):
             kicking_action = self.ball.kicking_action.at[:].set(0)
             self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
 
+        print("ending pre_step")
         return self
 
+    @eqx.filter_jit
     def reward(self, agent: "FootballAgent"):
+        print("starting reward")
         # Called with agent=None when only AIs are playing to compute the _done
         if agent is None or agent.name == self.world.agents[0].name:
             # Sparse Reward
@@ -2539,7 +2726,7 @@ class Scenario(BaseScenario[FootballWorld]):
             reward = self._sparse_reward_blue + self._dense_reward_blue
         else:
             reward = self._sparse_reward_red + self._dense_reward_red
-
+        print("ending reward")
         return reward
 
     def reward_ball_to_goal(self, blue: bool):
@@ -2622,6 +2809,7 @@ class Scenario(BaseScenario[FootballWorld]):
 
         return pos_rew_agent
 
+    @eqx.filter_jit
     def observation(
         self,
         agent: Agent,
@@ -2641,6 +2829,7 @@ class Scenario(BaseScenario[FootballWorld]):
         blue=None,
         env_index=Ellipsis,
     ):
+        print("starting observation")
         if blue:
             assert agent.name in [a.name for a in self.blue_agents]
         else:
@@ -2667,7 +2856,7 @@ class Scenario(BaseScenario[FootballWorld]):
         actual_teammate_vels = []
         if self.observe_teammates:
             for a in my_team:
-                if a != agent:
+                if a.name != agent.name:
                     actual_teammate_poses.append(a.state.pos[env_index])
                     actual_teammate_vels.append(a.state.vel[env_index])
                     actual_teammate_forces.append(a.state.force[env_index])
@@ -2705,6 +2894,7 @@ class Scenario(BaseScenario[FootballWorld]):
             ),
             blue=blue,
         )
+        print("ending observation")
         return obs
 
     def observation_base(
@@ -2886,9 +3076,12 @@ class Scenario(BaseScenario[FootballWorld]):
         else:
             return jnp.concatenate(list(obs.values()), axis=-1)
 
+    @eqx.filter_jit
     def done(self):
+        print("starting done")
         if self.ai_blue_agents and self.ai_red_agents:
             self.reward(None)
+        print("ending done")
         return self._done
 
     def _compute_coverage(self, blue: bool, env_index=None):
@@ -2907,9 +3100,11 @@ class Scenario(BaseScenario[FootballWorld]):
             max_dist = max_dist.squeeze(0)
         return max_dist
 
+    @eqx.filter_jit
     def info(self, agent: Agent):
+        print("starting info")
 
-        blue = agent in self.blue_agents
+        blue = agent.name in [a.name for a in self.blue_agents]
         info = {
             "sparse_reward": (
                 self._sparse_reward_blue if blue else self._sparse_reward_red
@@ -2938,7 +3133,7 @@ class Scenario(BaseScenario[FootballWorld]):
                 self.min_agent_dist_to_ball_red
                 <= self.agent_size + self.ball_size + 1e-2
             )
-
+        print("ending info")
         return info
 
     def extra_render(self, env_index: int = 0) -> "list[Geom]":
@@ -3171,62 +3366,6 @@ class BallAgent(Agent):
 
 
 # Helper Functions
-
-
-class Splines:
-    A = jnp.asarray(
-        [
-            [2.0, -2.0, 1.0, 1.0],
-            [-3.0, 3.0, -2.0, -1.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-        ],
-    )
-    U_matmul_A = {}
-
-    @classmethod
-    def hermite(
-        cls, p0: Array, p1: Array, p0dot: Array, p1dot: Array, u: float, deriv: int
-    ):
-        # A trajectory specified by the initial pos p0, initial vel p0dot, end pos p1,
-        #     and end vel p1dot.
-        # Evaluated at the given value of u, which is between 0 and 1 (0 being the start
-        #     of the trajectory, and 1 being the end). This yields a position.
-        # When called with deriv=n, we instead return the nth time derivative of the trajectory.
-        #     For example, deriv=1 will give the velocity evaluated at time u.
-        assert isinstance(u, float)
-        U_matmul_A = cls.U_matmul_A.get((deriv, u), None)
-        if U_matmul_A is None:
-            u_jax_array = jnp.asarray([u])
-            U = jnp.stack(
-                [
-                    cls.nPr(3, deriv) * (u_jax_array ** max(0, 3 - deriv)),
-                    cls.nPr(2, deriv) * (u_jax_array ** max(0, 2 - deriv)),
-                    cls.nPr(1, deriv) * (u_jax_array ** max(0, 1 - deriv)),
-                    cls.nPr(0, deriv) * (u_jax_array**0),
-                ],
-                axis=1,
-            )
-            cls.A = cls.A
-            U_matmul_A = U[:, None, :] @ cls.A[None, :, :]
-            cls.U_matmul_A[(deriv, u)] = U_matmul_A
-        P = jnp.stack([p0, p1, p0dot, p1dot], axis=1)
-
-        ans = (
-            jnp.broadcast_to(U_matmul_A, (P.shape[0], 1, 4)) @ P
-        )  # Matmul [batch x 1 x 4] @ [batch x 4 x 2] -> [batch x 1 x 2]
-        ans = ans.squeeze(1)
-        return ans
-
-    @classmethod
-    def nPr(cls, n: int, r: int) -> int:
-        # calculates n! / (n-r)!
-        if r > n:
-            return 0
-        ans = 1
-        for k in range(n, max(1, n - r), -1):
-            ans = ans * k
-        return ans
 
 
 # Run

@@ -100,6 +100,7 @@ class InteractiveEnv:
         total_rew = [0] * self.n_agents
         PRNG_key = jax.random.PRNGKey(0)
         while True:
+            print("starting cycle")
             if self.reset:
                 if self.save_render:
                     save_video(
@@ -130,6 +131,7 @@ class InteractiveEnv:
 
             PRNG_key, subkey = jax.random.split(PRNG_key)
             self.env, env_data = self.env.step(subkey, action_list)
+            print("finished step cycle")
             obs, rew, terminated, truncated, info = (
                 env_data.obs,
                 env_data.rews,

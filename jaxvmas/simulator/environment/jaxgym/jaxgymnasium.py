@@ -8,6 +8,7 @@ Ensures all operations are jittable and compatible with JAX transformations.
 """
 
 
+import equinox as eqx
 import jax
 from jaxtyping import Array, PyTree
 
@@ -58,6 +59,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
     def unwrapped(self) -> Environment:
         return self.env
 
+    @eqx.filter_jit
     def step(
         self, PRNG_key: Array, action: list
     ) -> tuple["JaxGymnasiumWrapper", EnvData]:

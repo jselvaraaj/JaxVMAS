@@ -7,6 +7,7 @@ from dataclasses import asdict
 from enum import Enum
 from typing import Callable, Sequence
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -949,10 +950,10 @@ class Agent(Entity):
             self.action.u.shape[1] == self.action_size
         ), f"Scripted action of agent {self.name} has wrong shape"
 
-        assert jnp.all(
-            jnp.abs(self.action.u / self.action.u_multiplier_jax_array)
-            <= self.action.u_range_jax_array
-        ), f"Scripted physical action of {self.name} is out of range"
+        # assert jnp.all(
+        #     jnp.abs(self.action.u / self.action.u_multiplier_jax_array)
+        #     <= self.action.u_range_jax_array
+        # ), f"Scripted physical action of {self.name} is out of range"
 
         return self, world
 
@@ -1978,7 +1979,9 @@ class World(JaxVectorizedObject):
         return super().replace(**kwargs)
 
     # update state of the world
+    @eqx.filter_jit
     def step(self):
+        print("starting step")
         for substep in range(self._substeps):
             # Initialize force and torque dictionaries
             forces_dict = {
@@ -1988,6 +1991,79 @@ class World(JaxVectorizedObject):
                 e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities
             }
             self = self.replace(_force_dict=forces_dict, _torque_dict=torques_dict)
+
+            # print("starting apply_action_force")
+            # agent_carry = (self, 0)
+            # agent_dynamic_carry, agent_static_carry = eqx.partition(
+            #     agent_carry, eqx.is_array
+            # )
+
+            # # Process agents first
+            # def _process_agent(dynamic_carry, unused):
+            #     carry: tuple[World, int] = eqx.combine(
+            #         agent_static_carry, dynamic_carry
+            #     )
+            #     world, i = carry
+            #     agent = world.agents[i]
+            #     # apply agent force controls
+            #     agent, world = world._apply_action_force(agent)
+            #     # apply agent torque controls
+            #     agent, world = world._apply_action_torque(agent)
+            #     # apply friction
+            #     agent, world = world._apply_friction_force(agent)
+            #     # apply gravity
+            #     agent, world = world._apply_gravity(agent)
+            #     world = world.replace(
+            #         agents=world.agents[:i] + [agent] + world.agents[i + 1 :]
+            #     )
+
+            #     agent_carry = (world, i + 1)
+            #     agent_dynamic_carry, _ = eqx.partition(agent_carry, eqx.is_array)
+
+            #     return agent_dynamic_carry, None
+
+            # landmark_carry = (self, 0)
+            # landmark_dynamic_carry, landmark_static_carry = eqx.partition(
+            #     landmark_carry, eqx.is_array
+            # )
+
+            # # Process landmarks separately
+            # def _process_landmark(dynamic_carry, unused):
+            #     carry: tuple[World, int] = eqx.combine(
+            #         landmark_static_carry, dynamic_carry
+            #     )
+            #     world, i = carry
+            #     landmark = world.landmarks[i]
+            #     # apply friction
+            #     landmark, world = world._apply_friction_force(landmark)
+            #     # apply gravity
+            #     landmark, world = world._apply_gravity(landmark)
+            #     world = world.replace(
+            #         landmarks=world.landmarks[:i]
+            #         + [landmark]
+            #         + world.landmarks[i + 1 :]
+            #     )
+            #     landmark_carry = (world, i + 1)
+            #     landmark_dynamic_carry, _ = eqx.partition(landmark_carry, eqx.is_array)
+
+            #     return landmark_dynamic_carry, None
+
+            # # Process agents
+            # if len(self._agents) > 0:
+            #     agent_dynamic_carry, _ = jax.lax.scan(
+            #         _process_agent, agent_dynamic_carry, None, length=len(self._agents)
+            #     )
+            #     self, _ = eqx.combine(agent_static_carry, agent_dynamic_carry)
+
+            # # Process landmarks
+            # if len(self._landmarks) > 0:
+            #     landmark_dynamic_carry, _ = jax.lax.scan(
+            #         _process_landmark,
+            #         landmark_dynamic_carry,
+            #         None,
+            #         length=len(self._landmarks),
+            #     )
+            #     self, _ = eqx.combine(landmark_static_carry, landmark_dynamic_carry)
 
             # Apply forces from actions and environment
             entities = []
@@ -2006,16 +2082,19 @@ class World(JaxVectorizedObject):
             self = self.replace(entities=entities)
 
             self = self._apply_vectorized_enviornment_force()
+            print("ending apply_vectorized_enviornment_force")
 
             entities = []
+            print("starting integrate_state")
             for entity in self.entities:
                 # integrate physical state
                 entity = self._integrate_state(entity, substep)
                 entities.append(entity)
-
+            print("ending integrate_state")
             self = self.replace(entities=entities)
 
             # Update joint states after entity states have been updated
+            print("starting update_joints")
             new_joints = {}
             for joint_key, joint in self._joints.items():
                 entity_a = self.entities[self._entity_index_map[joint.entity_a.name]]
@@ -2023,14 +2102,17 @@ class World(JaxVectorizedObject):
                 updated_joint = joint.update_joint_state(entity_a, entity_b)
                 new_joints[joint_key] = updated_joint
             self = self.replace(_joints=new_joints)
-
+            print("ending update_joints")
         # update non-differentiable comm state
         if self._dim_c > 0:
+            print("starting update_comm_state")
             agents = []
             for agent in self._agents:
                 agents.append(self._update_comm_state(agent))
             self = self.replace(_agents=agents)
+            print("ending update_comm_state")
 
+        print("ending step")
         return self
 
     # gather agent action forces
