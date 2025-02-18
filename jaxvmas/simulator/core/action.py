@@ -39,7 +39,7 @@ class Action(JaxVectorizedObject):
         u_multiplier: float | Sequence[float],
         u_noise: float | Sequence[float],
     ):
-        chex.assert_scalar_positive(action_size)
+        chex.assert_scalar_non_negative(action_size)
         chex.assert_scalar_non_negative(comm_dim)
         chex.assert_scalar_positive(batch_dim)
 
@@ -119,9 +119,9 @@ class Action(JaxVectorizedObject):
     def replace(self, **kwargs):
         if "u" in kwargs:
             u = kwargs["u"]
-            chex.assert_shape(u, (self.batch_dim, None))
+            chex.assert_shape(u, (self.batch_dim, self.action_size))
         elif "c" in kwargs:
             c = kwargs["c"]
-            chex.assert_shape(c, (self.batch_dim, None))
+            chex.assert_shape(c, (self.batch_dim, self.comm_dim))
 
         return super().replace(**kwargs)

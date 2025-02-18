@@ -46,6 +46,7 @@ class Agent(Entity):
     dynamics: Dynamics
     action_size: int
     discrete_action_nvec: list[int]
+    is_scripted_agent: bool
 
     @classmethod
     def create(
@@ -73,9 +74,9 @@ class Agent(Entity):
         u_noise: float | Sequence[float] = 0.0,
         u_range: float | Sequence[float] = 1.0,
         u_multiplier: float | Sequence[float] = 1.0,
-        action_script: Callable[[Array, "Agent", "World"], tuple["Agent", "World"]] = (
-            lambda _PRNG_key, *_: _
-        ),
+        action_script: (
+            Callable[[Array, "Agent", "World"], tuple["Agent", "World"]] | None
+        ) = None,
         sensors: list[Sensor] | None = None,
         c_noise: float = 0.0,
         silent: bool = True,
@@ -112,6 +113,10 @@ class Agent(Entity):
             collision_filter=collision_filter,
         )
 
+        is_scripted_agent = action_script is None
+        action_script = (
+            (lambda _PRNG_key, *_: _) if action_script is None else action_script
+        )
         # agents sensors
         sensors = [] if sensors is None else sensors
 
@@ -193,6 +198,7 @@ class Agent(Entity):
                     "dynamics": dynamics,
                     "action_size": action_size,
                     "discrete_action_nvec": discrete_action_nvec,
+                    "is_scripted_agent": is_scripted_agent,
                 }
             )
         )

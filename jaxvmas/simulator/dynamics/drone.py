@@ -5,14 +5,17 @@
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, jaxtyped
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core.core import Agent, World
+    from jaxvmas.simulator.core.agent import Agent
+    from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import JaxUtils, X, Y
 
 
+@jaxtyped(typechecker=beartype)
 class Drone(Dynamics):
     integration: str
     I_xx: float
@@ -31,7 +34,7 @@ class Drone(Dynamics):
         I_yy: float = 8.1e-3,
         I_zz: float = 14.2e-3,
         integration: str = "rk4",
-    ):
+    ) -> "Drone":
 
         assert integration in (
             "rk4",
@@ -48,17 +51,18 @@ class Drone(Dynamics):
         drone_state = jnp.zeros((batch_dim, 12))
         return cls(integration, I_xx, I_yy, I_zz, g, dt, batch_dim, drone_state)
 
-    def reset(self, index: Array | int | None = None) -> "Drone":
-        if index is None:
-            # Drone state: phi(roll), theta (pitch), psi (yaw),
-            #              p (roll_rate), q (pitch_rate), r (yaw_rate),
-            #              x_dot (vel_x), y_dot (vel_y), z_dot (vel_z),
-            #              x (pos_x), y (pos_y), z (pos_z)
-            drone_state = jnp.zeros((self.batch_dim, 12))
-            self = self.replace(drone_state=drone_state)
-        else:
-            drone_state = JaxUtils.where_from_index(index, 0.0, self.drone_state)
-            self = self.replace(drone_state=drone_state)
+    @jaxtyped(typechecker=beartype)
+    def reset(self, index: Array | int | float = jnp.nan) -> "Drone":
+        # Drone state: phi(roll), theta (pitch), psi (yaw),
+        #              p (roll_rate), q (pitch_rate), r (yaw_rate),
+        #              x_dot (vel_x), y_dot (vel_y), z_dot (vel_z),
+        #              x (pos_x), y (pos_y), z (pos_z)
+        drone_state = JaxUtils.where_from_index(
+            index,
+            jnp.zeros_like(self.drone_state),
+            self.drone_state,
+        )
+        self = self.replace(drone_state=drone_state)
         return self
 
     def f(
@@ -112,6 +116,7 @@ class Drone(Dynamics):
             axis=-1,
         )
 
+    @jaxtyped(typechecker=beartype)
     def needs_reset(self) -> Array:
         # Constraint roll and pitch within +-30 degrees
         return jnp.any(jnp.abs(self.drone_state[:, :2]) > 30 * (jnp.pi / 180), axis=-1)

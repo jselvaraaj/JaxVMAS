@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
@@ -157,8 +158,8 @@ class TestWorld:
             batch_dim=2,
             entity_a=agent1,
             entity_b=agent2,
-            anchor_a=(0, 0),
-            anchor_b=(0, 0),
+            anchor_a=(0.0, 0.0),
+            anchor_b=(0.0, 0.0),
             dist=1.0,
         )
         world = world.add_joint(joint)
@@ -194,7 +195,8 @@ class TestWorld:
         world = world.replace(agents=[agent])
 
         # Step world and check if position is constrained
-        world = world.step()
+        with jax.disable_jit():
+            world = world.step()
         assert jnp.all(jnp.abs(world.agents[0].state.pos) <= 1.0)
 
     def test_collision_response(self):
@@ -228,7 +230,7 @@ class TestWorld:
         )
 
         world = World.create(batch_dim=1, substeps=10)
-        world = world.replace(_agents=[agent1, agent2])
+        world = world.replace(agents=[agent1, agent2])
         initial_dist = jnp.linalg.norm(
             world.agents[0].state.pos - world.agents[1].state.pos
         )
@@ -246,21 +248,25 @@ class TestWorld:
     def test_joint_constraint_satisfaction(self):
         # Create joined agents
         agent1 = Agent.create(batch_dim=1, name="joint1", dim_p=2, dim_c=0)
-        agent1 = agent1.replace(state=agent1.state.replace(pos=jnp.array([[0.0, 0.0]])))
-
         agent2 = Agent.create(batch_dim=1, name="joint2", dim_p=2, dim_c=0)
-        agent2 = agent2.replace(state=agent2.state.replace(pos=jnp.array([[0.5, 0.0]])))
-
         world = World.create(
             batch_dim=1,
+            dt=0.1,
             substeps=10,  # Higher substeps for joint stability
             joint_force=500.0,  # Increase joint force for stronger constraint
             linear_friction=0.0,  # Remove friction to allow easier movement
             drag=0.1,  # Reduce drag for smoother motion
         )
-
-        world = world.replace(agents=[agent1, agent2])
+        world = world.add_agent(agent1).add_agent(agent2)
         world = world.reset()
+        world = world.replace(
+            agents=[
+                agent1.replace(
+                    state=agent1.state.replace(pos=jnp.array([[-0.5, 0.0]]))
+                ),
+                agent2.replace(state=agent2.state.replace(pos=jnp.array([[0.5, 0.0]]))),
+            ]
+        )
 
         # Add joint constraint
         from jaxvmas.simulator.joints import JointConstraint
@@ -269,8 +275,8 @@ class TestWorld:
         constraint = JointConstraint.create(
             entity_a=agent1,
             entity_b=agent2,
-            anchor_a=(0, 0),
-            anchor_b=(0, 0),
+            anchor_a=(0.0, 0.0),
+            anchor_b=(0.0, 0.0),
             dist=0.5,  # Target distance
         )
         world = world.replace(
@@ -278,7 +284,9 @@ class TestWorld:
         )
 
         # Step and verify joint constraint
-        stepped_world = world.step()
+        stepped_world = world
+        for _ in range(100):
+            stepped_world = stepped_world.step()
 
         # Distance between agents should be close to joint distance
         final_dist = jnp.linalg.norm(
@@ -324,7 +332,7 @@ class TestWorld:
         def step_with_force(world: World):
             agent = world.agents[0]
             agent = agent.replace(state=agent.state.replace(force=jnp.ones((2, 2))))
-            world = world.replace(_agents=[agent])
+            world = world.replace(agents=[agent])
             return world.step()
 
         stepped_world = step_with_force(world)
@@ -359,13 +367,13 @@ class TestWorld:
                 movable=True,
             )
             world = world.add_agent(agent2)
-            world = world.replace(_substeps=2)
+            world = world.replace(substeps=2)
             joint = Joint.create(
                 batch_dim=2,
                 entity_a=world.agents[0],
                 entity_b=world.agents[1],
-                anchor_a=(0, 0),
-                anchor_b=(0, 0),
+                anchor_a=(0.0, 0.0),
+                anchor_b=(0.0, 0.0),
                 dist=1.0,
             )
             world = world.add_joint(joint)
@@ -382,8 +390,8 @@ class TestWorld:
         def step_with_boundaries(world: World, pos: Array):
             agent = world.agents[0]
             agent = agent.replace(state=agent.state.replace(pos=pos))
-            world = world.replace(_agents=[agent])
-            world = world.replace(_x_semidim=1.0, _y_semidim=1.0)
+            world = world.replace(agents=[agent])
+            world = world.replace(x_semidim=1.0, y_semidim=1.0)
             return world.step()
 
         boundary_world = step_with_boundaries(
@@ -394,7 +402,7 @@ class TestWorld:
         # Test jit compatibility with multiple substeps
         @eqx.filter_jit
         def step_with_substeps(world: World, substeps: int):
-            return world.replace(_substeps=substeps).step()
+            return world.replace(substeps=substeps).step()
 
         multi_step_world = step_with_substeps(world, 5)
         assert isinstance(multi_step_world, World)

@@ -214,7 +214,7 @@ class JaxUtils:
             return jnp.where(mask, new_value, old_value)
 
         return jax.lax.cond(
-            jnp.isnan(env_index),
+            jnp.isnan(env_index).all(),
             env_index_is_nan,
             env_index_is_not_nan,
             env_index,

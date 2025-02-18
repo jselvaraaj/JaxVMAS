@@ -6,6 +6,8 @@
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+from beartype import beartype
+from jaxtyping import jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator import rendering
@@ -15,13 +17,10 @@ if TYPE_CHECKING:
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
 
-# Type dimensions
-batch_dim = "batch"
-pos_dim = "pos"
-
 UNCOLLIDABLE_JOINT_RENDERING_WIDTH = 1
 
 
+@jaxtyped(typechecker=beartype)
 class Joint(PyTreeNode):
     entity_a: "Entity"
     entity_b: "Entity"
@@ -121,7 +120,7 @@ class Joint(PyTreeNode):
                 JointConstraint.create(
                     self.landmark,
                     entity_a,
-                    anchor_a=(-1, 0),
+                    anchor_a=(-1.0, 0.0),
                     anchor_b=anchor_a,
                     dist=0.0,
                     rotate=rotate_a,
@@ -130,7 +129,7 @@ class Joint(PyTreeNode):
                 JointConstraint.create(
                     self.landmark,
                     entity_b,
-                    anchor_a=(1, 0),
+                    anchor_a=(1.0, 0.0),
                     anchor_b=anchor_b,
                     dist=0.0,
                     rotate=rotate_b,
@@ -189,6 +188,7 @@ class Joint(PyTreeNode):
 
 
 # Private class: do not instantiate directly
+@jaxtyped(typechecker=beartype)
 class JointConstraint(PyTreeNode):
     """
     This is an uncollidable constraint that bounds two entities in the specified anchor points at the specified distance

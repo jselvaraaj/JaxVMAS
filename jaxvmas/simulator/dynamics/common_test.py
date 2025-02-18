@@ -59,6 +59,11 @@ class TestDynamicsClass:
     def test_check_and_process_action_valid(
         self, basic_dynamics: Dynamics, basic_agent: Agent
     ):
+        basic_agent = basic_agent.replace(
+            action=basic_agent.action.replace(
+                u=jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+            )
+        )
         # Test valid action processing
         dynamics, agent = basic_dynamics.check_and_process_action(basic_agent)
 

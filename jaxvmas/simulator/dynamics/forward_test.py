@@ -15,13 +15,17 @@ class TestForwardDynamics:
 
     @pytest.fixture
     def basic_agent(self):
-        return Agent.create(
+        agent = Agent.create(
             batch_dim=2,
             name="test_agent",
             dim_c=0,
             dim_p=2,
             action_size=2,  # Larger than needed_action_size for testing
         )
+        agent = agent.replace(
+            action=agent.action.replace(u=jnp.array([[1.0, 2.0], [3.0, 4.0]]))
+        )
+        return agent
 
     def test_create(self, basic_dynamics: Forward):
         assert isinstance(basic_dynamics, Forward)
@@ -64,7 +68,7 @@ class TestForwardDynamics:
             dim_p=2,
             action_size=0,  # Less than needed_action_size
         )
-
+        agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 0))))
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
             basic_dynamics.check_and_process_action(agent)
@@ -141,7 +145,7 @@ class TestForwardDynamics:
 
         # Test with different rotations
         rotations = [0.0, jnp.pi / 2, jnp.pi, 3 * jnp.pi / 2]
-        action = jnp.array([[1.0, 0.0]])  # Forward action
+        action = jnp.asarray([[1.0, 0.0]])  # Forward action
 
         for rot in rotations:
             agent = agent.replace(

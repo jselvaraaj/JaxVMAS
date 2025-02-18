@@ -218,7 +218,10 @@ class TestDroneDynamics:
         # Set some non-zero position and rotation
         pos = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         rot = jnp.array([[0.5], [0.6]])
-        agent = agent.replace(state=agent.state.replace(pos=pos, rot=rot))
+        agent = agent.replace(
+            state=agent.state.replace(pos=pos, rot=rot),
+            action=agent.action.replace(u=jnp.zeros((2, 4))),
+        )
 
         dynamics, _ = basic_dynamics.check_and_process_action(agent)
 

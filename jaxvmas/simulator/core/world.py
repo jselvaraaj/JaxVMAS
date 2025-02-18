@@ -230,12 +230,12 @@ class World(JaxVectorizedObject):
     # return all agents controllable by external policies
     @property
     def policy_agents(self) -> list[Agent]:
-        return [agent for agent in self.agents if agent.action_script is None]
+        return [agent for agent in self.agents if not agent.is_scripted_agent]
 
     # return all agents controlled by world scripts
     @property
     def scripted_agents(self) -> list[Agent]:
-        return [agent for agent in self.agents if agent.action_script is not None]
+        return [agent for agent in self.agents if agent.is_scripted_agent]
 
     @jaxtyped(typechecker=beartype)
     def cast_ray(
@@ -744,10 +744,16 @@ class World(JaxVectorizedObject):
         forces_dict = {**self.force_dict}
         if agent.movable:
             force = agent.state.force
-            if agent.max_f is not None:
-                force = JaxUtils.clamp_with_norm(force, agent.max_f)
-            if agent.f_range is not None:
-                force = jnp.clip(force, -agent.f_range, agent.f_range)
+            force = jnp.where(
+                ~jnp.isnan(agent.max_f),
+                JaxUtils.clamp_with_norm(force, agent.max_f),
+                force,
+            )
+            force = jnp.where(
+                ~jnp.isnan(agent.f_range),
+                jnp.clip(force, -agent.f_range, agent.f_range),
+                force,
+            )
             forces_dict[agent.name] = forces_dict[agent.name] + force
             agent = agent.replace(state=agent.state.replace(force=force))
         return agent, self.replace(force_dict=forces_dict)
@@ -756,22 +762,20 @@ class World(JaxVectorizedObject):
     def _apply_action_torque(self, agent: Agent):
         torques_dict = {**self.torque_dict}
         if agent.rotatable:
-            if agent.max_t is not None:
-                agent = agent.replace(
-                    state=agent.state.replace(
-                        torque=JaxUtils.clamp_with_norm(agent.state.torque, agent.max_t)
-                    )
-                )
-            if agent.t_range is not None:
-                agent = agent.replace(
-                    state=agent.state.replace(
-                        torque=jnp.clip(
-                            agent.state.torque, -agent.t_range, agent.t_range
-                        )
-                    )
-                )
+            torque = agent.state.torque
+            torque = jnp.where(
+                ~jnp.isnan(agent.max_t),
+                JaxUtils.clamp_with_norm(torque, agent.max_t),
+                torque,
+            )
+            torque = jnp.where(
+                ~jnp.isnan(agent.t_range),
+                jnp.clip(torque, -agent.t_range, agent.t_range),
+                torque,
+            )
 
-            torques_dict[agent.name] = torques_dict[agent.name] + agent.state.torque
+            torques_dict[agent.name] = torques_dict[agent.name] + torque
+            agent = agent.replace(state=agent.state.replace(torque=torque))
         return agent, self.replace(torque_dict=torques_dict)
 
     @jaxtyped(typechecker=beartype)
@@ -783,10 +787,12 @@ class World(JaxVectorizedObject):
         if entity.movable:
             gravity_force = entity.mass * self.gravity
             forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
-            if entity.gravity is not None:
-                forces_dict[entity.name] = (
-                    forces_dict[entity.name] + entity.mass * entity.gravity
-                )
+            gravity_force = jnp.where(
+                ~jnp.isnan(entity.gravity),
+                entity.mass * entity.gravity,
+                jnp.zeros_like(entity.gravity),
+            )
+            forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
         return entity, self.replace(force_dict=forces_dict)
 
     @jaxtyped(typechecker=beartype)
@@ -981,7 +987,7 @@ class World(JaxVectorizedObject):
     @jaxtyped(typechecker=beartype)
     def _vectorized_joint_constraints(
         self,
-        joints: list[Joint],
+        joints: list[JointConstraint],
     ):
         if len(joints):
             pos_a = []
@@ -1125,10 +1131,10 @@ class World(JaxVectorizedObject):
                 self = self.update_env_forces(
                     entity_a,
                     force_a[:, i],
-                    0,
+                    jnp.asarray(0.0),
                     entity_b,
                     force_b[:, i],
-                    0,
+                    jnp.asarray(0.0),
                 )
 
         return self
@@ -1189,7 +1195,7 @@ class World(JaxVectorizedObject):
                     torque_line[:, i],
                     entity_b,
                     force_sphere[:, i],
-                    0,
+                    jnp.asarray(0.0),
                 )
 
         return self
@@ -1364,7 +1370,7 @@ class World(JaxVectorizedObject):
                     torque_box[:, i],
                     entity_b,
                     force_sphere[:, i],
-                    0,
+                    jnp.asarray(0.0),
                 )
 
         return self
@@ -1658,7 +1664,7 @@ class World(JaxVectorizedObject):
         self,
         pos_a: Array,
         pos_b: Array,
-        dist_min: float,
+        dist_min: Array,
         force_multiplier: Array | float,
         attractive: bool = False,
     ) -> tuple[Array, Array]:
@@ -1667,17 +1673,17 @@ class World(JaxVectorizedObject):
         dist = jnp.linalg.vector_norm(delta_pos, axis=-1)
         sign = -1 if attractive else 1
 
-        # Handle zero-distance cases
-        safe_delta = delta_pos / jnp.where(dist > 0, dist, 1e-8)[..., None]
-
+        k = self.contact_margin
         # Calculate penetration using safe distance
         penetration = (
             jnp.logaddexp(
                 jnp.array(0.0),
-                (dist_min - dist) * sign / self.contact_margin,
+                (dist_min - dist) * sign / k,
             )
-            * self.contact_margin
+            * k
         )
+        # Handle zero-distance cases
+        safe_delta = delta_pos / jnp.where(dist > 0, dist, 1e-8)[..., None]
 
         # Calculate force using safe direction vector
         force = sign * force_multiplier * safe_delta * penetration[..., None]
@@ -1692,11 +1698,11 @@ class World(JaxVectorizedObject):
         force = jnp.where(
             (
                 (dist > dist_min)[..., None]
-                if attractive
+                if not attractive
                 else (dist < dist_min)[..., None]
             ),
+            jnp.zeros_like(force),
             force,
-            0.0,
         )
 
         return force, -force
@@ -1730,79 +1736,60 @@ class World(JaxVectorizedObject):
         substep: int,
     ):
         if entity.movable:
+            vel = entity.state.vel
             # Compute translation
             if substep == 0:
-                if entity.drag is not None:
-                    entity = entity.replace(
-                        state=entity.state.replace(
-                            vel=entity.state.vel * (1 - entity.drag)
-                        )
-                    )
-                else:
-                    entity = entity.replace(
-                        state=entity.state.replace(
-                            vel=entity.state.vel * (1 - self.drag)
-                        )
-                    )
+                vel = jnp.where(
+                    ~jnp.isnan(entity.drag),
+                    vel * (1 - entity.drag),
+                    vel * (1 - self.drag),
+                )
             accel = self.force_dict[entity.name] / entity.mass
-            entity = entity.replace(
-                state=entity.state.replace(vel=entity.state.vel + accel * self.sub_dt)
+            vel = vel + accel * self.sub_dt
+            vel = jnp.where(
+                ~jnp.isnan(entity.max_speed),
+                JaxUtils.clamp_with_norm(vel, entity.max_speed),
+                vel,
             )
-            if entity.max_speed is not None:
-                entity = entity.replace(
-                    state=entity.state.replace(
-                        vel=JaxUtils.clamp_with_norm(entity.state.vel, entity.max_speed)
-                    )
-                )
-            if entity.v_range is not None:
-                entity = entity.replace(
-                    state=entity.state.replace(
-                        vel=jnp.clip(entity.state.vel, -entity.v_range, entity.v_range)
-                    )
-                )
-            new_pos = entity.state.pos + entity.state.vel * self.sub_dt
+            vel = jnp.where(
+                ~jnp.isnan(entity.v_range),
+                jnp.clip(vel, -entity.v_range, entity.v_range),
+                vel,
+            )
+            new_pos = entity.state.pos + vel * self.sub_dt
             # Apply boundary conditions
-            if self.x_semidim is not None or self.y_semidim is not None:
-                new_pos = jnp.stack(
-                    [
-                        (
-                            jnp.clip(new_pos[..., X], -self.x_semidim, self.x_semidim)
-                            if self.x_semidim is not None
-                            else new_pos[..., X]
-                        ),
-                        (
-                            jnp.clip(new_pos[..., Y], -self.y_semidim, self.y_semidim)
-                            if self.y_semidim is not None
-                            else new_pos[..., Y]
-                        ),
-                    ],
-                    axis=-1,
-                )
-            entity = entity.replace(state=entity.state.replace(pos=new_pos))
+            new_pos_x = jnp.where(
+                ~jnp.isnan(self.x_semidim),
+                jnp.clip(new_pos[..., X], -self.x_semidim, self.x_semidim),
+                new_pos[..., X],
+            )
+            new_pos_y = jnp.where(
+                ~jnp.isnan(self.y_semidim),
+                jnp.clip(new_pos[..., Y], -self.y_semidim, self.y_semidim),
+                new_pos[..., Y],
+            )
+            new_pos = jnp.where(
+                jnp.logical_or(~jnp.isnan(self.x_semidim), ~jnp.isnan(self.y_semidim)),
+                jnp.stack([new_pos_x, new_pos_y], axis=-1),
+                new_pos,
+            )
+            entity = entity.replace(state=entity.state.replace(pos=new_pos, vel=vel))
 
         if entity.rotatable:
+            ang_vel = entity.state.ang_vel
             # Compute rotation
             if substep == 0:
-                if entity.drag is not None:
-                    entity = entity.replace(
-                        state=entity.state.replace(
-                            ang_vel=entity.state.ang_vel * (1 - entity.drag)
-                        )
-                    )
-                else:
-                    entity = entity.replace(
-                        state=entity.state.replace(
-                            ang_vel=entity.state.ang_vel * (1 - self.drag)
-                        )
-                    )
-            ang_accel = self.torque_dict[entity.name] / entity.moment_of_inertia
-            entity = entity.replace(
-                state=entity.state.replace(
-                    ang_vel=entity.state.ang_vel + ang_accel * self.sub_dt
+                ang_vel = jnp.where(
+                    ~jnp.isnan(entity.drag),
+                    ang_vel * (1 - entity.drag),
+                    ang_vel * (1 - self.drag),
                 )
+            ang_accel = self.torque_dict[entity.name] / entity.moment_of_inertia
+            ang_vel = ang_vel + ang_accel * self.sub_dt
+            new_rot = entity.state.rot + ang_vel * self.sub_dt
+            entity = entity.replace(
+                state=entity.state.replace(rot=new_rot, ang_vel=ang_vel)
             )
-            new_rot = entity.state.rot + entity.state.ang_vel * self.sub_dt
-            entity = entity.replace(state=entity.state.replace(rot=new_rot))
 
         return entity
 
