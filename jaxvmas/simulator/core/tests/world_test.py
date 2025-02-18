@@ -35,43 +35,43 @@ class TestWorld:
         return Landmark.create(batch_dim=2, name="test_landmark")
 
     @pytest.fixture
-    def world_with_agent(self, basic_world, agent):
+    def world_with_agent(self, basic_world: World, agent: Agent):
         return basic_world.add_agent(agent)
 
-    def test_create(self, basic_world):
+    def test_create(self, basic_world: World):
         # Test basic properties
         assert basic_world.batch_dim == 2
-        assert basic_world._dt == 0.1
-        assert basic_world._substeps == 1
-        assert basic_world._drag == DRAG
-        assert len(basic_world._agents) == 0
-        assert len(basic_world._landmarks) == 0
+        assert basic_world.dt == 0.1
+        assert basic_world.substeps == 1
+        assert basic_world.drag == DRAG
+        assert len(basic_world.agents) == 0
+        assert len(basic_world.landmarks) == 0
         assert isinstance(basic_world._joints, dict)
 
-    def test_add_agent(self, basic_world, agent):
+    def test_add_agent(self, basic_world: World, agent: Agent):
         world = basic_world.add_agent(agent)
-        assert len(world._agents) == 1
-        assert world._agents[0].name == "test_agent"
-        assert world._agents[0].batch_dim == 2
+        assert len(world.agents) == 1
+        assert world.agents[0].name == "test_agent"
+        assert world.agents[0].batch_dim == 2
 
-    def test_add_landmark(self, basic_world, landmark):
+    def test_add_landmark(self, basic_world: World, landmark: Landmark):
         world = basic_world.add_landmark(landmark)
-        assert len(world._landmarks) == 1
-        assert world._landmarks[0].name == "test_landmark"
-        assert world._landmarks[0].batch_dim == 2
+        assert len(world.landmarks) == 1
+        assert world.landmarks[0].name == "test_landmark"
+        assert world.landmarks[0].batch_dim == 2
 
-    def test_reset(self, world_with_agent):
+    def test_reset(self, world_with_agent: World):
         # Modify agent state
-        agent = world_with_agent._agents[0]
+        agent = world_with_agent.agents[0]
         agent = agent.replace(state=agent.state.replace(pos=jnp.ones((2, 2))))
-        world = world_with_agent.replace(_agents=[agent])
+        world = world_with_agent.replace(agents=[agent])
 
         # Test reset
         world = world.reset(env_index=0)
-        assert jnp.all(world._agents[0].state.pos[0] == 0)
-        assert jnp.all(world._agents[0].state.pos[1] == 1)
+        assert jnp.all(world.agents[0].state.pos[0] == 0)
+        assert jnp.all(world.agents[0].state.pos[1] == 1)
 
-    def test_step(self, world_with_agent):
+    def test_step(self, world_with_agent: World):
         # Test basic stepping without forces
         world = world_with_agent.step()
         assert isinstance(world, World)
@@ -79,7 +79,7 @@ class TestWorld:
         # Test stepping with forces
         agent = world.agents[0]
         agent = agent.replace(state=agent.state.replace(force=jnp.ones((2, 2))))
-        world = world.replace(_agents=[agent])
+        world = world.replace(agents=[agent])
         world = world.step()
         assert isinstance(world, World)
         # Velocity should have changed due to force
@@ -113,7 +113,7 @@ class TestWorld:
         world = world.add_landmark(landmark)
         assert not world.collides(agent1, landmark)
 
-    def test_communication(self, basic_world):
+    def test_communication(self, basic_world: World):
         # Create world with communication
         world = World.create(batch_dim=2, dim_c=3)
         agent = Agent.create(batch_dim=2, name="agent", dim_c=3, dim_p=2, silent=False)
@@ -122,13 +122,13 @@ class TestWorld:
         # Set communication action
         agent = world.agents[0]
         agent = agent.replace(action=agent.action.replace(c=jnp.ones((2, 3))))
-        world = world.replace(_agents=[agent])
+        world = world.replace(agents=[agent])
 
         # Step world and check communication state
         world = world.step()
         assert jnp.all(world.agents[0].state.c == 1)
 
-    def test_joints(self, basic_world):
+    def test_joints(self, basic_world: World):
         from jaxvmas.simulator.joints import Joint, JointConstraint
 
         # Create world with higher substeps for joint stability
@@ -167,14 +167,14 @@ class TestWorld:
         assert isinstance(list(world._joints.values())[0], JointConstraint)
         assert isinstance(list(world._joints.values())[1], JointConstraint)
 
-    def test_entity_index_map(self, world_with_agent):
+    def test_entity_index_map(self, world_with_agent: World):
         # Test entity index map is properly updated
         world = world_with_agent.reset()
-        assert len(world._entity_index_map) == 1
-        assert world._agents[0].name in world._entity_index_map
-        assert world._entity_index_map[world._agents[0].name] == 0
+        assert len(world.entity_index_map) == 1
+        assert world.agents[0].name in world.entity_index_map
+        assert world.entity_index_map[world.agents[0].name] == 0
 
-    def test_boundary_conditions(self, basic_world):
+    def test_boundary_conditions(self, basic_world: World):
         # Test world with boundaries
         world = World.create(batch_dim=2, x_semidim=1.0, y_semidim=1.0)
         agent = Agent.create(
@@ -191,7 +191,7 @@ class TestWorld:
         agent = agent.replace(
             state=agent.state.replace(pos=jnp.array([[2.0, 0.0], [0.0, 2.0]]))
         )
-        world = world.replace(_agents=[agent])
+        world = world.replace(agents=[agent])
 
         # Step world and check if position is constrained
         world = world.step()
@@ -259,7 +259,7 @@ class TestWorld:
             drag=0.1,  # Reduce drag for smoother motion
         )
 
-        world = world.replace(_agents=[agent1, agent2])
+        world = world.replace(agents=[agent1, agent2])
         world = world.reset()
 
         # Add joint constraint

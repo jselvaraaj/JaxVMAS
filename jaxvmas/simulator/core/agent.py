@@ -235,7 +235,7 @@ class Agent(Entity):
         return super(Agent, self)._spawn(dim_c=dim_c, dim_p=dim_p)
 
     @jaxtyped(typechecker=beartype)
-    def _reset(self, env_index: int) -> "Agent":
+    def _reset(self, env_index: int | float = jnp.nan) -> "Agent":
         self = self.replace(action=self.action._reset(env_index))
         self = self.replace(dynamics=self.dynamics.reset(env_index))
         return super(Agent, self)._reset(env_index)

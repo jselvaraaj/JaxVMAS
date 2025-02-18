@@ -97,7 +97,8 @@ class Joint(PyTreeNode):
                 ),
             )
         else:
-            from jaxvmas.simulator.core.core import Box, Landmark, Line
+            from jaxvmas.simulator.core.landmark import Landmark
+            from jaxvmas.simulator.core.shapes import Box, Line
 
             self = self.replace(
                 landmark=Landmark.create(

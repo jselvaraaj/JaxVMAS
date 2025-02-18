@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable
-from jaxtyping import Array, jaxtyped
+from jaxtyping import Array, Bool, jaxtyped
 
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
@@ -66,7 +66,7 @@ class World(JaxVectorizedObject):
     torque_constraint_force: float
     _joints: dict[frozenset[str], JointConstraint]
     collidable_pairs: list[tuple[type[Shape], type[Shape]]]
-    entity_index_map: dict[Entity, int]
+    entity_index_map: dict[str, int]
 
     force_dict: dict[str, Array]
     torque_dict: dict[str, Array]
@@ -80,8 +80,8 @@ class World(JaxVectorizedObject):
         drag: float = DRAG,
         linear_friction: float = LINEAR_FRICTION,
         angular_friction: float = ANGULAR_FRICTION,
-        x_semidim: float = None,
-        y_semidim: float = None,
+        x_semidim: float = jnp.nan,
+        y_semidim: float = jnp.nan,
         dim_c: int = 0,
         collision_force: float = COLLISION_FORCE,
         joint_force: float = JOINT_FORCE,
@@ -179,7 +179,7 @@ class World(JaxVectorizedObject):
     ):
         """Only way to add landmarks to the world"""
         landmark = landmark.replace(batch_dim=self.batch_dim)
-        landmark = landmark._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
+        landmark = landmark._spawn(dim_p=self.dim_p)
         self = self.replace(landmarks=self.landmarks + [landmark])
         return self
 
@@ -200,7 +200,7 @@ class World(JaxVectorizedObject):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def reset(self, env_index: int | None = None):
+    def reset(self, env_index: int | float = jnp.nan):
         entities = []
         for e in self.entities:
             entities.append(e._reset(env_index))
@@ -602,8 +602,8 @@ class World(JaxVectorizedObject):
         if "entities" in kwargs:
             num_agents = len(self.agents)
             entities = kwargs.pop("entities")
-            kwargs["_agents"] = entities[:num_agents]
-            kwargs["_landmarks"] = entities[num_agents:]
+            kwargs["agents"] = entities[:num_agents]
+            kwargs["landmarks"] = entities[num_agents:]
         elif "policy_agents" in kwargs:
             policy_agents = kwargs.pop("policy_agents")
             scripted_agents = self.scripted_agents
@@ -614,10 +614,10 @@ class World(JaxVectorizedObject):
     @eqx.filter_jit
     def step(self):
         print("starting step")
-        for substep in range(self._substeps):
+        for substep in range(self.substeps):
             # Initialize force and torque dictionaries
             forces_dict = {
-                e.name: jnp.zeros((self.batch_dim, self._dim_p)) for e in self.entities
+                e.name: jnp.zeros((self.batch_dim, self.dim_p)) for e in self.entities
             }
             torques_dict = {
                 e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities
@@ -720,8 +720,8 @@ class World(JaxVectorizedObject):
             print("starting update_joints")
             new_joints = {}
             for joint_key, joint in self._joints.items():
-                entity_a = self.entities[self._entity_index_map[joint.entity_a.name]]
-                entity_b = self.entities[self._entity_index_map[joint.entity_b.name]]
+                entity_a = self.entities[self.entity_index_map[joint.entity_a.name]]
+                entity_b = self.entities[self.entity_index_map[joint.entity_b.name]]
                 updated_joint = joint.update_joint_state(entity_a, entity_b)
                 new_joints[joint_key] = updated_joint
             self = self.replace(_joints=new_joints)
@@ -741,7 +741,7 @@ class World(JaxVectorizedObject):
     # gather agent action forces
     @jaxtyped(typechecker=beartype)
     def _apply_action_force(self, agent: Agent):
-        forces_dict = {**self._force_dict}
+        forces_dict = {**self.force_dict}
         if agent.movable:
             force = agent.state.force
             if agent.max_f is not None:
@@ -754,7 +754,7 @@ class World(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def _apply_action_torque(self, agent: Agent):
-        torques_dict = {**self._torque_dict}
+        torques_dict = {**self.torque_dict}
         if agent.rotatable:
             if agent.max_t is not None:
                 agent = agent.replace(
@@ -779,9 +779,9 @@ class World(JaxVectorizedObject):
         self,
         entity: Entity,
     ):
-        forces_dict = {**self._force_dict}
+        forces_dict = {**self.force_dict}
         if entity.movable:
-            gravity_force = entity.mass * self._gravity
+            gravity_force = entity.mass * self.gravity
             forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
             if entity.gravity is not None:
                 forces_dict[entity.name] = (
@@ -794,56 +794,55 @@ class World(JaxVectorizedObject):
         self,
         entity: Entity,
     ):
-        def get_friction_force(vel, coeff, force, mass):
+        @jaxtyped(typechecker=beartype)
+        def get_friction_force(
+            vel: Array, coeff: float | Array, force: Array, mass: float
+        ):
             speed = jnp.linalg.vector_norm(vel, axis=-1)
             static = speed == 0
             static_exp = jnp.broadcast_to(static[..., None], vel.shape)
 
-            if not isinstance(coeff, Array):
-                coeff = jnp.full_like(force, coeff)
+            coeff = jnp.where(jnp.isscalar(coeff), jnp.full_like(force, coeff), coeff)
             coeff = jnp.broadcast_to(coeff, force.shape)
 
             friction_force_constant = coeff * mass
 
             friction_force = -(
-                vel / jnp.broadcast_to(jnp.where(static, 1e-8, speed), vel.shape)
+                vel
+                / jnp.broadcast_to(jnp.where(static, 1e-8, speed)[..., None], vel.shape)
             ) * jnp.minimum(
-                friction_force_constant, (jnp.abs(vel) / self._sub_dt) * mass
+                friction_force_constant, (jnp.abs(vel) / self.sub_dt) * mass
             )
             friction_force = jnp.where(static_exp, 0.0, friction_force)
 
             return friction_force
 
-        forces_dict = {**self._force_dict}
-        torques_dict = {**self._torque_dict}
-        if entity.linear_friction is not None:
-            forces_dict[entity.name] = forces_dict[entity.name] + get_friction_force(
+        forces_dict = {**self.force_dict}
+        torques_dict = {**self.torque_dict}
+
+        friction_force = jnp.where(
+            ~jnp.isnan(entity.linear_friction),
+            get_friction_force(
                 entity.state.vel,
                 entity.linear_friction,
                 forces_dict[entity.name],
                 entity.mass,
-            )
-        elif self._linear_friction > 0:
-            forces_dict[entity.name] = forces_dict[entity.name] + get_friction_force(
-                entity.state.vel,
-                self._linear_friction,
-                forces_dict[entity.name],
-                entity.mass,
-            )
-        if entity.angular_friction is not None:
-            torques_dict[entity.name] = torques_dict[entity.name] + get_friction_force(
+            ),
+            0.0,
+        )
+        forces_dict[entity.name] = forces_dict[entity.name] + friction_force
+
+        friction_torque = jnp.where(
+            ~jnp.isnan(entity.angular_friction),
+            get_friction_force(
                 entity.state.ang_vel,
                 entity.angular_friction,
                 torques_dict[entity.name],
                 entity.moment_of_inertia,
-            )
-        elif self._angular_friction > 0:
-            torques_dict[entity.name] = torques_dict[entity.name] + get_friction_force(
-                entity.state.ang_vel,
-                self._angular_friction,
-                torques_dict[entity.name],
-                entity.moment_of_inertia,
-            )
+            ),
+            0.0,
+        )
+        torques_dict[entity.name] = torques_dict[entity.name] + friction_torque
 
         return entity, self.replace(force_dict=forces_dict, torque_dict=torques_dict)
 
@@ -965,17 +964,17 @@ class World(JaxVectorizedObject):
         f_b: Array,
         t_b: Array,
     ):
-        new_forces_dict = dict(self._force_dict)
-        new_torques_dict = dict(self._torque_dict)
+        new_forces_dict = dict(self.force_dict)
+        new_torques_dict = dict(self.torque_dict)
 
         if entity_a.movable:
-            new_forces_dict[entity_a.name] = self._force_dict[entity_a.name] + f_a
+            new_forces_dict[entity_a.name] = self.force_dict[entity_a.name] + f_a
         if entity_a.rotatable:
-            new_torques_dict[entity_a.name] = self._torque_dict[entity_a.name] + t_a
+            new_torques_dict[entity_a.name] = self.torque_dict[entity_a.name] + t_a
         if entity_b.movable:
-            new_forces_dict[entity_b.name] = self._force_dict[entity_b.name] + f_b
+            new_forces_dict[entity_b.name] = self.force_dict[entity_b.name] + f_b
         if entity_b.rotatable:
-            new_torques_dict[entity_b.name] = self._torque_dict[entity_b.name] + t_b
+            new_torques_dict[entity_b.name] = self.torque_dict[entity_b.name] + t_b
 
         return self.replace(force_dict=new_forces_dict, torque_dict=new_torques_dict)
 
@@ -1045,14 +1044,14 @@ class World(JaxVectorizedObject):
                 pos_joint_b,
                 dist_min=dist,
                 attractive=True,
-                force_multiplier=self._joint_force,
+                force_multiplier=self.joint_force,
             )
             force_a_repulsive, force_b_repulsive = self._get_constraint_forces(
                 pos_joint_a,
                 pos_joint_b,
                 dist_min=dist,
                 attractive=False,
-                force_multiplier=self._joint_force,
+                force_multiplier=self.joint_force,
             )
             force_a = force_a_attractive + force_a_repulsive
             force_b = force_b_attractive + force_b_repulsive
@@ -1065,7 +1064,7 @@ class World(JaxVectorizedObject):
             torque_a_fixed, torque_b_fixed = self._get_constraint_torques(
                 rot_a,
                 rot_b + joint_rot,
-                force_multiplier=self._torque_constraint_force,
+                force_multiplier=self.torque_constraint_force,
             )
 
             torque_a = jnp.where(
@@ -1114,7 +1113,7 @@ class World(JaxVectorizedObject):
                 jnp.expand_dims(jnp.asarray(radius_s_b), 0), (self.batch_dim, len(s_s))
             )  # [batch_dim, n_pairs]
 
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 pos_s_a,
                 pos_s_b,
@@ -1173,7 +1172,7 @@ class World(JaxVectorizedObject):
             )
 
             closest_point = _get_closest_point_line(pos_l, rot_l, length_l, pos_s)
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_sphere, force_line = self._get_constraint_forces(
                 pos_s,
                 closest_point,
@@ -1244,7 +1243,7 @@ class World(JaxVectorizedObject):
                 rot_l_b,
                 length_l_b,
             )
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 point_a,
                 point_b,
@@ -1348,7 +1347,7 @@ class World(JaxVectorizedObject):
                 )
                 d = jnp.where(not_hollow_box, d_hollow, d)
 
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_sphere, force_box = self._get_constraint_forces(
                 pos_sphere,
                 inner_point_box,
@@ -1454,7 +1453,7 @@ class World(JaxVectorizedObject):
                     cond, inner_point_box_hollow, inner_point_box
                 )
                 d = jnp.where(not_hollow_box, d_hollow, d)
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_box, force_line = self._get_constraint_forces(
                 inner_point_box,
                 point_line,
@@ -1595,7 +1594,7 @@ class World(JaxVectorizedObject):
                 inner_point_b = jnp.where(cond, inner_point_box2_hollow, inner_point_b)
                 d_b = jnp.where(not_hollow_box2, d_hollow2, d_b)
 
-            force_multiplier = jnp.where(collision_mask, self._collision_force, 0)
+            force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
                 inner_point_a,
                 inner_point_b,
@@ -1620,7 +1619,7 @@ class World(JaxVectorizedObject):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def collides(self, a: Entity, b: Entity) -> bool:
+    def collides(self, a: Entity, b: Entity) -> Bool[Array, ""]:
         # Early exit conditions
         collides_check = jnp.logical_and(a.collides(b), b.collides(a))
         same_entity = jnp.asarray(a.name == b.name)
@@ -1632,7 +1631,7 @@ class World(JaxVectorizedObject):
         # Shape collision check
         shape_pair = (a.shape.__class__, b.shape.__class__)
         shape_check = jnp.any(
-            jnp.asarray([p == shape_pair for p in self._collidable_pairs])
+            jnp.asarray([p == shape_pair for p in self.collidable_pairs])
         )
 
         # Distance check
@@ -1675,9 +1674,9 @@ class World(JaxVectorizedObject):
         penetration = (
             jnp.logaddexp(
                 jnp.array(0.0),
-                (dist_min - dist) * sign / self._contact_margin,
+                (dist_min - dist) * sign / self.contact_margin,
             )
-            * self._contact_margin
+            * self.contact_margin
         )
 
         # Calculate force using safe direction vector
@@ -1742,7 +1741,7 @@ class World(JaxVectorizedObject):
                 else:
                     entity = entity.replace(
                         state=entity.state.replace(
-                            vel=entity.state.vel * (1 - self._drag)
+                            vel=entity.state.vel * (1 - self.drag)
                         )
                     )
             accel = self.force_dict[entity.name] / entity.mass
@@ -1767,13 +1766,13 @@ class World(JaxVectorizedObject):
                 new_pos = jnp.stack(
                     [
                         (
-                            jnp.clip(new_pos[..., X], -self._x_semidim, self._x_semidim)
-                            if self._x_semidim is not None
+                            jnp.clip(new_pos[..., X], -self.x_semidim, self.x_semidim)
+                            if self.x_semidim is not None
                             else new_pos[..., X]
                         ),
                         (
-                            jnp.clip(new_pos[..., Y], -self._y_semidim, self._y_semidim)
-                            if self._y_semidim is not None
+                            jnp.clip(new_pos[..., Y], -self.y_semidim, self.y_semidim)
+                            if self.y_semidim is not None
                             else new_pos[..., Y]
                         ),
                     ],
@@ -1793,7 +1792,7 @@ class World(JaxVectorizedObject):
                 else:
                     entity = entity.replace(
                         state=entity.state.replace(
-                            ang_vel=entity.state.ang_vel * (1 - self._drag)
+                            ang_vel=entity.state.ang_vel * (1 - self.drag)
                         )
                     )
             ang_accel = self.torque_dict[entity.name] / entity.moment_of_inertia

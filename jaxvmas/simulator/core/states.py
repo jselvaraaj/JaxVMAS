@@ -95,7 +95,7 @@ class AgentState(EntityState):
 
     @classmethod
     def create(cls, batch_dim: int, dim_c: int, dim_p: int):
-        chex.assert_scalar_positive(dim_c)
+        chex.assert_scalar_non_negative(dim_c)
 
         entity_state = EntityState.create(batch_dim, dim_p)
 
