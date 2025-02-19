@@ -4,6 +4,7 @@
 import time
 from typing import Type
 
+import chex
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -77,9 +78,10 @@ def run_heuristic(
             frame_list.append(rgb_array)
     else:
 
-        init_state = (env, obs, PRNG_key, jnp.array(total_reward))
+        init_state = (env, obs, PRNG_key, jnp.asarray(total_reward, dtype=jnp.float32))
         dynamic_init_state, static_state = eqx.partition(init_state, eqx.is_array)
 
+        @chex.assert_max_traces(1)
         def step_fn(dynamic_carry, _):
             carry = eqx.combine(static_state, dynamic_carry)
 
