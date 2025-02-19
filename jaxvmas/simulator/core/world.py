@@ -43,6 +43,7 @@ from jaxvmas.simulator.utils import (
 
 
 # Multi-agent world
+# TODO: make all the functions here depend on parameters from self that they need as opposed to passing in the entire self to decrease the use of replace.
 @jaxtyped(typechecker=beartype)
 class World(JaxVectorizedObject):
 
@@ -188,35 +189,35 @@ class World(JaxVectorizedObject):
         assert self.substeps > 1, "For joints, world substeps needs to be more than 1"
         if joint.landmark is not None:
             self = self.add_landmark(joint.landmark)
+
+        _joints = {}
         for constraint in joint.joint_constraints:
-            self = self.replace(
-                _joints=self._joints
-                | {
-                    frozenset(
-                        {constraint.entity_a.name, constraint.entity_b.name}
-                    ): constraint
-                }
-            )
-        return self
+            _joints = _joints | {
+                frozenset(
+                    {constraint.entity_a.name, constraint.entity_b.name}
+                ): constraint
+            }
+        return self.replace(_joints=_joints)
 
     @jaxtyped(typechecker=beartype)
     def reset(self, env_index: int | float = jnp.nan):
-        entities = []
+        entities: list[Entity] = []
         for e in self.entities:
             entities.append(e._reset(env_index))
 
-        self = self.replace(entities=entities)
-
-        _entity_index_map = {e.name: i for i, e in enumerate(self.entities)}
-        self = self.replace(entity_index_map=_entity_index_map)
+        _entity_index_map = {e.name: i for i, e in enumerate(entities)}
 
         forces_dict = {
-            e.name: jnp.zeros((self.batch_dim, self.dim_p)) for e in self.entities
+            e.name: jnp.zeros((self.batch_dim, self.dim_p)) for e in entities
         }
-        torques_dict = {e.name: jnp.zeros((self.batch_dim, 1)) for e in self.entities}
-        self = self.replace(force_dict=forces_dict, torque_dict=torques_dict)
+        torques_dict = {e.name: jnp.zeros((self.batch_dim, 1)) for e in entities}
 
-        return self
+        return self.replace(
+            force_dict=forces_dict,
+            torque_dict=torques_dict,
+            entities=entities,
+            entity_index_map=_entity_index_map,
+        )
 
     @property
     def joints(self):
@@ -237,6 +238,7 @@ class World(JaxVectorizedObject):
     def scripted_agents(self) -> list[Agent]:
         return [agent for agent in self.agents if agent.is_scripted_agent]
 
+    # TODO: make entity_filter depend on dynamic values. Right now, since it is used in a if statment, it can't change based on jax arrays.
     @jaxtyped(typechecker=beartype)
     def cast_ray(
         self,
@@ -278,6 +280,7 @@ class World(JaxVectorizedObject):
         dist, _ = jnp.min(jnp.stack(dists, dim=-1), dim=-1)
         return dist
 
+    # TODO: make entity_filter depend on dynamic values. Right now, since it is used in a if statment, it can't change based on jax arrays.
     @jaxtyped(typechecker=beartype)
     def cast_rays(
         self,
