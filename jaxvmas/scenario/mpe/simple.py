@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from jaxvmas.interactive_rendering import render_interactively
-from jaxvmas.simulator.core.core import Agent, Landmark, World
+from jaxvmas.simulator.core import Agent, Landmark, World
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
 
@@ -37,20 +37,28 @@ class Scenario(BaseScenario):
 
         return world
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int = None):
+    def reset_world_at(self, PRNG_key: Array, env_index: int | float = jnp.nan):
         agents = []
         for agent in self.world.agents:
             PRNG_key, PRNG_key_agent = jax.random.split(PRNG_key)
             agent = agent.set_pos(
-                jax.random.uniform(
-                    key=PRNG_key_agent,
-                    shape=(
-                        (self.world.dim_p,)
-                        if env_index is not None
-                        else (self.world.batch_dim, self.world.dim_p)
+                jax.lax.cond(
+                    jnp.isnan(env_index),
+                    lambda: jax.random.uniform(
+                        key=PRNG_key_agent,
+                        shape=(self.world.batch_dim, self.world.dim_p),
+                        minval=-1.0,
+                        maxval=1.0,
                     ),
-                    minval=-1.0,
-                    maxval=1.0,
+                    lambda: jnp.broadcast_to(
+                        jax.random.uniform(
+                            key=PRNG_key_agent,
+                            shape=(self.world.dim_p,),
+                            minval=-1.0,
+                            maxval=1.0,
+                        ),
+                        (self.world.batch_dim, self.world.dim_p),
+                    ),
                 ),
                 batch_index=env_index,
             )
@@ -62,15 +70,26 @@ class Scenario(BaseScenario):
         for landmark in self.world.landmarks:
             PRNG_key, PRNG_key_landmark = jax.random.split(PRNG_key)
             landmark = landmark.set_pos(
-                jax.random.uniform(
-                    key=PRNG_key_landmark,
-                    shape=(
-                        (self.world.dim_p,)
-                        if env_index is not None
-                        else (self.world.batch_dim, self.world.dim_p)
+                jax.lax.cond(
+                    jnp.isnan(env_index),
+                    lambda: jax.random.uniform(
+                        key=PRNG_key_landmark,
+                        shape=(self.world.batch_dim, self.world.dim_p),
+                        minval=-1.0,
+                        maxval=1.0,
                     ),
-                    minval=-1.0,
-                    maxval=1.0,
+                    lambda: jnp.broadcast_to(
+                        jax.random.uniform(
+                            key=PRNG_key_landmark,
+                            shape=(self.world.dim_p,),
+                            minval=-1.0,
+                            maxval=1.0,
+                        ),
+                        (
+                            self.world.batch_dim,
+                            self.world.dim_p,
+                        ),  # This is fine since we we will only use the value from the env_index
+                    ),
                 ),
                 batch_index=env_index,
             )

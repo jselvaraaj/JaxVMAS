@@ -14,13 +14,15 @@ class TestRotationDynamics:
 
     @pytest.fixture
     def basic_agent(self):
-        return Agent.create(
+        agent = Agent.create(
             batch_dim=2,
             name="test_agent",
             dim_c=0,
             dim_p=2,
             action_size=2,  # Larger than needed_action_size for testing
         )
+        agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 2))))
+        return agent
 
     def test_create(self, basic_dynamics: Rotation):
         assert isinstance(basic_dynamics, Rotation)

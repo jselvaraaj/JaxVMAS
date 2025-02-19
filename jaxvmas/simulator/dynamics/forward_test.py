@@ -150,7 +150,7 @@ class TestForwardDynamics:
         for rot in rotations:
             agent = agent.replace(
                 action=agent.action.replace(u=action),
-                state=agent.state.replace(rot=jnp.array([rot])),
+                state=agent.state.replace(rot=jnp.array([[rot]])),
             )
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)

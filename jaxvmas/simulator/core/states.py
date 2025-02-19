@@ -66,22 +66,22 @@ class EntityState(JaxVectorizedObject):
     def replace(self, **kwargs):
         if "pos" in kwargs:
             pos = kwargs["pos"]
-            chex.assert_shape(pos, (self.batch_dim, None))
+            chex.assert_shape(pos, self.pos.shape)
             chex.assert_equal_shape([pos, self.vel])
 
         elif "vel" in kwargs:
             vel = kwargs["vel"]
-            chex.assert_shape(vel, (self.batch_dim, None))
+            chex.assert_shape(vel, self.vel.shape)
             chex.assert_equal_shape([vel, self.pos])
 
         elif "ang_vel" in kwargs:
             ang_vel = kwargs["ang_vel"]
-            chex.assert_shape(ang_vel, (self.batch_dim, None))
+            chex.assert_shape(ang_vel, self.ang_vel.shape)
             chex.assert_equal_shape([ang_vel, self.rot])
 
         elif "rot" in kwargs:
             rot = kwargs["rot"]
-            chex.assert_shape(rot, (self.batch_dim, None))
+            chex.assert_shape(rot, self.rot.shape)
             chex.assert_equal_shape([rot, self.ang_vel])
 
         return super().replace(**kwargs)

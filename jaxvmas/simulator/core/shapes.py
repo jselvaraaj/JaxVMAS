@@ -80,7 +80,7 @@ class Sphere(Shape):
 
     @jaxtyped(typechecker=beartype)
     def get_delta_from_anchor(self, anchor: tuple[float, float]) -> Array:
-        delta = jnp.array([anchor[X] * self.radius, anchor[Y] * self.radius])
+        delta = jnp.asarray([anchor[X] * self.radius, anchor[Y] * self.radius])
         delta_norm = jnp.linalg.vector_norm(delta)
         # Use jnp.where instead of if statement for jit compatibility
         delta = jnp.where(

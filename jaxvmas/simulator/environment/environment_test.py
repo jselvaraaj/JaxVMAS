@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import pytest
 from jaxtyping import Array, Float
 
+from jaxvmas.equinox_utils import equinox_filter_cond_return_pytree_node
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.environment.environment import Environment
@@ -26,7 +27,7 @@ class MockScenario(BaseScenario):
     """Mock scenario for testing"""
 
     def make_world(self, batch_dim: int, **kwargs) -> World:
-        world = World.create(batch_dim=batch_dim)
+        world = World.create(batch_dim=batch_dim, dim_c=3, dim_p=2)
 
         # Add agents with different configurations
         agent1 = Agent.create(
@@ -35,11 +36,12 @@ class MockScenario(BaseScenario):
             dim_c=3,
             dim_p=2,
             movable=True,
+            silent=False,
         )
         agent2 = Agent.create(
             batch_dim=batch_dim,
             name="agent_2",
-            dim_c=0,  # No communication
+            dim_c=3,
             dim_p=2,
             movable=True,
             silent=True,
@@ -48,14 +50,14 @@ class MockScenario(BaseScenario):
         world = world.add_agent(agent2)
         return world
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | float) -> "MockScenario":
         # Reset all agents in the world at the specified index
-        world = self.world
-        if env_index is not None:
-            world = world.reset(env_index=env_index)
-        else:
-            # Reset all environments
-            world = world.reset(env_index=None)
+        world = equinox_filter_cond_return_pytree_node(
+            jnp.isnan(env_index),
+            lambda world: world.reset(env_index=jnp.nan),
+            lambda world: world.reset(env_index=env_index),
+            self.world,
+        )
         self = self.replace(world=world)
         return self
 
@@ -145,7 +147,7 @@ class TestEnvironment:
         env, PRNG_key = basic_env
 
         # Step environment first
-        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        actions = [jnp.ones((32, 5)), jnp.ones((32, 2))]
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         env, _ = env.step(PRNG_key=key_step_i, actions=actions)
 
@@ -156,17 +158,17 @@ class TestEnvironment:
         assert len(result) == env.n_agents
         assert jnp.all(env.steps[0] == 0)
         assert jnp.all(env.steps[1:] == 1)
-
-        # Test invalid index
-        with pytest.raises(AssertionError):
-            PRNG_key, key_step_i = jax.random.split(PRNG_key)
-            env.reset_at(PRNG_key=key_step_i, index=32)
+        with jax.disable_jit(True):
+            # Test invalid index
+            with pytest.raises(AssertionError):
+                PRNG_key, key_step_i = jax.random.split(PRNG_key)
+                env.reset_at(PRNG_key=key_step_i, index=32)
 
     def test_step(self, basic_env: tuple[Environment, Array]):
         """Test environment stepping"""
         env, PRNG_key = basic_env
         # Test with valid actions
-        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        actions = [jnp.ones((32, 5)), jnp.ones((32, 2))]
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         env, result = env.step(PRNG_key=key_step_i, actions=actions)
         obs, rewards, dones, infos = result
@@ -250,7 +252,8 @@ class TestEnvironment:
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         random_actions = env.get_random_actions(PRNG_key=key_step_i)
         assert len(random_actions) == env.n_agents
-        assert random_actions[0].shape == (env.num_envs, 2)
+        assert random_actions[0].shape == (env.num_envs, 5)
+        assert random_actions[1].shape == (env.num_envs, 2)
 
         # Test discrete actions
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
@@ -269,7 +272,7 @@ class TestEnvironment:
         )
 
         # Step until max steps
-        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        actions = [jnp.ones((32, 5)), jnp.ones((32, 2))]
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, dones, _ = result
@@ -294,15 +297,19 @@ class TestEnvironment:
 
         # Test action space
         assert isinstance(env.action_space, Tuple)
-        for space in env.action_space.spaces:
-            assert isinstance(space, MultiDiscrete)
-            assert space.shape == (2,)  # Default 2D actions
+        assert isinstance(env.action_space.spaces[0], MultiDiscrete)
+        assert isinstance(env.action_space.spaces[1], MultiDiscrete)
+        assert env.action_space.spaces[0].shape == (
+            3,
+        )  # Default 2D actions + 1 communication action
+        assert env.action_space.spaces[1].shape == (2,)  # Default 2D actions
 
         # Test random actions
         PRNG_key, sub_key = jax.random.split(PRNG_key)
         random_actions = env.get_random_actions(PRNG_key=sub_key)
         assert len(random_actions) == env.n_agents
-        assert random_actions[0].shape == (env.num_envs, 2)
+        assert random_actions[0].shape == (env.num_envs, 3)
+        assert random_actions[1].shape == (env.num_envs, 2)
 
     def test_terminated_truncated(self):
         """Test terminated/truncated functionality"""
@@ -316,7 +323,7 @@ class TestEnvironment:
             PRNG_key=sub_key,
         )
 
-        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        actions = [jnp.ones((32, 5)), jnp.ones((32, 2))]
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         env, result = env.step(PRNG_key=key_step_i, actions=actions)
         _, _, terminated, truncated, _ = result
@@ -360,7 +367,7 @@ class TestEnvironment:
             return env.step(PRNG_key=PRNG_key, actions=actions)
 
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
-        actions = [jnp.ones((32, 2)) for _ in range(env.n_agents)]
+        actions = [jnp.ones((32, 5)), jnp.ones((32, 2))]
         env, result = step_env(env, key_step_i, actions)
         obs, rewards, dones, infos = result
         assert len(obs) == env.n_agents

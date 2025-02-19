@@ -119,9 +119,9 @@ class Action(JaxVectorizedObject):
     def replace(self, **kwargs):
         if "u" in kwargs:
             u = kwargs["u"]
-            chex.assert_shape(u, (self.batch_dim, self.action_size))
+            chex.assert_shape(u, self.u.shape)
         elif "c" in kwargs:
             c = kwargs["c"]
-            chex.assert_shape(c, (self.batch_dim, self.comm_dim))
+            chex.assert_shape(c, self.c.shape)
 
         return super().replace(**kwargs)

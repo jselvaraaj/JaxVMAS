@@ -175,7 +175,7 @@ class RenderObject:
 class Environment(JaxVectorizedObject):
     scenario: BaseScenario
     num_envs: int
-    max_steps: int | None
+    max_steps: int | float
     continuous_actions: bool
     dict_spaces: bool
     clamp_action: bool
@@ -193,7 +193,7 @@ class Environment(JaxVectorizedObject):
         scenario: BaseScenario,
         PRNG_key: Array,
         num_envs: int = 32,
-        max_steps: int | None = None,
+        max_steps: int | float = jnp.inf,
         continuous_actions: bool = True,
         dict_spaces: bool = False,
         multidiscrete_actions: bool = False,
@@ -285,7 +285,9 @@ class Environment(JaxVectorizedObject):
         Returns observations for all envs and agents
         """
         # reset world
-        scenario = self.scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
+        scenario = self.scenario.env_reset_world_at(
+            PRNG_key=PRNG_key, env_index=jnp.nan
+        )
         self = self.replace(scenario=scenario)
         self = self.replace(steps=jnp.zeros(self.num_envs))
 
@@ -401,7 +403,7 @@ class Environment(JaxVectorizedObject):
             ...     num_envs=32,
             ...     device="cpu",  # Or "cuda" for GPU
             ...     continuous_actions=True,
-            ...     max_steps=None,  # Defines the horizon. None is infinite horizon.
+            ...     max_steps=100,  # Defines the horizon. jnp.nan is infinite horizon.
             ...     seed=None,  # Seed of the environment
             ...     n_agents=3,  # Additional arguments you want to pass to the scenario
             ... )
@@ -428,7 +430,7 @@ class Environment(JaxVectorizedObject):
         ), f"Expecting actions for {self.n_agents}, got {len(actions)} actions"
         for i in range(len(actions)):
             if not isinstance(actions[i], Array):
-                actions[i] = jnp.array(actions[i])
+                actions[i] = jnp.asarray(actions[i], dtype=jnp.float32)
             if len(actions[i].shape) == 1:
                 actions[i] = actions[i][..., None]
             assert (
@@ -478,18 +480,15 @@ class Environment(JaxVectorizedObject):
     def done(self):
         terminated = self.scenario.done().copy()
 
-        if self.max_steps is not None:
-            truncated = self.steps >= self.max_steps
-        else:
-            truncated = None
+        truncated = jnp.where(
+            jnp.isnan(self.max_steps),
+            jnp.zeros_like(terminated),
+            self.steps >= self.max_steps,
+        )
 
         if self.terminated_truncated:
-            if truncated is None:
-                truncated = jnp.zeros_like(terminated)
             return terminated, truncated
         else:
-            if truncated is None:
-                return terminated
             return terminated + truncated
 
     def get_action_space(self) -> Space:
@@ -536,13 +535,15 @@ class Environment(JaxVectorizedObject):
     def get_agent_action_space(self, agent: Agent) -> Space:
         if self.continuous_actions:
             return Box(
-                low=jnp.array(
+                low=jnp.asarray(
                     (-agent.action.u_range_jax_array).tolist()
                     + [0] * (self.world.dim_c if not agent.silent else 0),
+                    dtype=jnp.float32,
                 ),
-                high=jnp.array(
+                high=jnp.asarray(
                     agent.action.u_range_jax_array.tolist()
                     + [1] * (self.world.dim_c if not agent.silent else 0),
+                    dtype=jnp.float32,
                 ),
                 shape=(self.get_agent_action_size(agent),),
             )
@@ -659,7 +660,7 @@ class Environment(JaxVectorizedObject):
             ...     num_envs=32,
             ...     device="cpu",  # Or "cuda" for GPU
             ...     continuous_actions=True,
-            ...     max_steps=None,  # Defines the horizon. None is infinite horizon.
+            ...     max_steps=100,  # Defines the horizon. jnp.nan is infinite horizon.
             ...     seed=None,  # Seed of the environment
             ...     n_agents=3,  # Additional arguments you want to pass to the scenario
             ... )
@@ -678,7 +679,8 @@ class Environment(JaxVectorizedObject):
         self, action: Array, low: int, high: int, type: str
     ) -> None:
         assert jnp.all(
-            (action >= jnp.array(low)) * (action < jnp.array(high))
+            (action >= jnp.asarray(low, dtype=jnp.float32))
+            * (action < jnp.asarray(high, dtype=jnp.float32))
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
 
     # set env action for a particular agent
@@ -803,9 +805,9 @@ class Environment(JaxVectorizedObject):
                 agent = agent.replace(action=agent.action.replace(c=c))
             else:
                 comm_action = action[:, action_index:]
-                assert not jnp.any(comm_action > 1) and not jnp.any(
-                    comm_action < 0
-                ), "Comm actions are out of range [0,1]"
+                # assert not jnp.any(comm_action > 1) and not jnp.any(
+                #     comm_action < 0
+                # ), "Comm actions are out of range [0,1]"
                 agent = agent.replace(action=agent.action.replace(c=comm_action))
             if agent.c_noise > 0:
                 PRNG_key, subkey = jax.random.split(PRNG_key)

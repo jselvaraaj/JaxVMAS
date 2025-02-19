@@ -128,7 +128,7 @@ class Viewer:
         top: Float[Array, "..."],
     ) -> None:
         assert right > left and top > bottom
-        self.bounds = jnp.array([left, right, bottom, top])
+        self.bounds = jnp.asarray([left, right, bottom, top], dtype=jnp.float32)
         scalex = self.width / (right - left)
         scaley = self.height / (top - bottom)
         self.transform = Transform(
@@ -577,7 +577,7 @@ def make_polyline(vertices: Float[Array, f"{vertex} {dim_2}"]) -> PolyLine:
 
 def make_capsule(length: float, width: float) -> Compound:
     l, r, t, b = 0, length, width / 2, -width / 2
-    box = make_polygon(jnp.array([(l, b), (l, t), (r, t), (r, b)]))
+    box = make_polygon(jnp.asarray([(l, b), (l, t), (r, t), (r, b)]), dtype=jnp.float32)
     circ0 = make_circle(width / 2)
     circ1 = make_circle(width / 2)
     circ1.add_attr(Transform(translation=(length, 0)))

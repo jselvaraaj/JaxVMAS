@@ -53,7 +53,7 @@ class MultiDiscrete(Space):
 
     def __init__(self, num_categories: Sequence[int]):
         """Num categories is the number of cat actions for each dim, [2,2,2]=2 actions x 3 dim"""
-        self.num_categories = jnp.array(num_categories)
+        self.num_categories = jnp.asarray(num_categories, dtype=jnp.int32)
         self.shape = (len(num_categories),)
         self.dtype = jnp.int_
 

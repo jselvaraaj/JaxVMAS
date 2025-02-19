@@ -607,11 +607,12 @@ class World(JaxVectorizedObject):
         elif "policy_agents" in kwargs:
             policy_agents = kwargs.pop("policy_agents")
             scripted_agents = self.scripted_agents
-            kwargs["_agents"] = policy_agents + scripted_agents
+            kwargs["agents"] = policy_agents + scripted_agents
         return super().replace(**kwargs)
 
     # update state of the world
     @eqx.filter_jit
+    # @chex.assert_max_traces(1)
     def step(self):
         print("starting step")
         for substep in range(self.substeps):
@@ -1677,7 +1678,7 @@ class World(JaxVectorizedObject):
         # Calculate penetration using safe distance
         penetration = (
             jnp.logaddexp(
-                jnp.array(0.0),
+                jnp.asarray(0.0, dtype=jnp.float32),
                 (dist_min - dist) * sign / k,
             )
             * k

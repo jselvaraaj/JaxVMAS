@@ -51,7 +51,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
 
     """
 
-    world: WorldType | None
+    world: World | WorldType | None
     viewer_size: tuple[int, int]
     viewer_zoom: float
     render_origin: tuple[float, float]
@@ -92,7 +92,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         return self
 
     def env_reset_world_at(
-        self, PRNG_key: Array, env_index: int | None
+        self, PRNG_key: Array, env_index: int | float
     ) -> "BaseScenario":
         # Do not override
         self = self.replace(world=self.world.reset(env_index))
@@ -129,7 +129,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "BaseScenario":
+    def reset_world_at(self, PRNG_key: Array, env_index: int | float) -> "BaseScenario":
         """Resets the world at the specified env_index.
 
         When a ``None`` index is passed, the world should make a vectorized (batched) reset.

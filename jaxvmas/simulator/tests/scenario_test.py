@@ -28,12 +28,12 @@ class MockScenario(BaseScenario):
         return world
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
-        agent = self.world._agents[0]
+        agent = self.world.agents[0]
         if env_index is None:
             agent = agent.set_pos(jnp.ones((self.world.batch_dim, 2)))
         else:
             agent = agent.set_pos(jnp.ones(2), batch_index=env_index)
-        self = self.replace(world=self.world.replace(_agents=[agent]))
+        self = self.replace(world=self.world.replace(agents=[agent]))
         return self
 
     def observation(self, agent: Agent) -> Float[Array, f"{batch} {pos}"]:
@@ -85,25 +85,25 @@ class TestBaseScenario:
         PRNG_key = jax.random.PRNGKey(0)
         # Test reset with specific index
         scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=0)
-        assert jnp.all(scenario.world._agents[0].state.pos[0] == 1.0)
-        assert not jnp.all(scenario.world._agents[0].state.pos[1] == 1.0)
+        assert jnp.all(scenario.world.agents[0].state.pos[0] == 1.0)
+        assert not jnp.all(scenario.world.agents[0].state.pos[1] == 1.0)
 
         # Test reset all environments
-        scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
-        assert jnp.all(scenario.world._agents[0].state.pos == 1.0)
+        scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=jnp.nan)
+        assert jnp.all(scenario.world.agents[0].state.pos == 1.0)
 
     def test_observation(self, scenario: MockScenario):
-        obs = scenario.observation(scenario.world._agents[0])
+        obs = scenario.observation(scenario.world.agents[0])
         assert obs.shape == (2, 2)
-        assert jnp.array_equal(obs, scenario.world._agents[0].state.pos)
+        assert jnp.array_equal(obs, scenario.world.agents[0].state.pos)
 
     def test_reward(self, scenario: MockScenario):
-        reward = scenario.reward(scenario.world._agents[0])
+        reward = scenario.reward(scenario.world.agents[0])
         assert reward.shape == (2,)
         assert jnp.all(reward == 0)
 
     def test_info(self, scenario: MockScenario):
-        info = scenario.info(scenario.world._agents[0])
+        info = scenario.info(scenario.world.agents[0])
         assert "test_info" in info
         assert info["test_info"].shape == (2,)
         assert jnp.all(info["test_info"] == 1)
@@ -114,7 +114,7 @@ class TestBaseScenario:
         assert isinstance(geoms[0], Line)
 
     def test_process_action(self, scenario: MockScenario):
-        agent = scenario.world._agents[0]
+        agent = scenario.world.agents[0]
         new_scenario, new_agent = scenario.process_action(agent)
         assert isinstance(new_scenario, MockScenario)
         assert isinstance(new_agent, Agent)
@@ -138,7 +138,7 @@ class TestBaseScenario:
         def get_observation(scenario: MockScenario, agent: Agent):
             return scenario.observation(agent)
 
-        obs = get_observation(scenario, scenario.world._agents[0])
+        obs = get_observation(scenario, scenario.world.agents[0])
         assert obs.shape == (2, 2)
 
         # Test jit compatibility of reward
@@ -146,7 +146,7 @@ class TestBaseScenario:
         def get_reward(scenario: MockScenario, agent: Agent):
             return scenario.reward(agent)
 
-        reward = get_reward(scenario, scenario.world._agents[0])
+        reward = get_reward(scenario, scenario.world.agents[0])
         assert reward.shape == (2,)
 
         # Test jit compatibility of info
@@ -154,7 +154,7 @@ class TestBaseScenario:
         def get_info(scenario: MockScenario, agent: Agent):
             return scenario.info(agent)
 
-        info = get_info(scenario, scenario.world._agents[0])
+        info = get_info(scenario, scenario.world.agents[0])
         assert "test_info" in info
 
         # Test jit compatibility of reset
@@ -166,14 +166,14 @@ class TestBaseScenario:
 
         PRNG_key = jax.random.PRNGKey(0)
         reset_scen = reset_scenario(scenario, PRNG_key, 0)
-        assert jnp.all(reset_scen.world._agents[0].state.pos[0] == 1.0)
+        assert jnp.all(reset_scen.world.agents[0].state.pos[0] == 1.0)
 
         # Test jit compatibility of process_action
         @eqx.filter_jit
         def process_agent_action(scenario: MockScenario, agent: Agent):
             return scenario.process_action(agent)
 
-        new_scen, new_agent = process_agent_action(scenario, scenario.world._agents[0])
+        new_scen, new_agent = process_agent_action(scenario, scenario.world.agents[0])
         assert isinstance(new_scen, MockScenario)
         assert isinstance(new_agent, Agent)
 

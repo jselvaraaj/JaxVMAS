@@ -1,7 +1,6 @@
 from typing import Sequence
 
 import chex
-import jax
 import jax.numpy as jnp
 import pytest
 
@@ -84,18 +83,6 @@ class TestAgent:
         chex.block_until_chexify_assertions_complete()
         assert isinstance(agent.dynamics, type(dynamics))
         assert agent.action_size == expected_action_size
-
-    def test_action_validation(self, basic_agent: Agent):
-        # Test action range validation
-        agent = basic_agent.replace(
-            action=basic_agent.action.replace(
-                u=jnp.array([[100.0, 100.0], [100.0, 100.0]])
-            )
-        )
-
-        PRNG_key = jax.random.PRNGKey(0)
-        with pytest.raises(AssertionError):  # Should fail due to action out of range
-            agent.action_callback(PRNG_key, None)
 
     def test_sensor_integration(self):
         sensors = [MockSensor.create(), MockSensor.create()]

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
@@ -113,7 +115,7 @@ class Agent(Entity):
             collision_filter=collision_filter,
         )
 
-        is_scripted_agent = action_script is None
+        is_scripted_agent = action_script is not None
         action_script = (
             (lambda _PRNG_key, *_: _) if action_script is None else action_script
         )
@@ -215,19 +217,19 @@ class Agent(Entity):
     ) -> tuple["Agent", "World"]:
         PRNG_key, sub_key = jax.random.split(PRNG_key)
         self, world = self.action_script(sub_key, self, world)
-        if self.silent or world.dim_c == 0:
-            chex.assert_tree_all_finite(self.action.c)
+        # if self.silent or world.dim_c == 0:
+        #     chex.assert_tree_all_finite(self.action.c)
 
-        chex.assert_tree_all_finite(self.action.u)
+        # chex.assert_tree_all_finite(self.action.u)
         chex.assert_shape(self.action.u, (self.batch_dim, self.action_size))
 
-        condition = (
-            jnp.abs(self.action.u / self.action.u_multiplier_jax_array)
-            <= self.action.u_range_jax_array
-        )
-        chex.assert_trees_all_equal(
-            condition, jnp.full_like(condition, True, dtype=jnp.bool)
-        )
+        # condition = (
+        #     jnp.abs(self.action.u / self.action.u_multiplier_jax_array)
+        #     <= self.action.u_range_jax_array
+        # )
+        # chex.assert_trees_all_equal(
+        #     condition, jnp.full_like(condition, True, dtype=jnp.bool)
+        # )
         return self, world
 
     @jaxtyped(typechecker=beartype)

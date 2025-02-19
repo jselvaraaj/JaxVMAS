@@ -4,6 +4,7 @@
 
 from typing import Optional, Union
 
+import jax.numpy as jnp
 from jaxtyping import Array
 
 import jaxvmas.scenario as scenarios
@@ -17,7 +18,7 @@ def make_env(
     PRNG_key: Array,
     continuous_actions: bool = True,
     wrapper: Optional[Union[Wrapper, str]] = None,
-    max_steps: Optional[int] = None,
+    max_steps: int | float = jnp.inf,
     dict_spaces: bool = False,
     multidiscrete_actions: bool = False,
     clamp_actions: bool = False,
@@ -40,7 +41,7 @@ def make_env(
             will be discrete. The number of actions and their size will depend on the chosen scenario. Default is ``True``,
         wrapper (Union[Wrapper, str], optional): Wrapper class to use. For example, it can be
             ``"rllib"``, ``"gym"``, ``"gymnasium"``, ``"gymnasium_vec"``. Default is ``None``.
-        max_steps (int, optional): Horizon of the task. Defaults to ``None`` (infinite horizon). Each VMAS scenario can
+        max_steps (int, float): Horizon of the task. Defaults to ``jnp.inf`` (infinite horizon). Each VMAS scenario can
             be terminating or not. If ``max_steps`` is specified,
             the scenario is also terminated whenever this horizon is reached,
         seed (int, optional): Seed for the environment. Defaults to ``None``,

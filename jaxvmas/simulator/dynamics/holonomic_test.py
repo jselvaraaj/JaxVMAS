@@ -14,13 +14,15 @@ class TestHolonomicDynamics:
 
     @pytest.fixture
     def basic_agent(self):
-        return Agent.create(
+        agent = Agent.create(
             batch_dim=2,
             name="test_agent",
             dim_c=0,
             dim_p=2,
             action_size=3,  # Larger than needed_action_size for testing
         )
+        agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 3))))
+        return agent
 
     def test_create(self, basic_dynamics: Holonomic):
         assert isinstance(basic_dynamics, Holonomic)
