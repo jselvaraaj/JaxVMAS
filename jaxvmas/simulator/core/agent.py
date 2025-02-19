@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, jaxtyped
+from jaxtyping import Array, Bool, Int, jaxtyped
 
 from jaxvmas.simulator.core.action import Action
 from jaxvmas.simulator.core.entity import Entity
@@ -233,14 +233,14 @@ class Agent(Entity):
         return self, world
 
     @jaxtyped(typechecker=beartype)
-    def _spawn(self, dim_c: int, dim_p: int) -> "Agent":
+    def _spawn(self, id: Int[Array, ""], dim_c: int, dim_p: int) -> "Agent":
         if dim_c == 0:
             assert (
                 self.silent
             ), f"Agent {self.name} must be silent when world has no communication"
         if self.silent:
             dim_c = 0
-        return super(Agent, self)._spawn(dim_c=dim_c, dim_p=dim_p)
+        return super(Agent, self)._spawn(id=id, dim_c=dim_c, dim_p=dim_p)
 
     @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "Agent":

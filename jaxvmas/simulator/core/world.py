@@ -168,7 +168,10 @@ class World(JaxVectorizedObject):
     ):
         """Only way to add agents to the world"""
         agent = agent.replace(batch_dim=self.batch_dim)
-        agent = agent._spawn(dim_c=self.dim_c, dim_p=self.dim_p)
+        id = len(self.entities)
+        agent = agent._spawn(
+            id=jnp.asarray(id, dtype=int), dim_c=self.dim_c, dim_p=self.dim_p
+        )
 
         self = self.replace(agents=self.agents + [agent])
         return self
@@ -180,7 +183,8 @@ class World(JaxVectorizedObject):
     ):
         """Only way to add landmarks to the world"""
         landmark = landmark.replace(batch_dim=self.batch_dim)
-        landmark = landmark._spawn(dim_p=self.dim_p)
+        id = len(self.entities)
+        landmark = landmark._spawn(id=jnp.asarray(id, dtype=int), dim_p=self.dim_p)
         self = self.replace(landmarks=self.landmarks + [landmark])
         return self
 
@@ -240,6 +244,85 @@ class World(JaxVectorizedObject):
 
     # TODO: make entity_filter depend on dynamic values. Right now, since it is used in a if statment, it can't change based on jax arrays.
     @jaxtyped(typechecker=beartype)
+    # def cast_ray(
+    #     self,
+    #     entity: Entity,
+    #     angles: Array,
+    #     max_range: float,
+    #     entity_filter: Callable[[Entity], Bool[Array, ""]] = lambda _: False,
+    # ):
+    #     """
+    #     Casts rays from the given entity along multiple angles and returns the minimum distances
+    #     at which the rays hit any other collidable entity.
+
+    #     Assumptions for pure JAX:
+    #     - entity.state.pos, agent/landmark states, and the results from the
+    #         cast_ray_to_* functions are all JAX arrays.
+    #     - self.entities, self.agents, and self.landmarks are static (or their lengths are compile–time constants).
+    #     - Each entity's shape carries a static "tag" attribute (e.g. 0 for Box, 1 for Sphere, 2 for Line)
+    #         that is used for type–switching via `jax.lax.switch`.
+    #     - The function `entity_filter` is jax–compatible.
+    #     """
+    #     pos = entity.state.pos
+    #     # Ensure correct dimensions.
+    #     assert pos.ndim == 2 and angles.ndim == 1
+    #     assert pos.shape[0] == angles.shape[0]
+
+    #     # Initialize running minimum distances with max_range.
+    #     min_dists = jnp.full((self.batch_dim,), max_range)
+    #     n_entities = len(self.entities)
+    #     n_agents = len(self.agents)
+
+    #     def loop_body(i, current_min):
+    #         e = self.entities[i]
+
+    #         # Determine if we should process this entity.
+    #         # In the original code, we “skip” if the entity is the same as the source
+    #         # or if the entity_filter returns False. Here we update only if (entity != e) and filter passes.
+    #         # (For pure JAX the comparison and filter must be JAX‐compatible.)
+    #         should_process = jnp.logical_and(
+    #             jnp.not_equal(entity.id, e.id), entity_filter(e)
+    #         )
+
+    #         def process():
+    #             # Select the state: if i < n_agents then the entity is an agent;
+    #             # otherwise, it is a landmark.
+    #             e_state = jax.lax.select(
+    #                 i < n_agents,
+    #                 self.agents[i].state,
+    #                 self.landmarks[abs(i - n_agents)].state,
+    #             )
+
+    #             # Dispatch based on the shape type.
+    #             # It is assumed that each shape has a .tag attribute:
+    #             #    tag == 0  → Box
+    #             #    tag == 1  → Sphere
+    #             #    tag == 2  → Line
+    #             def box_fn():
+    #                 return cast_ray_to_box(e, e_state, pos, angles, max_range)
+
+    #             def sphere_fn():
+    #                 return cast_ray_to_sphere(e, e_state, pos, angles, max_range)
+
+    #             def line_fn():
+    #                 return cast_ray_to_line(e, e_state, pos, angles, max_range)
+
+    #             # Use switch to select the correct ray–casting function.
+    #             d = jax.lax.switch(e.shape.tag, (box_fn, sphere_fn, line_fn))
+    #             # Update the running minimum: for each ray, choose the smaller distance.
+    #             return jnp.minimum(current_min, d)
+
+    #         # Use lax.cond to either process this entity or skip it.
+    #         return jax.lax.cond(
+    #             should_process,
+    #             lambda: process(),
+    #             lambda: current_min,
+    #         )
+
+    #     # Loop over all entities in a JAX–compatible way.
+    #     final_min = jax.lax.fori_loop(0, n_entities, loop_body, min_dists)
+    #     return final_min
+
     def cast_ray(
         self,
         entity: Entity,
@@ -287,7 +370,7 @@ class World(JaxVectorizedObject):
         entity: Entity,
         angles: Array,
         max_range: float,
-        entity_filter: Callable[[Entity], bool] = lambda _: False,
+        entity_filter: Callable[[Entity], Bool[Array, ""]] = lambda _: False,
     ):
         pos = entity.state.pos
 

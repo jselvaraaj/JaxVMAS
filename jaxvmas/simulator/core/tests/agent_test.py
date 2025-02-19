@@ -99,13 +99,15 @@ class TestAgent:
     def test_spawn_behavior(self, basic_agent: Agent):
         # Test spawn with different dimensions
         basic_agent = basic_agent.replace(silent=False)
-        spawned = basic_agent._spawn(dim_c=5, dim_p=2)
+        spawned = basic_agent._spawn(id=jnp.asarray(0, dtype=int), dim_c=5, dim_p=2)
         assert spawned.state.c.shape == (2, 5)
         assert spawned.state.pos.shape == (2, 2)
 
         # Test spawn with silent agent and zero comm dimension
         silent_agent = basic_agent.replace(silent=True)
-        spawned_silent = silent_agent._spawn(dim_c=0, dim_p=2)
+        spawned_silent = silent_agent._spawn(
+            id=jnp.asarray(0, dtype=int), dim_c=0, dim_p=2
+        )
         assert spawned_silent.state.c.shape == (2, 0)
 
     @pytest.mark.parametrize(
