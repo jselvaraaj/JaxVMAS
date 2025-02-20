@@ -166,6 +166,10 @@ class World(JaxVectorizedObject):
         agent: Agent,
     ):
         """Only way to add agents to the world"""
+        assert agent.name not in [
+            entity.name for entity in self.entities
+        ], f"Agent with name {agent.name} already exists in the world"
+
         agent = agent.replace(batch_dim=self.batch_dim)
         id = len(self.entities)
         agent = agent._spawn(
@@ -494,7 +498,7 @@ class World(JaxVectorizedObject):
                 entity_b.state.rot,
                 entity_b.shape.length,
             )
-            dist = jnp.linalg.vector_norm(point_a - point_b, axis=-1)
+            dist = jnp.linalg.vector_norm(point_a - point_b, axis=1)
             return_value = dist - LINE_MIN_DIST
         elif (
             isinstance(entity_a.shape, Box)
@@ -502,21 +506,21 @@ class World(JaxVectorizedObject):
             or isinstance(entity_b.shape, Box)
             and isinstance(entity_a.shape, Line)
         ):
-            box, box_state, line, line_state = (
-                (entity_a, entity_a.state, entity_b, entity_b.state)
+            box, line = (
+                (entity_a, entity_b)
                 if isinstance(entity_b.shape, Line)
-                else (entity_b, entity_b.state, entity_a, entity_a.state)
+                else (entity_b, entity_a)
             )
             point_box, point_line = _get_closest_line_box(
-                box_state.pos,
-                box_state.rot,
+                box.state.pos,
+                box.state.rot,
                 box.shape.width,
                 box.shape.length,
-                line_state.pos,
-                line_state.rot,
+                line.state.pos,
+                line.state.rot,
                 line.shape.length,
             )
-            dist = jnp.linalg.vector_norm(point_box - point_line, axis=-1)
+            dist = jnp.linalg.vector_norm(point_box - point_line, axis=1)
             return_value = dist - LINE_MIN_DIST
         elif isinstance(entity_a.shape, Box) and isinstance(entity_b.shape, Box):
             point_a, point_b = _get_closest_box_box(
@@ -795,12 +799,9 @@ class World(JaxVectorizedObject):
         if entity.movable:
             gravity_force = entity.mass * self.gravity
             forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
-            gravity_force = jnp.where(
-                ~jnp.isnan(entity.gravity),
-                entity.mass * entity.gravity,
-                jnp.zeros_like(entity.gravity),
-            )
-            forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
+            if entity.gravity is not None:
+                gravity_force = entity.mass * entity.gravity
+                forces_dict[entity.name] = forces_dict[entity.name] + gravity_force
         return entity, self.replace(force_dict=forces_dict)
 
     @jaxtyped(typechecker=beartype)

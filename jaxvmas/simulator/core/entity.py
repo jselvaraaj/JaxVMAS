@@ -13,6 +13,7 @@ from jaxvmas.equinox_utils import (
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
     batch_dim,
+    pos_dim,
 )
 from jaxvmas.simulator.core.shapes import Shape, Sphere
 from jaxvmas.simulator.core.states import EntityState
@@ -27,7 +28,7 @@ from jaxvmas.simulator.utils import (
 class Entity(JaxVectorizedObject):
     state: EntityState
 
-    gravity: Float[Array, f"{batch_dim} 1"]
+    gravity: Float[Array, f"{batch_dim} {pos_dim}"] | None
 
     name: str
     id: Int[Array, ""]
@@ -103,11 +104,12 @@ class Entity(JaxVectorizedObject):
         linear_friction = linear_friction
         angular_friction = angular_friction
         # gravity
-        if gravity is None:
-            gravity = jnp.zeros((batch_dim, 1))
-        else:
+        # if gravity is None:
+        #     gravity = jnp.zeros((batch_dim, dim_p))
+        # else:
+        if gravity is not None:
             gravity = jnp.asarray(gravity)
-            chex.assert_shape(gravity, (batch_dim, 1))
+            chex.assert_shape(gravity, (batch_dim, dim_p))
         # entity goal
         goal = ""
         # Render the entity

@@ -1120,7 +1120,7 @@ class TestDistanceAndOverlap:
     def test_get_distance_box_sphere_non_overlapping(self):
         """
         For a box vs. sphere that do not overlap:
-          The box’s get_distance_from_point returns:
+          The box's get_distance_from_point returns:
              ||test_point - closest_point|| - LINE_MIN_DIST.
           For a box centered at [0,0] (width=4, length=4) and a sphere at [10,0],
           the closest point on the box is [2,0], so distance = 8 - LINE_MIN_DIST.
@@ -1582,3 +1582,145 @@ class TestDistanceAndOverlap:
         )
         world = world.replace(agents=[box, line])
         assert not world.is_overlapping(box, line)
+
+
+class TestForceApplication:
+    def test_apply_action_force(self):
+        # Create a basic world and agent
+        world = World.create(
+            batch_dim=1,
+            dim_p=2,
+            dim_c=0,
+        )
+        agent1 = Agent.create(
+            batch_dim=1,
+            name="test",
+            dim_p=2,
+            dim_c=0,
+            movable=True,
+            max_f=2.0,
+        )
+        agent2 = Agent.create(
+            batch_dim=1,
+            name="test2",
+            dim_p=2,
+            dim_c=0,
+            movable=True,
+            f_range=1.5,
+        )
+        world = world.add_agent(agent1)
+        world = world.add_agent(agent2)
+        world = world.reset()
+
+        # Test force clamping with max_f
+        agent1 = agent1.replace(
+            state=agent1.state.replace(force=jnp.array([[3.0, 0.0]]))
+        )
+        agent1, world = world._apply_action_force(agent1)
+        assert jnp.allclose(agent1.state.force, jnp.array([[2.0, 0.0]]))
+        assert jnp.allclose(world.force_dict[agent1.name], jnp.array([[2.0, 0.0]]))
+
+        # Test force range limiting
+        agent2 = agent2.replace(
+            state=agent2.state.replace(force=jnp.array([[1.0, 2.0]]))
+        )
+        agent2, world = world._apply_action_force(agent2)
+        assert jnp.allclose(agent2.state.force, jnp.array([[1.0, 1.5]]))
+        assert jnp.allclose(world.force_dict[agent2.name], jnp.array([[1.0, 1.5]]))
+
+    def test_apply_action_torque(self):
+        world = World.create(batch_dim=1)
+        agent = Agent.create(
+            batch_dim=1,
+            name="test",
+            dim_p=2,
+            dim_c=0,
+            rotatable=True,
+            t_range=1.5,
+        )
+        agent2 = Agent.create(
+            batch_dim=1,
+            name="test2",
+            dim_p=2,
+            dim_c=0,
+            rotatable=True,
+            max_t=2.0,
+        )
+        world = world.add_agent(agent)
+        world = world.add_agent(agent2)
+        world = world.reset()
+
+        # Test torque clamping with max_t
+        agent = agent.replace(state=agent.state.replace(torque=jnp.array([[3.0]])))
+        agent, world = world._apply_action_torque(agent)
+        assert jnp.allclose(agent.state.torque, jnp.array([[1.5]]))
+        assert jnp.allclose(world.torque_dict[agent.name], jnp.array([[1.5]]))
+
+        # Test torque range limiting
+        agent2 = agent2.replace(state=agent2.state.replace(torque=jnp.array([[-3.0]])))
+        agent2, world = world._apply_action_torque(agent2)
+        assert jnp.allclose(agent2.state.torque, jnp.array([[-2.0]]))
+        assert jnp.allclose(world.torque_dict[agent2.name], jnp.array([[-2.0]]))
+
+    def test_apply_gravity(self):
+        world = World.create(batch_dim=1, gravity=jnp.array([0.0, -9.81]))
+        agent = Agent.create(
+            batch_dim=1,
+            name="test",
+            dim_p=2,
+            dim_c=0,
+            movable=True,
+            mass=2.0,
+        )
+        agent2 = Agent.create(
+            batch_dim=1,
+            name="test2",
+            dim_p=2,
+            dim_c=0,
+            movable=True,
+            mass=2.0,
+            gravity=jnp.asarray([[0.0, -5.0]]),
+        )
+        world = world.add_agent(agent)
+        world = world.add_agent(agent2)
+        world = world.reset()
+
+        # Test global gravity
+        _, world = world._apply_gravity(agent)
+        expected_force = jnp.array([[0.0, -19.62]])  # 2.0 * -9.81
+        assert jnp.allclose(world.force_dict[agent.name], expected_force)
+
+        # Test entity-specific gravity
+        agent2 = agent2.replace(gravity=jnp.asarray([[0.0, -5.0]]))
+        _, world = world._apply_gravity(agent2)
+        expected_force = jnp.array([[0.0, -29.62]])  # Previous + (2.0 * -5.0)
+        assert jnp.allclose(world.force_dict[agent2.name], expected_force)
+
+    def test_apply_friction_force(self):
+        world = World.create(batch_dim=1, dt=0.1, substeps=1)
+        agent = Agent.create(
+            batch_dim=1,
+            name="test",
+            dim_p=2,
+            dim_c=0,
+            movable=True,
+            rotatable=True,
+            mass=1.0,
+            linear_friction=0.5,
+            angular_friction=0.3,
+            shape=Box(
+                length=1.0,
+                width=1.0,
+            ),
+        )
+        world = world.add_agent(agent)
+        world = world.reset()
+        # Test linear friction
+        agent = agent.replace(state=agent.state.replace(vel=jnp.array([[1.0, 0.0]])))
+        _, world = world._apply_friction_force(agent)
+        assert jnp.all(world.force_dict[agent.name] <= 0)  # Friction opposes motion
+
+        # Test angular friction
+        agent = agent.replace(state=agent.state.replace(ang_vel=jnp.array([[1.0]])))
+        _, world = world._apply_friction_force(agent)
+        assert jnp.all(world.torque_dict[agent.name] <= 0)  # Friction opposes rotation

@@ -23,14 +23,14 @@ class TestEntity:
         assert basic_entity.collide is True
         assert basic_entity.mass == 1.0
         assert basic_entity.density == 25.0
-        assert jnp.array_equal(basic_entity.gravity, jnp.zeros((2, 1)))
+        assert basic_entity.gravity is None
 
         # Test creation with custom parameters
         custom_entity = Entity.create(
             batch_dim=2,
             name="custom",
             movable=False,
-            gravity=jnp.asarray([0.0, -9.81])[..., None],
+            gravity=jnp.asarray([[0.0, -9.81], [0.0, -9.81]]),
             mass=2.0,
             v_range=5.0,
             max_speed=10.0,
@@ -39,7 +39,7 @@ class TestEntity:
         assert custom_entity.v_range == 5.0
         assert custom_entity.max_speed == 10.0
         assert jnp.array_equal(
-            custom_entity.gravity, jnp.array([0.0, -9.81])[..., None]
+            custom_entity.gravity, jnp.array([[0.0, -9.81], [0.0, -9.81]])
         )
 
     def test_property_setters(self, basic_entity):

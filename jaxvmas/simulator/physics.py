@@ -131,8 +131,10 @@ def _get_closest_box_box(
 
     # For each pair of points, compute candidate sums
     num_candidates = points_box_a.shape[0]
-    p1s = [points_box_a[i] + points_box_b[i] for i in range(num_candidates)]
-    p2s = [points_box2_a[i] + points_box2_b[i] for i in range(num_candidates)]
+    p1s = [points_box_a[i] for i in range(num_candidates)]
+    p1s = p1s + [points_box_b[i] for i in range(num_candidates)]
+    p2s = [points_box2_a[i] for i in range(num_candidates)]
+    p2s = p2s + [points_box2_b[i] for i in range(num_candidates)]
 
     print("\n=== Candidate Points ===")
     print(f"P1 candidates: {p1s}")
@@ -345,7 +347,7 @@ def _get_all_lines_box(
     p4 = box_pos - rotated_vector2 * expanded_half_box_width
 
     ps = jnp.stack([p1, p2, p3, p4])
-    rots = jnp.stack([box_rot, box_rot, box_rot + jnp.pi / 2, box_rot + jnp.pi / 2])
+    rots = jnp.stack([box_rot + jnp.pi / 2, box_rot + jnp.pi / 2, box_rot, box_rot])
     lengths = jnp.stack([box_width, box_width, box_length, box_length])
 
     return ps, rots, lengths

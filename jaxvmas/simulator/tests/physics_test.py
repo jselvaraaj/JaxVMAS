@@ -480,6 +480,8 @@ class TestPhysics:
             box_data["length"],
             test_point,
         )
+
+        points = jnp.stack(points)
         assert points.shape == (4, 2, 2)  # 4 points per box, batch_size=2, dim_p=2
 
         # Test with point at box center
@@ -490,6 +492,7 @@ class TestPhysics:
             box_data["length"],
             box_data["pos"],
         )
+        center_points = jnp.stack(center_points)
         assert center_points.shape == (4, 2, 2)
 
         # Test jit compatibility
@@ -512,4 +515,7 @@ class TestPhysics:
             box_data["length"],
             test_point,
         )
+
+        jitted_points = jnp.stack(jitted_points)
+
         assert jnp.allclose(jitted_points, points, rtol=1e-5, atol=1e-5)
