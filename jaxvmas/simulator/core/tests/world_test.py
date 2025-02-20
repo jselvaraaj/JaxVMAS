@@ -7,7 +7,7 @@ from jaxtyping import Array
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
 from jaxvmas.simulator.core.landmark import Landmark
-from jaxvmas.simulator.core.shapes import Box, Sphere
+from jaxvmas.simulator.core.shapes import Box, Line, Shape, Sphere
 from jaxvmas.simulator.core.world import (
     DRAG,
     World,
@@ -745,3 +745,285 @@ class TestWorld:
                 entity_filter=lambda e: e.name == "box",
             )
             assert jnp.allclose(dists[0], 5.0)  # Should miss
+
+    def test_cast_ray_line_perpendicular(self):
+        # Test ray collision with a line oriented perpendicular to the ray.
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            # Create a line agent with a 2.0 length segment.
+            line_agent = Agent.create(
+                batch_dim=1,
+                name="line",
+                dim_p=2,
+                dim_c=0,
+                shape=Line(length=2.0),
+            )
+            world = world.add_agent(source_agent).add_agent(line_agent)
+
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            # Position the line at (2, 0) and rotate it 90° so it is vertical.
+            line_agent = line_agent.replace(
+                state=line_agent.state.replace(
+                    pos=jnp.array([[2.0, 0.0]]),
+                    rot=jnp.array([[jnp.pi / 2]]),
+                )
+            )
+            world = world.replace(agents=[source_agent, line_agent])
+            angles = jnp.array([0.0])
+            dists = world.cast_ray(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: e.name == "line",
+            )
+            # The ray should hit the vertical line at a distance of 2.0.
+            assert jnp.allclose(dists[0], 2.0, atol=1e-3)
+
+    def test_cast_ray_multiple_overlapping(self):
+        # Test that when multiple objects lie along the ray, the closest hit is returned.
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            sphere_agent = Agent.create(
+                batch_dim=1,
+                name="sphere",
+                dim_p=2,
+                dim_c=0,
+                shape=Sphere(radius=0.5),
+            )
+            box_agent = Agent.create(
+                batch_dim=1,
+                name="box",
+                dim_p=2,
+                dim_c=0,
+                shape=Box(length=1.0, width=1.0),
+            )
+            world = (
+                world.add_agent(source_agent)
+                .add_agent(sphere_agent)
+                .add_agent(box_agent)
+            )
+
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            sphere_agent = sphere_agent.replace(
+                state=sphere_agent.state.replace(pos=jnp.array([[1.0, 0.0]]))
+            )
+            box_agent = box_agent.replace(
+                state=box_agent.state.replace(
+                    pos=jnp.array([[1.5, 0.0]]),
+                    rot=jnp.array([[0.0]]),
+                )
+            )
+            world = world.replace(agents=[source_agent, sphere_agent, box_agent])
+            angles = jnp.array([0.0])
+            dists = world.cast_ray(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: True,
+            )
+            # The sphere is closer: expected hit at (1.0 - 0.5) = 0.5.
+            assert jnp.allclose(dists[0], 0.5, atol=1e-3)
+
+    def test_cast_ray_multiple_batches(self):
+        # Test cast_ray in a multi-batch world (batch_dim > 1).
+        with jax.disable_jit():
+            world = World.create(batch_dim=2)
+            source_agent = Agent.create(
+                batch_dim=2,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            sphere_agent = Agent.create(
+                batch_dim=2,
+                name="sphere",
+                dim_p=2,
+                dim_c=0,
+                shape=Sphere(radius=0.5),
+            )
+            world = world.add_agent(source_agent).add_agent(sphere_agent)
+            # For batch 0 and batch 1, set different positions.
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(
+                    pos=jnp.array([[0.0, 0.0], [1.0, 1.0]])
+                )
+            )
+            sphere_agent = sphere_agent.replace(
+                state=sphere_agent.state.replace(
+                    pos=jnp.array([[1.0, 0.0], [2.0, 1.0]])
+                )
+            )
+            world = world.replace(agents=[source_agent, sphere_agent])
+            # Provide one angle per batch.
+            angles = jnp.array([0.0, 0.0])
+            dists = world.cast_ray(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: e.name == "sphere",
+            )
+            # For both batches, the expected hit is at distance 1.0 - 0.5 = 0.5.
+            expected = jnp.array([0.5, 0.5])
+            assert jnp.allclose(dists, expected, atol=1e-3)
+
+    def test_cast_ray_invalid_shape(self):
+        # Test that an unsupported shape triggers a RuntimeError.
+        class DummyShape(Shape):
+            def moment_of_inertia(self, mass):
+                pass
+
+            def get_delta_from_anchor(self, anchor):
+                pass
+
+            def get_geometry(self):
+                pass
+
+            def circumscribed_radius(self):
+                pass
+
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            dummy_agent = Agent.create(
+                batch_dim=1,
+                name="dummy",
+                dim_p=2,
+                dim_c=0,
+                shape=DummyShape(),
+            )
+            world = world.add_agent(source_agent).add_agent(dummy_agent)
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            dummy_agent = dummy_agent.replace(
+                state=dummy_agent.state.replace(pos=jnp.array([[1.0, 0.0]]))
+            )
+            world = world.replace(agents=[source_agent, dummy_agent])
+            angles = jnp.array([0.0])
+            import pytest
+
+            with pytest.raises(RuntimeError):
+                _ = world.cast_ray(
+                    source_agent,
+                    angles,
+                    max_range=5.0,
+                    entity_filter=lambda e: e.name == "dummy",
+                )
+
+    def test_cast_rays_no_targets(self):
+        # Test that cast_rays returns max_range when there are no target agents.
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            world = world.add_agent(source_agent)
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            world = world.replace(agents=[source_agent])
+            angles = jnp.array([0.0, jnp.pi / 2])
+            dists = world.cast_rays(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: True,
+            )
+            # Since there are no other agents, all rays should return max_range.
+            assert jnp.allclose(dists, jnp.full((1, 2), 5.0))
+
+    def test_cast_ray_negative_angles(self):
+        # Test that negative angles (e.g., -pi/2) are handled correctly.
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            sphere_agent = Agent.create(
+                batch_dim=1,
+                name="sphere",
+                dim_p=2,
+                dim_c=0,
+                shape=Sphere(radius=0.5),
+            )
+            world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            # Place the sphere below the source.
+            sphere_agent = sphere_agent.replace(
+                state=sphere_agent.state.replace(pos=jnp.array([[0.0, -1.0]]))
+            )
+            world = world.replace(agents=[source_agent, sphere_agent])
+            angles = jnp.array([-jnp.pi / 2])
+            dists = world.cast_ray(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: e.name == "sphere",
+            )
+            # The ray at -pi/2 should hit the sphere at a distance of 1.0 - 0.5 = 0.5.
+            assert jnp.allclose(dists[0], 0.5, atol=1e-3)
+
+    def test_cast_ray_large_angles(self):
+        # Test that angles larger than 2*pi (e.g., 2*pi) are correctly wrapped.
+        with jax.disable_jit():
+            world = World.create(batch_dim=1)
+            source_agent = Agent.create(
+                batch_dim=1,
+                name="source",
+                dim_p=2,
+                dim_c=0,
+            )
+            sphere_agent = Agent.create(
+                batch_dim=1,
+                name="sphere",
+                dim_p=2,
+                dim_c=0,
+                shape=Sphere(radius=0.5),
+            )
+            world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent = source_agent.replace(
+                state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+            )
+            sphere_agent = sphere_agent.replace(
+                state=sphere_agent.state.replace(pos=jnp.array([[1.0, 0.0]]))
+            )
+            world = world.replace(agents=[source_agent, sphere_agent])
+            # 2*pi is equivalent to 0 radians.
+            angles = jnp.array([2 * jnp.pi])
+            dists = world.cast_ray(
+                source_agent,
+                angles,
+                max_range=5.0,
+                entity_filter=lambda e: e.name == "sphere",
+            )
+            # Expected hit: distance = 1.0 - 0.5 = 0.5.
+            assert jnp.allclose(dists[0], 0.5, atol=1e-3)

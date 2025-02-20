@@ -292,13 +292,16 @@ def cast_ray_to_line(
     # Line segment vector
     p = line.state.pos
     r = (
-        jnp.stack([jnp.cos(line.state.rot), jnp.sin(line.state.rot)], axis=-1)
+        jnp.stack(
+            [jnp.cos(line.state.rot.squeeze(1)), jnp.sin(line.state.rot.squeeze(1))],
+            axis=-1,
+        )
         * line.shape.length
     )
 
     # Ray vector
     q = ray_origin
-    s = jnp.stack([jnp.cos(ray_direction), jnp.sin(ray_direction)], axis=-1) * max_range
+    s = jnp.stack([jnp.cos(ray_direction), jnp.sin(ray_direction)], axis=-1)
 
     # Calculate intersection
     rxs = JaxUtils.cross(r, s)

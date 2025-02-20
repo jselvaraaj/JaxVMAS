@@ -164,7 +164,9 @@ class JaxUtils:
         vector_a: Float[Array, f"{batch} {vector}"],
         vector_b: Float[Array, f"{batch} {vector}"],
     ) -> Float[Array, f"{batch} 1"]:
-        return jnp.cross(vector_a, vector_b)[..., None]
+        return (
+            vector_a[..., X] * vector_b[..., Y] - vector_a[..., Y] * vector_b[..., X]
+        )[..., None]
 
     @staticmethod
     def compute_torque(
