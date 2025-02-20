@@ -18,7 +18,6 @@ from jaxvmas.simulator.core.ray_physics import (
     cast_rays_to_sphere,
 )
 from jaxvmas.simulator.core.shapes import Box, Line, Shape, Sphere
-from jaxvmas.simulator.core.states import EntityState
 from jaxvmas.simulator.joints import Joint, JointConstraint
 from jaxvmas.simulator.physics import (
     _get_closest_box_box,
@@ -244,85 +243,6 @@ class World(JaxVectorizedObject):
 
     # TODO: make entity_filter depend on dynamic values. Right now, since it is used in a if statment, it can't change based on jax arrays.
     @jaxtyped(typechecker=beartype)
-    # def cast_ray(
-    #     self,
-    #     entity: Entity,
-    #     angles: Array,
-    #     max_range: float,
-    #     entity_filter: Callable[[Entity], Bool[Array, ""]] = lambda _: False,
-    # ):
-    #     """
-    #     Casts rays from the given entity along multiple angles and returns the minimum distances
-    #     at which the rays hit any other collidable entity.
-
-    #     Assumptions for pure JAX:
-    #     - entity.state.pos, agent/landmark states, and the results from the
-    #         cast_ray_to_* functions are all JAX arrays.
-    #     - self.entities, self.agents, and self.landmarks are static (or their lengths are compile–time constants).
-    #     - Each entity's shape carries a static "tag" attribute (e.g. 0 for Box, 1 for Sphere, 2 for Line)
-    #         that is used for type–switching via `jax.lax.switch`.
-    #     - The function `entity_filter` is jax–compatible.
-    #     """
-    #     pos = entity.state.pos
-    #     # Ensure correct dimensions.
-    #     assert pos.ndim == 2 and angles.ndim == 1
-    #     assert pos.shape[0] == angles.shape[0]
-
-    #     # Initialize running minimum distances with max_range.
-    #     min_dists = jnp.full((self.batch_dim,), max_range)
-    #     n_entities = len(self.entities)
-    #     n_agents = len(self.agents)
-
-    #     def loop_body(i, current_min):
-    #         e = self.entities[i]
-
-    #         # Determine if we should process this entity.
-    #         # In the original code, we “skip” if the entity is the same as the source
-    #         # or if the entity_filter returns False. Here we update only if (entity != e) and filter passes.
-    #         # (For pure JAX the comparison and filter must be JAX‐compatible.)
-    #         should_process = jnp.logical_and(
-    #             jnp.not_equal(entity.id, e.id), entity_filter(e)
-    #         )
-
-    #         def process():
-    #             # Select the state: if i < n_agents then the entity is an agent;
-    #             # otherwise, it is a landmark.
-    #             e_state = jax.lax.select(
-    #                 i < n_agents,
-    #                 self.agents[i].state,
-    #                 self.landmarks[abs(i - n_agents)].state,
-    #             )
-
-    #             # Dispatch based on the shape type.
-    #             # It is assumed that each shape has a .tag attribute:
-    #             #    tag == 0  → Box
-    #             #    tag == 1  → Sphere
-    #             #    tag == 2  → Line
-    #             def box_fn():
-    #                 return cast_ray_to_box(e, e_state, pos, angles, max_range)
-
-    #             def sphere_fn():
-    #                 return cast_ray_to_sphere(e, e_state, pos, angles, max_range)
-
-    #             def line_fn():
-    #                 return cast_ray_to_line(e, e_state, pos, angles, max_range)
-
-    #             # Use switch to select the correct ray–casting function.
-    #             d = jax.lax.switch(e.shape.tag, (box_fn, sphere_fn, line_fn))
-    #             # Update the running minimum: for each ray, choose the smaller distance.
-    #             return jnp.minimum(current_min, d)
-
-    #         # Use lax.cond to either process this entity or skip it.
-    #         return jax.lax.cond(
-    #             should_process,
-    #             lambda: process(),
-    #             lambda: current_min,
-    #         )
-
-    #     # Loop over all entities in a JAX–compatible way.
-    #     final_min = jax.lax.fori_loop(0, n_entities, loop_body, min_dists)
-    #     return final_min
-
     def cast_ray(
         self,
         entity: Entity,
@@ -332,35 +252,32 @@ class World(JaxVectorizedObject):
     ):
         pos = entity.state.pos
 
+        # Check shapes: pos should be 2D and angles 1D, and they must match on the first dimension.
         assert pos.ndim == 2 and angles.ndim == 1
         assert pos.shape[0] == angles.shape[0]
 
-        # Initialize with full max_range to avoid dists being empty when all entities are filtered
-        dists = [jnp.full((self.batch_dim,), fill_value=max_range)]
-        n_agents = len(self.agents)
-        for i, e in enumerate(self.entities):
+        # Initialize with full max_range to avoid an empty list when all entities are filtered
+        dists = [jnp.full((self.batch_dim,), max_range)]
 
-            e_state = None
-            if i < n_agents:
-                e_state = self.agents[i].state
-            else:
-                e_state = self.landmarks[i - n_agents].state
-
+        for e in self.entities:
             if entity is e or not entity_filter(e):
                 continue
             assert e.collides(entity) and entity.collides(
                 e
             ), "Rays are only casted among collidables"
             if isinstance(e.shape, Box):
-                d = cast_ray_to_box(e, e_state, pos, angles, max_range)
+                d = cast_ray_to_box(e, pos, angles, max_range)
             elif isinstance(e.shape, Sphere):
-                d = cast_ray_to_sphere(e, e_state, pos, angles, max_range)
+                d = cast_ray_to_sphere(e, pos, angles, max_range)
             elif isinstance(e.shape, Line):
-                d = cast_ray_to_line(e, e_state, pos, angles, max_range)
+                d = cast_ray_to_line(e, pos, angles, max_range)
             else:
                 raise RuntimeError(f"Shape {e.shape} currently not handled by cast_ray")
             dists.append(d)
-        dist, _ = jnp.min(jnp.stack(dists, dim=-1), dim=-1)
+
+        # Stack all distance arrays along a new dimension and take the minimum along that axis.
+        dists_stacked = jnp.stack(dists, axis=-1)
+        dist = jnp.min(dists_stacked, axis=-1)
         return dist
 
     # TODO: make entity_filter depend on dynamic values. Right now, since it is used in a if statment, it can't change based on jax arrays.
@@ -370,25 +287,18 @@ class World(JaxVectorizedObject):
         entity: Entity,
         angles: Array,
         max_range: float,
-        entity_filter: Callable[[Entity], Bool[Array, ""]] = lambda _: False,
+        entity_filter: Callable[[Entity], bool] = lambda _: False,
     ):
         pos = entity.state.pos
 
-        # Initialize with full max_range to avoid dists being empty when all entities are filtered
-        dists = jnp.full_like(angles, fill_value=max_range)[..., None]
-        boxes: list[Box] = []
-        boxes_state: list[EntityState] = []
-        spheres: list[Sphere] = []
-        spheres_state: list[EntityState] = []
-        lines: list[Line] = []
-        lines_state: list[EntityState] = []
-        n_agents = len(self.agents)
-        for i, e in enumerate(self.entities):
-            e_state = None
-            if i < n_agents:
-                e_state = self.agents[i].state
-            else:
-                e_state = self.landmarks[i - n_agents].state
+        # Initialize with full max_range to avoid empty distances when all entities are filtered
+        dists = jnp.full(angles.shape, max_range)
+        dists = jnp.expand_dims(dists, axis=-1)
+
+        boxes: list[Entity] = []
+        spheres: list[Entity] = []
+        lines: list[Entity] = []
+        for e in self.entities:
             if entity is e or not entity_filter(e):
                 continue
             assert e.collides(entity) and entity.collides(
@@ -396,13 +306,10 @@ class World(JaxVectorizedObject):
             ), "Rays are only casted among collidables"
             if isinstance(e.shape, Box):
                 boxes.append(e)
-                boxes_state.append(e_state)
             elif isinstance(e.shape, Sphere):
                 spheres.append(e)
-                spheres_state.append(e_state)
             elif isinstance(e.shape, Line):
                 lines.append(e)
-                lines_state.append(e_state)
             else:
                 raise RuntimeError(f"Shape {e.shape} currently not handled by cast_ray")
 
@@ -412,18 +319,25 @@ class World(JaxVectorizedObject):
             rot_box = []
             length_box = []
             width_box = []
-            for box, box_state in zip(boxes, boxes_state):
-                pos_box.append(box_state.pos)
-                rot_box.append(box_state.rot)
-                length_box.append(box.shape.length)
-                width_box.append(box.shape.width)
-            pos_box = jnp.stack(pos_box, dim=-2)
-            rot_box = jnp.stack(rot_box, dim=-2)
-            length_box = jnp.stack(length_box, dim=-1)
-            width_box = jnp.stack(width_box, dim=-1)
-            width_box = jnp.stack(width_box, dim=-1)
-            width_box = jnp.expand_dims(width_box, 0)
-            width_box = jnp.broadcast_to(width_box, (self.batch_dim, -1))
+            for box in boxes:
+                pos_box.append(box.state.pos)
+                rot_box.append(box.state.rot)
+                # Convert scalars into JAX arrays (device handling is implicit in JAX)
+                length_box.append(jnp.array(box.shape.length))
+                width_box.append(jnp.array(box.shape.width))
+            pos_box = jnp.stack(pos_box, axis=-2)
+            rot_box = jnp.stack(rot_box, axis=-2)
+            length_box = jnp.stack(length_box, axis=-1)
+            length_box = jnp.expand_dims(length_box, axis=0)
+            length_box = jnp.broadcast_to(
+                length_box, (self.batch_dim,) + length_box.shape[1:]
+            )
+            width_box = jnp.stack(width_box, axis=-1)
+            width_box = jnp.expand_dims(width_box, axis=0)
+            width_box = jnp.broadcast_to(
+                width_box, (self.batch_dim,) + width_box.shape[1:]
+            )
+
             dist_boxes = cast_rays_to_box(
                 self.batch_dim,
                 pos_box,
@@ -434,19 +348,22 @@ class World(JaxVectorizedObject):
                 angles,
                 max_range,
             )
-            dists = jnp.concatenate([dists, dist_boxes.transpose(-1, -2)], axis=-1)
+            # Transpose the last two dimensions to match the torch behavior
+            dists = jnp.concatenate([dists, jnp.swapaxes(dist_boxes, -1, -2)], axis=-1)
+
         # Spheres
         if len(spheres):
             pos_s = []
             radius_s = []
-            for s, s_state in zip(spheres, spheres_state):
-                pos_s.append(s_state.pos)
-                radius_s.append(s.shape.radius)
-            pos_s = jnp.stack(pos_s, dim=-2)
-            radius_s = jnp.stack(radius_s, dim=-1)
-            radius_s = jnp.expand_dims(radius_s, 0)
-            radius_s = jnp.broadcast_to(radius_s, (self.batch_dim, -1))
-
+            for s in spheres:
+                pos_s.append(s.state.pos)
+                radius_s.append(jnp.array(s.shape.radius))
+            pos_s = jnp.stack(pos_s, axis=-2)
+            radius_s = jnp.stack(radius_s, axis=-1)
+            radius_s = jnp.expand_dims(radius_s, axis=0)
+            radius_s = jnp.broadcast_to(
+                radius_s, (self.batch_dim,) + radius_s.shape[1:]
+            )
             dist_spheres = cast_rays_to_sphere(
                 self.batch_dim,
                 pos_s,
@@ -455,22 +372,26 @@ class World(JaxVectorizedObject):
                 angles,
                 max_range,
             )
-            dists = jnp.concatenate([dists, dist_spheres.transpose(-1, -2)], axis=-1)
+            dists = jnp.concatenate(
+                [dists, jnp.swapaxes(dist_spheres, -1, -2)], axis=-1
+            )
+
         # Lines
         if len(lines):
             pos_l = []
             rot_l = []
             length_l = []
-            for line, line_state in zip(lines, lines_state):
-                pos_l.append(line_state.pos)
-                rot_l.append(line_state.rot)
-                length_l.append(line.shape.length)
-            pos_l = jnp.stack(pos_l, dim=-2)
-            rot_l = jnp.stack(rot_l, dim=-2)
-            length_l = jnp.stack(length_l, dim=-1)
-            length_l = jnp.expand_dims(length_l, 0)
-            length_l = jnp.broadcast_to(length_l, (self.batch_dim, -1))
-
+            for line in lines:
+                pos_l.append(line.state.pos)
+                rot_l.append(line.state.rot)
+                length_l.append(jnp.array(line.shape.length))
+            pos_l = jnp.stack(pos_l, axis=-2)
+            rot_l = jnp.stack(rot_l, axis=-2)
+            length_l = jnp.stack(length_l, axis=-1)
+            length_l = jnp.expand_dims(length_l, axis=0)
+            length_l = jnp.broadcast_to(
+                length_l, (self.batch_dim,) + length_l.shape[1:]
+            )
             dist_lines = cast_rays_to_line(
                 self.batch_dim,
                 pos_l,
@@ -480,9 +401,9 @@ class World(JaxVectorizedObject):
                 angles,
                 max_range,
             )
-            dists = jnp.concatenate([dists, dist_lines.transpose(-1, -2)], axis=-1)
+            dists = jnp.concatenate([dists, jnp.swapaxes(dist_lines, -1, -2)], axis=-1)
 
-        dist, _ = jnp.min(dists, axis=-1)
+        dist = jnp.min(dists, axis=-1)
         return dist
 
     @jaxtyped(typechecker=beartype)
