@@ -40,6 +40,14 @@ def _get_closest_box_box(
     box2_width: Float[Array, f"{batch}"] | float,
     box2_length: Float[Array, f"{batch}"] | float,
 ) -> tuple[Float[Array, f"{batch} {dim_p}"], Float[Array, f"{batch} {dim_p}"]]:
+    # Initial debug prints
+    print("\n=== Box-Box Distance Calculation ===")
+    print(
+        f"Box 1: pos={box_pos}, rot={box_rot}, width={box_width}, length={box_length}"
+    )
+    print(
+        f"Box 2: pos={box2_pos}, rot={box2_rot}, width={box2_width}, length={box2_length}"
+    )
 
     # Convert scalar inputs to arrays if needed
     if not isinstance(box_width, Array):
@@ -58,15 +66,22 @@ def _get_closest_box_box(
         jnp.stack([box_width, box2_width], axis=0),
         jnp.stack([box_length, box2_length], axis=0),
     )
+    print("\n=== Box Lines ===")
+    print(f"Lines positions: {lines_pos}")
+    print(f"Lines rotations: {lines_rot}")
+    print(f"Lines lengths: {lines_length}")
 
-    # “Unbind” along axis=1 (i.e. split the tensor along axis=1)
-    # Assuming lines_pos, lines_rot, lines_length have shape (?, 2, ...)
+    # "Unbind" along axis=1
     lines_a_pos = lines_pos[:, 0, ...]
     lines_b_pos = lines_pos[:, 1, ...]
     lines_a_rot = lines_rot[:, 0, ...]
     lines_b_rot = lines_rot[:, 1, ...]
     lines_a_length = lines_length[:, 0, ...]
     lines_b_length = lines_length[:, 1, ...]
+
+    print("\n=== Separated Lines ===")
+    print(f"Box 1 lines positions: {lines_a_pos}")
+    print(f"Box 2 lines positions: {lines_b_pos}")
 
     points_first, points_second = _get_closest_line_box(
         jnp.stack(
@@ -98,35 +113,51 @@ def _get_closest_box_box(
         jnp.stack([lines_a_length, lines_b_length]),
     )
 
-    # Unbind along axis=0.
-    # Here we assume points_first and points_second each have shape (2, ...).
+    print("\n=== Initial Closest Points ===")
+    print(f"Points first: {points_first}")
+    print(f"Points second: {points_second}")
+
+    # Unbind along axis=0
     points_box2_a = points_first[0]
     points_box_b = points_first[1]
     points_box_a = points_second[0]
     points_box2_b = points_second[1]
 
-    # For each “pair” of points along the first dimension, compute candidate sums.
-    # We iterate over axis 0.
+    print("\n=== Separated Points ===")
+    print(f"Box2 points A: {points_box2_a}")
+    print(f"Box points B: {points_box_b}")
+    print(f"Box points A: {points_box_a}")
+    print(f"Box2 points B: {points_box2_b}")
+
+    # For each pair of points, compute candidate sums
     num_candidates = points_box_a.shape[0]
     p1s = [points_box_a[i] + points_box_b[i] for i in range(num_candidates)]
     p2s = [points_box2_a[i] + points_box2_b[i] for i in range(num_candidates)]
 
-    # Initialize closest points and distance with infinities.
+    print("\n=== Candidate Points ===")
+    print(f"P1 candidates: {p1s}")
+    print(f"P2 candidates: {p2s}")
+
+    # Initialize with infinities
     closest_point_1 = jnp.full(box_pos.shape, float("inf"), dtype=jnp.float32)
     closest_point_2 = jnp.full(box_pos.shape, float("inf"), dtype=jnp.float32)
     distance = jnp.full(box_pos.shape[:-1], float("inf"), dtype=jnp.float32)
 
-    # Loop over candidate pairs to pick the pair with the smallest distance.
+    # Loop over candidates to find closest pair
     for i in range(num_candidates):
         d = jnp.linalg.norm(p1s[i] - p2s[i], axis=-1)
         is_closest = d < distance
-        # Expand is_closest to match the candidate shape
         is_closest_exp = jnp.broadcast_to(
             jnp.expand_dims(is_closest, axis=-1), p1s[i].shape
         )
         closest_point_1 = jnp.where(is_closest_exp, p1s[i], closest_point_1)
         closest_point_2 = jnp.where(is_closest_exp, p2s[i], closest_point_2)
         distance = jnp.where(is_closest, d, distance)
+
+    print("\n=== Final Results ===")
+    print(f"Closest point 1: {closest_point_1}")
+    print(f"Closest point 2: {closest_point_2}")
+    print(f"Distance: {distance}")
 
     return closest_point_1, closest_point_2
 
@@ -314,7 +345,7 @@ def _get_all_lines_box(
     p4 = box_pos - rotated_vector2 * expanded_half_box_width
 
     ps = jnp.stack([p1, p2, p3, p4])
-    rots = jnp.stack([box_rot + jnp.pi / 2, box_rot + jnp.pi / 2, box_rot, box_rot])
+    rots = jnp.stack([box_rot, box_rot, box_rot + jnp.pi / 2, box_rot + jnp.pi / 2])
     lengths = jnp.stack([box_width, box_width, box_length, box_length])
 
     return ps, rots, lengths
@@ -329,6 +360,10 @@ def _get_closest_line_box(
     line_rot: Float[Array, f"{batch} 1"],
     line_length: Float[Array, f"{batch}"] | float,
 ) -> tuple[Float[Array, f"{batch} {dim_p}"], Float[Array, f"{batch} {dim_p}"]]:
+    # Add debug prints
+    print("Line-Box calculation:")
+    print(f"Box position: {box_pos}, rotation: {box_rot}")
+    print(f"Line position: {line_pos}, rotation: {line_rot}")
 
     if not isinstance(box_width, Array):
         box_width = jnp.full(box_pos.shape[0], box_width)
@@ -367,7 +402,11 @@ def _get_closest_line_box(
         target_line_rot,
         target_line_length,
     )
-    # Assume candidate axis is axis 0. “Unbind” using a Python loop.
+
+    # Add debug print
+    print(f"Closest points between lines: box_points={ps_box}, line_points={ps_line}")
+
+    # Assume candidate axis is axis 0. "Unbind" using a Python loop.
     num_candidates = ps_box.shape[0]
     for i in range(num_candidates):
         p_box = ps_box[i]  # shape: (batch, dim)
@@ -403,7 +442,7 @@ def _get_all_points_box(
     closest_points = _get_closest_point_line(
         lines_pos, lines_rot, lines_length, target_test_point_pos
     )
-    # “Unbind” along candidate axis by turning the first axis into a list.
+    # "Unbind" along candidate axis by turning the first axis into a list.
     return [closest_points[i] for i in range(closest_points.shape[0])]
 
 

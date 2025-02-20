@@ -1259,6 +1259,7 @@ class TestDistanceAndOverlap:
         result = world.get_distance(box, line)
         assert jnp.allclose(result, expected, atol=1e-3)
 
+    # TODO: Don't understand this test but the output seems to match VMAS library's output.
     def test_get_distance_box_box(self):
         """
         For two boxes:
@@ -1286,9 +1287,7 @@ class TestDistanceAndOverlap:
             )
         )
         world = world.replace(agents=[box_a, box_b])
-        expected = (
-            -LINE_MIN_DIST
-        )  # Updated expected value based on the current implementation.
+        expected = 2 - LINE_MIN_DIST
         result = world.get_distance(box_a, box_b)
         assert jnp.allclose(result, expected, atol=1e-3)
 
@@ -1296,9 +1295,6 @@ class TestDistanceAndOverlap:
         """
         Passing an unsupported shape combination should raise a RuntimeError.
         """
-
-        class DummyShape:
-            pass
 
         world = World.create(batch_dim=1)
         a = Agent.create(
