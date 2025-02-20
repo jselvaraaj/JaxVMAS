@@ -411,7 +411,7 @@ class World(JaxVectorizedObject):
         self,
         entity: Entity,
         test_point_pos: Array,
-        env_index: int = None,
+        env_index: int | float = jnp.nan,
     ):
         self._check_batch_index(env_index)
 
@@ -440,7 +440,7 @@ class World(JaxVectorizedObject):
             return_value = distance - LINE_MIN_DIST
         else:
             raise RuntimeError("Distance not computable for given entity")
-        if env_index is not None:
+        if not jnp.isnan(env_index):
             return_value = return_value[env_index]
         return return_value
 
@@ -449,7 +449,7 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: int = None,
+        env_index: int | float = jnp.nan,
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
@@ -471,7 +471,7 @@ class World(JaxVectorizedObject):
             dist = self.get_distance_from_point(box, entity_b.state.pos, env_index)
             return_value = dist - sphere.shape.radius
             is_overlapping = self.is_overlapping(entity_a, entity_b)
-            return_value[is_overlapping] = -1
+            return_value = jnp.where(is_overlapping, -1, return_value)
         elif (
             isinstance(entity_a.shape, Line)
             and isinstance(entity_b.shape, Sphere)
@@ -516,7 +516,7 @@ class World(JaxVectorizedObject):
                 line_state.rot,
                 line.shape.length,
             )
-            dist = jnp.linalg.vector_norm(point_box - point_line, dim=1)
+            dist = jnp.linalg.vector_norm(point_box - point_line, axis=-1)
             return_value = dist - LINE_MIN_DIST
         elif isinstance(entity_a.shape, Box) and isinstance(entity_b.shape, Box):
             point_a, point_b = _get_closest_box_box(
@@ -540,9 +540,9 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: int = None,
+        env_index: int | float = jnp.nan,
     ):
-        a_shape = entity_a.shap
+        a_shape = entity_a.shape
         b_shape = entity_b.shape
         self._check_batch_index(env_index)
 
@@ -601,7 +601,7 @@ class World(JaxVectorizedObject):
             )
         else:
             raise RuntimeError("Overlap not computable for give entities")
-        if env_index is not None:
+        if not jnp.isnan(env_index):
             return_value = return_value[env_index]
         return return_value
 

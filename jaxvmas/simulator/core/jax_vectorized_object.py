@@ -28,5 +28,8 @@ class JaxVectorizedObject(PyTreeNode):
         return cls(batch_dim)
 
     @jaxtyped(typechecker=beartype)
-    def _check_batch_index(self, batch_index: int):
-        chex.assert_scalar_in(batch_index, 0, self.batch_dim - 1)
+    def _check_batch_index(self, batch_index: int | float):
+        if isinstance(batch_index, float):
+            pass
+        else:
+            chex.assert_scalar_in(batch_index, 0, self.batch_dim - 1)

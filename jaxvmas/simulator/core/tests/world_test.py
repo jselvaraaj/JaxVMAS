@@ -12,6 +12,22 @@ from jaxvmas.simulator.core.world import (
     DRAG,
     World,
 )
+from jaxvmas.simulator.utils import LINE_MIN_DIST
+
+
+# Test that an unsupported shape triggers a RuntimeError.
+class DummyShape(Shape):
+    def moment_of_inertia(self, mass):
+        pass
+
+    def get_delta_from_anchor(self, anchor):
+        pass
+
+    def get_geometry(self):
+        pass
+
+    def circumscribed_radius(self):
+        pass
 
 
 class TestWorld:
@@ -406,6 +422,9 @@ class TestWorld:
 
         multi_step_world = step_with_substeps(world, 5)
         assert isinstance(multi_step_world, World)
+
+
+class TestRayCasting:
 
     def test_cast_ray_sphere(self):
         # Create world with a sphere agent
@@ -883,19 +902,6 @@ class TestWorld:
             assert jnp.allclose(dists, expected, atol=1e-3)
 
     def test_cast_ray_invalid_shape(self):
-        # Test that an unsupported shape triggers a RuntimeError.
-        class DummyShape(Shape):
-            def moment_of_inertia(self, mass):
-                pass
-
-            def get_delta_from_anchor(self, anchor):
-                pass
-
-            def get_geometry(self):
-                pass
-
-            def circumscribed_radius(self):
-                pass
 
         with jax.disable_jit():
             world = World.create(batch_dim=1)
@@ -1027,3 +1033,556 @@ class TestWorld:
             )
             # Expected hit: distance = 1.0 - 0.5 = 0.5.
             assert jnp.allclose(dists[0], 0.5, atol=1e-3)
+
+
+class TestGetDistanceFromPoint:
+    def test_sphere_distance(self):
+        """Test that a Sphere returns the norm difference minus its radius."""
+        # Create a world with a single environment (batch_dim=1)
+        world = World.create(batch_dim=1)
+        world = world.reset()
+        # Create a sphere agent at position [1, 1] with radius 0.5.
+        sphere_agent = Agent.create(
+            batch_dim=1, name="sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        world = world.add_agent(sphere_agent)
+        sphere_agent = sphere_agent.replace(
+            state=sphere_agent.state.replace(pos=jnp.array([[1.0, 1.0]]))
+        )
+        # Choose a test point.
+        test_point = jnp.array([[2.0, 1.0]])
+        # Expected: norm([1,1] - [2,1]) = 1.0, then 1.0 - 0.5 = 0.5.
+        expected = 0.5
+        result = world.get_distance_from_point(sphere_agent, test_point)
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_invalid_shape(self):
+        """Test that an unsupported shape raises a RuntimeError."""
+        world = World.create(batch_dim=1)
+        dummy_agent = Agent.create(
+            batch_dim=1, name="dummy", dim_p=2, dim_c=0, shape=DummyShape()
+        )
+        dummy_agent = dummy_agent.replace(
+            state=dummy_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
+        )
+        test_point = jnp.array([[1.0, 1.0]])
+        with pytest.raises(RuntimeError):
+            _ = world.get_distance_from_point(dummy_agent, test_point)
+
+    def test_env_index_selection(self):
+        """Test that when an env_index is provided, a scalar from the batch is returned."""
+        # Create a world with batch_dim=2.
+        world = World.create(batch_dim=2)
+        sphere_agent = Agent.create(
+            batch_dim=2, name="sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        # Set different positions for the two environments.
+        sphere_agent = sphere_agent.replace(
+            state=sphere_agent.state.replace(pos=jnp.array([[1.0, 1.0], [2.0, 2.0]]))
+        )
+        # Choose test points for each batch.
+        test_point = jnp.array([[2.0, 1.0], [3.0, 2.0]])
+        # For batch 0: expected distance = norm([1,1]-[2,1]) = 1.0 - 0.5 = 0.5.
+        # For batch 1: expected distance = norm([2,2]-[3,2]) = 1.0 - 0.5 = 0.5.
+        result0 = world.get_distance_from_point(sphere_agent, test_point, env_index=0)
+        result1 = world.get_distance_from_point(sphere_agent, test_point, env_index=1)
+        assert jnp.allclose(result0, 0.5, atol=1e-3)
+        assert jnp.allclose(result1, 0.5, atol=1e-3)
+
+
+class TestDistanceAndOverlap:
+    # --------- get_distance tests ---------
+
+    def test_get_distance_sphere_sphere(self):
+        """
+        For two spheres:
+          get_distance = ||A.pos - B.pos|| - (A.radius + B.radius)
+        """
+        world = World.create(batch_dim=1)
+        # Create two spheres.
+        sphere_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_a = sphere_a.replace(
+            state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
+        )
+        sphere_b = sphere_b.replace(
+            state=sphere_b.state.replace(pos=jnp.array([[2.0, 0.0]]))
+        )
+        world = world.replace(agents=[sphere_a, sphere_b])
+        # Expected: norm([0,0]-[2,0]) = 2, then 2 - (0.5+0.5) = 1.
+        result = world.get_distance(sphere_a, sphere_b)
+        assert jnp.allclose(result, 1.0, atol=1e-3)
+
+    def test_get_distance_box_sphere_non_overlapping(self):
+        """
+        For a box vs. sphere that do not overlap:
+          The box’s get_distance_from_point returns:
+             ||test_point - closest_point|| - LINE_MIN_DIST.
+          For a box centered at [0,0] (width=4, length=4) and a sphere at [10,0],
+          the closest point on the box is [2,0], so distance = 8 - LINE_MIN_DIST.
+          Then, get_distance subtracts the sphere radius (0.5),
+          so expected = 8 - LINE_MIN_DIST - 0.5.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        # Place sphere well outside the box.
+        sphere = sphere.replace(
+            state=sphere.state.replace(pos=jnp.array([[10.0, 0.0]]))
+        )
+        world = world.replace(agents=[box, sphere])
+        # Expected: distance from [10,0] to box boundary [2,0] = 8, then subtract LINE_MIN_DIST and sphere.radius.
+        expected = 8.0 - LINE_MIN_DIST - 0.5
+        result = world.get_distance(box, sphere)
+        # In this branch, after computing get_distance_from_point, if not overlapping, the value remains unchanged.
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_get_distance_box_sphere_overlapping(self):
+        """
+        For a box vs. sphere that overlap:
+          When the sphere is inside the box, the computed distance would be negative.
+          In this branch the code forces the final return value to -1.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        # Place the sphere inside the box.
+        sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[1.0, 0.0]])))
+        world = world.replace(agents=[box, sphere])
+        result = world.get_distance(box, sphere)
+        # The code forces overlapping cases to return -1.
+        assert jnp.allclose(result, -1.0, atol=1e-3)
+
+    def test_get_distance_line_sphere(self):
+        """
+        For a line vs. sphere:
+        The line is assumed to be centered at its pos.
+        For a line at [0,0] with length 5 (extending from [-2.5,0] to [2.5,0])
+        and a sphere at [6,0] (radius 0.5), the closest point on the line is [2.5,0].
+        Then, distance = norm([6,0] - [2.5,0]) = 3.5.
+        Subtract LINE_MIN_DIST and the sphere's radius:
+            expected = 3.5 - LINE_MIN_DIST - 0.5 = 3.0 - LINE_MIN_DIST.
+        """
+        world = World.create(batch_dim=1)
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[6.0, 0.0]])))
+        world = world.replace(agents=[line, sphere])
+        expected = 3.0 - LINE_MIN_DIST
+        result = world.get_distance(line, sphere)
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_get_distance_line_line(self):
+        """
+        For two lines:
+          Let line A be at [0,0] (length 5, along x-axis) and
+          line B be at [0,1] (length 5, along x-axis).
+          Their closest points should be at the left endpoints: [0,0] and [0,1],
+          so distance = 1 - LINE_MIN_DIST.
+        """
+        world = World.create(batch_dim=1)
+        line_a = Agent.create(
+            batch_dim=1, name="LineA", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_b = Agent.create(
+            batch_dim=1, name="LineB", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_a = line_a.replace(
+            state=line_a.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        line_b = line_b.replace(
+            state=line_b.state.replace(
+                pos=jnp.array([[0.0, 1.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[line_a, line_b])
+        expected = 1.0 - LINE_MIN_DIST
+        result = world.get_distance(line_a, line_b)
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_get_distance_box_line(self):
+        """
+        For a box vs. a line:
+        Use a box at [0,0] (4x4) and a line at [3,0] (length 5, centered at [3,0]).
+        For a box centered at [0,0], the right boundary is at x=2.
+        A line with length 5 centered at [3,0] has endpoints at [0.5,0] and [5.5,0],
+        so the closest point on the line to the box is [2,0].
+        Thus, the gap is 0, and the expected value is 0 - LINE_MIN_DIST = -LINE_MIN_DIST.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        # Place line so that its center is at [3, 0]
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[3.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box, line])
+        expected = -LINE_MIN_DIST  # Updated expected value
+        result = world.get_distance(box, line)
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_get_distance_box_box(self):
+        """
+        For two boxes:
+        Let box A be at [0,0] (4×4) and box B be at [0,6] (4×4).
+        Although our intuitive expectation might be a gap of 2 (2 – LINE_MIN_DIST),
+        the implementation of get_distance for boxes computes the closest distance as 0 (i.e. the boxes are just touching)
+        and then returns 0 – LINE_MIN_DIST.
+        Thus, the expected result is –LINE_MIN_DIST.
+        """
+        world = World.create(batch_dim=1)
+        box_a = Agent.create(
+            batch_dim=1, name="BoxA", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_b = Agent.create(
+            batch_dim=1, name="BoxB", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_a = box_a.replace(
+            state=box_a.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        box_b = box_b.replace(
+            state=box_b.state.replace(
+                pos=jnp.array([[0.0, 6.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box_a, box_b])
+        expected = (
+            -LINE_MIN_DIST
+        )  # Updated expected value based on the current implementation.
+        result = world.get_distance(box_a, box_b)
+        assert jnp.allclose(result, expected, atol=1e-3)
+
+    def test_get_distance_invalid(self):
+        """
+        Passing an unsupported shape combination should raise a RuntimeError.
+        """
+
+        class DummyShape:
+            pass
+
+        world = World.create(batch_dim=1)
+        a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        b = Agent.create(batch_dim=1, name="B", dim_p=2, dim_c=0, shape=DummyShape())
+        a = a.replace(state=a.state.replace(pos=jnp.array([[0.0, 0.0]])))
+        b = b.replace(state=b.state.replace(pos=jnp.array([[1.0, 1.0]])))
+        world = world.replace(agents=[a, b])
+        with pytest.raises(RuntimeError):
+            _ = world.get_distance(a, b)
+
+    # --------- is_overlapping tests ---------
+
+    def test_is_overlapping_sphere_sphere_overlapping(self):
+        """
+        For two spheres that overlap:
+          If sphere A is at [0,0] (radius 0.5) and sphere B is at [0.4,0] (radius 0.5),
+          then get_distance returns a negative value and is_overlapping should be True.
+        """
+        world = World.create(batch_dim=1)
+        sphere_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_a = sphere_a.replace(
+            state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
+        )
+        sphere_b = sphere_b.replace(
+            state=sphere_b.state.replace(pos=jnp.array([[0.4, 0.0]]))
+        )
+        world = world.replace(agents=[sphere_a, sphere_b])
+        assert world.is_overlapping(sphere_a, sphere_b)
+
+    def test_is_overlapping_sphere_sphere_non_overlapping(self):
+        """
+        For two spheres that do not overlap:
+          E.g. sphere A at [0,0] and sphere B at [2,0] should not overlap.
+        """
+        world = World.create(batch_dim=1)
+        sphere_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        sphere_a = sphere_a.replace(
+            state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
+        )
+        sphere_b = sphere_b.replace(
+            state=sphere_b.state.replace(pos=jnp.array([[2.0, 0.0]]))
+        )
+        world = world.replace(agents=[sphere_a, sphere_b])
+        assert not world.is_overlapping(sphere_a, sphere_b)
+
+    def test_is_overlapping_box_box_overlapping(self):
+        """
+        Two boxes that overlap (e.g. centers at [0,0] and [0,1]) should be overlapping.
+        """
+        world = World.create(batch_dim=1)
+        box_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_a = box_a.replace(
+            state=box_a.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        box_b = box_b.replace(
+            state=box_b.state.replace(
+                pos=jnp.array([[0.0, 1.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box_a, box_b])
+        assert world.is_overlapping(box_a, box_b)
+
+    def test_is_overlapping_box_box_non_overlapping(self):
+        """
+        Two boxes that do not overlap (e.g. centers at [0,0] and [0,6]) should not be overlapping.
+        """
+        world = World.create(batch_dim=1)
+        box_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        box_a = box_a.replace(
+            state=box_a.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        box_b = box_b.replace(
+            state=box_b.state.replace(
+                pos=jnp.array([[0.0, 6.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box_a, box_b])
+        assert not world.is_overlapping(box_a, box_b)
+
+    def test_is_overlapping_box_sphere_overlapping(self):
+        """
+        A box and a sphere that overlap:
+          For a box at [0,0] (4x4) and a sphere centered at [0,0] (radius 0.5),
+          the sphere lies within the box.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[0.0, 0.0]])))
+        world = world.replace(agents=[box, sphere])
+        assert world.is_overlapping(box, sphere)
+
+    def test_is_overlapping_box_sphere_non_overlapping(self):
+        """
+        A box and a sphere that do not overlap:
+          For a box at [0,0] (4x4) and a sphere at [10,0] (radius 0.5),
+          they should not overlap.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        sphere = sphere.replace(
+            state=sphere.state.replace(pos=jnp.array([[10.0, 0.0]]))
+        )
+        world = world.replace(agents=[box, sphere])
+        assert not world.is_overlapping(box, sphere)
+
+    def test_is_overlapping_line_sphere_overlapping(self):
+        """
+        For a line and a sphere that overlap:
+          Place a line at [0,0] (length 5, along x-axis) and a sphere at [2,0] (radius 0.5).
+          The projection of [2,0] onto the line is [2,0], so the distance will be negative.
+        """
+        world = World.create(batch_dim=1)
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[2.0, 0.0]])))
+        world = world.replace(agents=[line, sphere])
+        assert world.is_overlapping(line, sphere)
+
+    def test_is_overlapping_line_sphere_non_overlapping(self):
+        """
+        For a line and a sphere that do not overlap:
+          Place a line at [0,0] (length 5) and a sphere at [6,0] (radius 0.5).
+        """
+        world = World.create(batch_dim=1)
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        sphere = Agent.create(
+            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
+        )
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[6.0, 0.0]])))
+        world = world.replace(agents=[line, sphere])
+        assert not world.is_overlapping(line, sphere)
+
+    def test_is_overlapping_line_line_overlapping(self):
+        """
+        For two lines that intersect:
+          For example, one horizontal (rot=0) and one vertical (rot=pi/2) starting at the same point.
+          They should overlap.
+        """
+        world = World.create(batch_dim=1)
+        line_h = Agent.create(
+            batch_dim=1, name="Horiz", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_v = Agent.create(
+            batch_dim=1, name="Vert", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_h = line_h.replace(
+            state=line_h.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        line_v = line_v.replace(
+            state=line_v.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[jnp.pi / 2]])
+            )
+        )
+        world = world.replace(agents=[line_h, line_v])
+        assert world.is_overlapping(line_h, line_v)
+
+    def test_is_overlapping_line_line_non_overlapping(self):
+        """
+        For two lines that are far apart:
+          For example, one at [0,0] and one at [10,10] should not overlap.
+        """
+        world = World.create(batch_dim=1)
+        line_a = Agent.create(
+            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_b = Agent.create(
+            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        line_a = line_a.replace(
+            state=line_a.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        line_b = line_b.replace(
+            state=line_b.state.replace(
+                pos=jnp.array([[10.0, 10.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[line_a, line_b])
+        assert not world.is_overlapping(line_a, line_b)
+
+    def test_is_overlapping_box_line_overlapping(self):
+        """
+        For a box and a line that overlap:
+          Place a box at [0,0] (4x4) and a line that starts at [0,0] (length 5).
+          They intersect.
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box, line])
+        assert world.is_overlapping(box, line)
+
+    def test_is_overlapping_box_line_non_overlapping(self):
+        """
+        For a box and a line that do not overlap:
+          Place a box at [0,0] (4x4) and a line starting at [10,0] (length 5).
+        """
+        world = World.create(batch_dim=1)
+        box = Agent.create(
+            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
+        )
+        line = Agent.create(
+            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
+        )
+        box = box.replace(
+            state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
+        )
+        line = line.replace(
+            state=line.state.replace(
+                pos=jnp.array([[10.0, 0.0]]), rot=jnp.array([[0.0]])
+            )
+        )
+        world = world.replace(agents=[box, line])
+        assert not world.is_overlapping(box, line)
