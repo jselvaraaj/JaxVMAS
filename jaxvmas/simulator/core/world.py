@@ -1673,7 +1673,7 @@ class World(JaxVectorizedObject):
         self,
         pos_a: Array,
         pos_b: Array,
-        dist_min: Array,
+        dist_min: float | Array,
         force_multiplier: Array | float,
         attractive: bool = False,
     ) -> tuple[Array, Array]:

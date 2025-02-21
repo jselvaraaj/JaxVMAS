@@ -8,7 +8,7 @@ from jaxvmas.simulator.dynamics.common import Dynamics
 
 
 # Create a concrete test class implementing Dynamics
-class TestDynamics(Dynamics):
+class MockDynamics(Dynamics):
     needed_action_size: int = 2
 
     def process_action(self, agent: Agent) -> tuple[Dynamics, Agent]:
@@ -25,7 +25,7 @@ class TestDynamics(Dynamics):
 class TestDynamicsClass:
     @pytest.fixture
     def basic_dynamics(self):
-        return TestDynamics()
+        return MockDynamics()
 
     @pytest.fixture
     def basic_agent(self):
