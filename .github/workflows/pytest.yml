@@ -1,4 +1,4 @@
-name: Parallel PyTest
+name: PyTest
 
 on: [push, pull_request]
 
