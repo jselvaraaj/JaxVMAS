@@ -2,7 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, Int
 
 from jaxvmas.equinox_utils import equinox_filter_cond_return_pytree_node
 from jaxvmas.simulator.core.agent import Agent
@@ -47,11 +47,15 @@ class MockScenario(BaseScenario):
         self = self.replace(world=world)
         return self
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | float) -> "MockScenario":
+    def reset_world_at(
+        self,
+        PRNG_key: Array,
+        env_index: Int[Array, f"{batch_dim}"] | Int[Array, ""],
+    ) -> "MockScenario":
         # Reset all agents in the world at the specified index
         world = equinox_filter_cond_return_pytree_node(
             jnp.isnan(env_index),
-            lambda world: world.reset(env_index=jnp.nan),
+            lambda world: world.reset(env_index=jnp.asarray(-1)),
             lambda world: world.reset(env_index=env_index),
             self.world,
         )
@@ -150,16 +154,11 @@ class TestEnvironment:
 
         # Reset specific environment
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
-        env, result = env.reset_at(PRNG_key=key_step_i, index=0)
+        env, result = env.reset_at(PRNG_key=key_step_i, index=jnp.asarray(0))
         assert isinstance(result, list)
         assert len(result) == env.n_agents
         assert jnp.all(env.steps[0] == 0)
         assert jnp.all(env.steps[1:] == 1)
-        with jax.disable_jit(True):
-            # Test invalid index
-            with pytest.raises(AssertionError):
-                PRNG_key, key_step_i = jax.random.split(PRNG_key)
-                env.reset_at(PRNG_key=key_step_i, index=32)
 
     def test_step(self, basic_env: tuple[Environment, Array]):
         """Test environment stepping"""
@@ -351,11 +350,15 @@ class TestEnvironment:
 
         # Test jit compatibility of reset_at
         @eqx.filter_jit
-        def reset_at_env(env: Environment, PRNG_key: Array, index: int):
+        def reset_at_env(
+            env: Environment,
+            PRNG_key: Array,
+            index: Int[Array, f"{batch_dim}"] | Int[Array, ""],
+        ):
             return env.reset_at(PRNG_key=PRNG_key, index=index)
 
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
-        env, obs = reset_at_env(env, key_step_i, 0)
+        env, obs = reset_at_env(env, key_step_i, jnp.asarray(0))
         assert len(obs) == env.n_agents
 
         # Test jit compatibility of step

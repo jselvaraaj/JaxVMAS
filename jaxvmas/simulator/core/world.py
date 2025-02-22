@@ -1,9 +1,10 @@
+import chex
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable
-from jaxtyping import Array, Bool, jaxtyped
+from jaxtyping import Array, Bool, Int, jaxtyped
 
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
@@ -40,6 +41,8 @@ from jaxvmas.simulator.utils import (
     Y,
 )
 
+batch_axis_dim = "batch_axis_dim"
+
 
 # Multi-agent world
 # TODO: make all the functions here depend on parameters from self that they need as opposed to passing in the entire self to decrease the use of replace.
@@ -71,6 +74,7 @@ class World(JaxVectorizedObject):
     torque_dict: dict[int, Array]
 
     @classmethod
+    @chex.assert_max_traces(0)
     def create(
         cls,
         batch_dim: int,
@@ -164,6 +168,7 @@ class World(JaxVectorizedObject):
         return self.entities[id]
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def add_agent(
         self,
         agent: Agent,
@@ -183,6 +188,7 @@ class World(JaxVectorizedObject):
         return self
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def add_landmark(
         self,
         landmark: Landmark,
@@ -195,6 +201,7 @@ class World(JaxVectorizedObject):
         return self
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def add_joint(self, joint: Joint):
         assert self.substeps > 1, "For joints, world substeps needs to be more than 1"
         if joint.landmark is not None:
@@ -208,7 +215,10 @@ class World(JaxVectorizedObject):
         return self.replace(_joints=_joints)
 
     @jaxtyped(typechecker=beartype)
-    def reset(self, env_index: int | float = jnp.nan):
+    def reset(
+        self,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         entities: list[Entity] = []
         for e in self.entities:
             entities.append(e._reset(env_index))
@@ -411,7 +421,7 @@ class World(JaxVectorizedObject):
         self,
         entity: Entity,
         test_point_pos: Array,
-        env_index: int | float = jnp.nan,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
     ):
         self._check_batch_index(env_index)
 
@@ -440,7 +450,7 @@ class World(JaxVectorizedObject):
             return_value = distance - LINE_MIN_DIST
         else:
             raise RuntimeError("Distance not computable for given entity")
-        if not jnp.isnan(env_index):
+        if env_index != -1:
             return_value = return_value[env_index]
         return return_value
 
@@ -449,7 +459,7 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: int | float = jnp.nan,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
@@ -540,7 +550,7 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: int | float = jnp.nan,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
@@ -601,7 +611,7 @@ class World(JaxVectorizedObject):
             )
         else:
             raise RuntimeError("Overlap not computable for give entities")
-        if not jnp.isnan(env_index):
+        if env_index != -1:
             return_value = return_value[env_index]
         return return_value
 

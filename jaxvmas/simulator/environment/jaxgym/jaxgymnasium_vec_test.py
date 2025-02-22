@@ -105,7 +105,7 @@ class TestJaxGymnasiumVecWrapper:
         assert isinstance(env_data.rews, list)
         assert env_data.terminated.shape == (2,)
         assert env_data.truncated.shape == (2,)
-        assert env_data.done is None
+        assert env_data.done.shape == (2,)
 
     def test_reset_jit(self, wrapper: JaxGymnasiumVecWrapper):
         """Test jitted reset function."""

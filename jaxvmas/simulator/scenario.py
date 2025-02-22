@@ -3,9 +3,11 @@
 #  All rights reserved.
 from typing import Generic, TypeVar
 
+import chex
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, Int, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.core.agent import Agent
@@ -20,7 +22,7 @@ from jaxvmas.simulator.utils import (
 )
 
 # Type dimensions
-batch = "batch"
+batch_axis_dim = "batch_axis_dim"
 pos = "pos"
 comm = "comm"
 action = "action"
@@ -29,6 +31,7 @@ info = "info"
 WorldType = TypeVar("WorldType", bound=World)
 
 
+@jaxtyped(typechecker=beartype)
 class BaseScenario(PyTreeNode, Generic[WorldType]):
     """Base class for scenarios.
 
@@ -60,6 +63,8 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     visualize_semidims: bool
 
     @classmethod
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def create(cls, **kwargs) -> "BaseScenario":
         """Do not override."""
         world = None
@@ -85,19 +90,24 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
             visualize_semidims,
         )
 
+    @jaxtyped(typechecker=beartype)
     def env_make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         # Do not override
         self = self.make_world(batch_dim, **kwargs)
         return self
 
+    @jaxtyped(typechecker=beartype)
     def env_reset_world_at(
-        self, PRNG_key: Array, env_index: int | float
+        self,
+        PRNG_key: Array,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
     ) -> "BaseScenario":
         # Do not override
         self = self.replace(world=self.world.reset(env_index))
         self = self.reset_world_at(PRNG_key, env_index)
         return self
 
+    @jaxtyped(typechecker=beartype)
     def env_process_action(
         self, PRNG_key: Array, agent: Agent
     ) -> tuple["BaseScenario", Agent]:
@@ -113,6 +123,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
 
         return self, agent
 
+    @jaxtyped(typechecker=beartype)
     def make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         """
         This function needs to be implemented when creating a scenario.
@@ -128,7 +139,12 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | float) -> "BaseScenario":
+    @jaxtyped(typechecker=beartype)
+    def reset_world_at(
+        self,
+        PRNG_key: Array,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+    ) -> "BaseScenario":
         """Resets the world at the specified env_index.
 
         When a ``None`` index is passed, the world should make a vectorized (batched) reset.
@@ -143,6 +159,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
+    @jaxtyped(typechecker=beartype)
     def observation(self, agent: Agent) -> AGENT_OBS_TYPE:
         """This function computes the observations for ``agent`` in a vectorized way.
 
@@ -157,6 +174,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
+    @jaxtyped(typechecker=beartype)
     def reward(self, agent: Agent) -> AGENT_REWARD_TYPE:
         """This function computes the reward for ``agent`` in a vectorized way.
 
@@ -171,6 +189,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         raise NotImplementedError()
 
+    @jaxtyped(typechecker=beartype)
     def done(self) -> Array:
         """This function computes the done flag for each env in a vectorized way.
 
@@ -186,6 +205,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         return jnp.zeros(self.world.batch_dim, dtype=bool)
 
+    @jaxtyped(typechecker=beartype)
     def info(self, agent: Agent) -> AGENT_INFO_TYPE:
         """This function computes the info dict for ``agent`` in a vectorized way.
 
@@ -202,7 +222,11 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         return {}
 
-    def extra_render(self, env_index: int = 0) -> list[Geom]:
+    @jaxtyped(typechecker=beartype)
+    def extra_render(
+        self,
+        env_index: Int[Array, ""],
+    ) -> list[Geom]:
         """
         This function facilitates additional user/scenario-level rendering for a specific environment index.
 
@@ -216,6 +240,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         return []
 
+    @jaxtyped(typechecker=beartype)
     def process_action(self, agent: Agent) -> tuple["BaseScenario", Agent]:
         """This function can be overridden to process the agent actions before the simulation step.
 
@@ -226,12 +251,14 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         """
         return self, agent
 
+    @jaxtyped(typechecker=beartype)
     def pre_step(self) -> "BaseScenario":
         """This function can be overridden to perform any computation that has to happen before the simulation step.
         Its intended use is for computation that has to happen only once before the simulation step has occurred.
         """
         return self
 
+    @jaxtyped(typechecker=beartype)
     def post_step(self) -> "BaseScenario":
         """This function can be overridden to perform any computation that has to happen after the simulation step.
         Its intended use is for computation that has to happen only once after the simulation step has occurred.

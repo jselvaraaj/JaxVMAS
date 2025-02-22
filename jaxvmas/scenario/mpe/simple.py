@@ -1,14 +1,23 @@
+import chex
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, Int, jaxtyped
 
 from jaxvmas.interactive_rendering import render_interactively
 from jaxvmas.simulator.core import Agent, Landmark, World
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
 
+batch_axis_dim = "batch_axis_dim"
 
+
+@jaxtyped(typechecker=beartype)
 class Scenario(BaseScenario):
+    """A simple scenario with a single agent and a single landmark."""
+
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def make_world(self, batch_dim: int, **kwargs):
         ScenarioUtils.check_kwargs_consumed(kwargs)
         # Make world
@@ -34,13 +43,18 @@ class Scenario(BaseScenario):
         self = self.replace(world=world)
         return self
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | float = jnp.nan):
+    @jaxtyped(typechecker=beartype)
+    def reset_world_at(
+        self,
+        PRNG_key: Array,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         agents = []
         for agent in self.world.agents:
             PRNG_key, PRNG_key_agent = jax.random.split(PRNG_key)
             agent = agent.set_pos(
                 jax.lax.cond(
-                    jnp.isnan(env_index),
+                    env_index == -1,
                     lambda: jax.random.uniform(
                         key=PRNG_key_agent,
                         shape=(self.world.batch_dim, self.world.dim_p),
@@ -68,7 +82,7 @@ class Scenario(BaseScenario):
             PRNG_key, PRNG_key_landmark = jax.random.split(PRNG_key)
             landmark = landmark.set_pos(
                 jax.lax.cond(
-                    jnp.isnan(env_index),
+                    env_index == -1,
                     lambda: jax.random.uniform(
                         key=PRNG_key_landmark,
                         shape=(self.world.batch_dim, self.world.dim_p),
@@ -96,6 +110,7 @@ class Scenario(BaseScenario):
 
         return self
 
+    @jaxtyped(typechecker=beartype)
     def reward(self, agent: Agent):
         dist2 = jnp.sum(
             jnp.square(agent.state.pos - self.world.landmarks[0].state.pos),
@@ -103,6 +118,7 @@ class Scenario(BaseScenario):
         )
         return -dist2
 
+    @jaxtyped(typechecker=beartype)
     def observation(self, agent: Agent):
         # get positions of all entities in this agent's reference frame
         entity_pos = []

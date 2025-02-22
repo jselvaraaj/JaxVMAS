@@ -4,8 +4,10 @@
 
 from typing import TypeVar
 
+import chex
 import jax.numpy as jnp
-from jaxtyping import Array, Bool, PyTree
+from beartype import beartype
+from jaxtyping import Array, Bool, Float, Int, PyTree, Scalar, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.environment.environment import Environment
@@ -20,6 +22,7 @@ obs = "obs"  # Observation dimension
 T = TypeVar("T")  # Generic type for nested structures
 
 
+@jaxtyped(typechecker=beartype)
 class EnvData(
     PyTreeNode,
 ):
@@ -27,12 +30,13 @@ class EnvData(
 
     obs: T
     rews: T
-    terminated: Bool[Array, f"{batch}"]
-    truncated: Bool[Array, f"{batch}"]
-    done: Bool[Array, f"{batch}"]
+    terminated: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
+    truncated: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
+    done: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
     info: T
 
 
+@jaxtyped(typechecker=beartype)
 class BaseJaxGymWrapper(PyTreeNode):
     """Base class for JAX-based gym environment wrappers."""
 
@@ -41,6 +45,8 @@ class BaseJaxGymWrapper(PyTreeNode):
     vectorized: bool
 
     @classmethod
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def create(
         cls,
         env: Environment,
@@ -56,7 +62,12 @@ class BaseJaxGymWrapper(PyTreeNode):
         self = cls(env, env.dict_spaces, vectorized)
         return self
 
-    def _convert_output(self, data: Array, item: bool = False) -> Array:
+    @jaxtyped(typechecker=beartype)
+    def _convert_output(
+        self,
+        data: PyTree[Float[Array, "..."] | Int[Array, "..."] | Bool[Array, "..."]],
+        item: bool = False,
+    ) -> PyTree[Float[Array, "..."] | Int[Array, "..."] | Bool[Array, "..."]]:
         """Convert output data based on vectorization settings.
 
         Args:
@@ -70,6 +81,7 @@ class BaseJaxGymWrapper(PyTreeNode):
                 return data
         return data
 
+    @jaxtyped(typechecker=beartype)
     def _compress_infos(self, infos: PyTree) -> dict:
         """Compress info data into a dictionary format.
 
@@ -85,6 +97,7 @@ class BaseJaxGymWrapper(PyTreeNode):
                 f"Expected list or dictionary for infos but got {type(infos)}"
             )
 
+    @jaxtyped(typechecker=beartype)
     def _convert_env_data(
         self,
         obs: PyTree | None = None,
@@ -124,14 +137,18 @@ class BaseJaxGymWrapper(PyTreeNode):
         terminated = (
             self._convert_output(terminated, item=True)
             if terminated is not None
-            else None
+            else jnp.zeros(self.env.num_envs, dtype=bool)
         )
         truncated = (
             self._convert_output(truncated, item=True)
             if truncated is not None
-            else None
+            else jnp.zeros(self.env.num_envs, dtype=bool)
         )
-        done = self._convert_output(done, item=True) if done is not None else None
+        done = (
+            self._convert_output(done, item=True)
+            if done is not None
+            else jnp.zeros(self.env.num_envs, dtype=bool)
+        )
         info = self._compress_infos(info) if info is not None else None
 
         return EnvData(
@@ -143,6 +160,7 @@ class BaseJaxGymWrapper(PyTreeNode):
             info=info,
         )
 
+    @jaxtyped(typechecker=beartype)
     def _action_list_to_array(self, actions: list) -> list[Array]:
         """Convert action list to JAX arrays.
 
@@ -167,12 +185,14 @@ class BaseJaxGymWrapper(PyTreeNode):
             for agent, act in zip(self.env.agents, actions)
         ]
 
+    @jaxtyped(typechecker=beartype)
     def step(
         self, PRNG_key: Array, action: PyTree
     ) -> tuple["BaseJaxGymWrapper", EnvData]:
         """Take a step in the environment."""
         raise NotImplementedError
 
+    @jaxtyped(typechecker=beartype)
     def reset(
         self,
         *,
@@ -181,6 +201,8 @@ class BaseJaxGymWrapper(PyTreeNode):
         """Reset the environment."""
         raise NotImplementedError
 
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def render(
         self,
         agent_index_focus: int | None = None,

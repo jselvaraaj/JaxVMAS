@@ -2,11 +2,8 @@ import chex
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Float, jaxtyped
+from jaxtyping import Array, Float, Int, jaxtyped
 
-from jaxvmas.equinox_utils import (
-    equinox_filter_cond_return_pytree_node,
-)
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
     batch_axis_dim,
@@ -33,7 +30,11 @@ class EntityState(JaxVectorizedObject):
         assert self.ang_vel is not None, msg
         super().assert_is_spwaned()
 
-    def _reset(self, env_index: int | float = jnp.nan) -> "EntityState":
+    @jaxtyped(typechecker=beartype)
+    def _reset(
+        self,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ) -> "EntityState":
         self.assert_is_spwaned()
         return self.replace(
             pos=JaxUtils.where_from_index(
@@ -51,6 +52,7 @@ class EntityState(JaxVectorizedObject):
         )
 
     # Resets state for all entities
+    @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
     def _spawn(self, batch_dim: int, dim_p: int) -> "EntityState":
         chex.assert_scalar_positive(batch_dim)
@@ -110,61 +112,76 @@ class AgentState(EntityState):
         super().assert_is_spwaned()
 
     @jaxtyped(typechecker=beartype)
-    def _reset(self, env_index: int | float = jnp.nan) -> "AgentState":
+    def _reset(
+        self,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ) -> "AgentState":
         self.assert_is_spwaned()
 
-        def env_index_is_nan(self, env_index: float):
-            return equinox_filter_cond_return_pytree_node(
-                ~jnp.any(jnp.isnan(self.c)),
-                lambda _self: _self.replace(
-                    c=jnp.zeros_like(_self.c),
-                    force=jnp.zeros_like(_self.force),
-                    torque=jnp.zeros_like(_self.torque),
+        def env_index_is_nan(
+            env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            c: Float[Array, f"{batch_axis_dim} {comm_dim}"],
+            force: Float[Array, f"{batch_axis_dim} {pos_dim}"],
+            torque: Float[Array, f"{batch_axis_dim} 1"],
+        ):
+            return jax.lax.cond(
+                ~jnp.any(jnp.isnan(c)),
+                lambda c, force, torque: (
+                    jnp.zeros_like(c),
+                    jnp.zeros_like(force),
+                    jnp.zeros_like(torque),
                 ),
-                lambda _self: _self.replace(
-                    force=jnp.zeros_like(_self.force),
-                    torque=jnp.zeros_like(_self.torque),
+                lambda c, force, torque: (
+                    c,
+                    jnp.zeros_like(force),
+                    jnp.zeros_like(torque),
                 ),
-                self,
+                c,
+                force,
+                torque,
             )
 
-        def env_index_is_not_nan(self, env_index: int):
-            return equinox_filter_cond_return_pytree_node(
-                ~jnp.any(jnp.isnan(self.c)),
-                lambda _self: _self.replace(
-                    c=JaxUtils.where_from_index(
-                        env_index, jnp.zeros_like(_self.c), _self.c
-                    ),
-                    force=JaxUtils.where_from_index(
-                        env_index, jnp.zeros_like(_self.force), _self.force
-                    ),
-                    torque=JaxUtils.where_from_index(
-                        env_index, jnp.zeros_like(_self.torque), _self.torque
-                    ),
-                ),
-                lambda _self: _self.replace(
-                    force=JaxUtils.where_from_index(
-                        env_index, jnp.zeros_like(_self.force), _self.force
-                    ),
-                    torque=JaxUtils.where_from_index(
-                        env_index, jnp.zeros_like(_self.torque), _self.torque
+        def env_index_is_not_nan(
+            env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            c: Float[Array, f"{batch_axis_dim} {comm_dim}"],
+            force: Float[Array, f"{batch_axis_dim} {pos_dim}"],
+            torque: Float[Array, f"{batch_axis_dim} 1"],
+        ):
+            return jax.lax.cond(
+                ~jnp.any(jnp.isnan(c)),
+                lambda c, force, torque: (
+                    JaxUtils.where_from_index(env_index, jnp.zeros_like(c), c),
+                    JaxUtils.where_from_index(env_index, jnp.zeros_like(force), force),
+                    JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(torque), torque
                     ),
                 ),
-                self,
+                lambda c, force, torque: (
+                    c,
+                    JaxUtils.where_from_index(env_index, jnp.zeros_like(force), force),
+                    JaxUtils.where_from_index(
+                        env_index, jnp.zeros_like(torque), torque
+                    ),
+                ),
+                c,
+                force,
+                torque,
             )
 
-        self: "AgentState" = equinox_filter_cond_return_pytree_node(
-            jnp.isnan(env_index),
+        c, force, torque = jax.lax.cond(
+            env_index == -1,
             env_index_is_nan,
             env_index_is_not_nan,
-            self,
             env_index,
+            self.c,
+            self.force,
+            self.torque,
         )
+        self = self.replace(c=c, force=force, torque=torque)
 
-        self = EntityState._reset(self, env_index)
+        return EntityState._reset(self, env_index)
 
-        return self
-
+    @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
     def _spawn(self, batch_dim: int, dim_c: int, dim_p: int) -> "AgentState":
 

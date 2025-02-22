@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, jaxtyped
+from jaxtyping import Array, Bool, Int, jaxtyped
 
 from jaxvmas.simulator.core.action import Action
 from jaxvmas.simulator.core.entity import Entity
@@ -24,6 +24,8 @@ from jaxvmas.simulator.utils import (
 
 if TYPE_CHECKING:
     from jaxvmas.simulator.core.world import World
+
+batch_axis_dim = "batch_axis_dim"
 
 
 @jaxtyped(typechecker=beartype)
@@ -51,6 +53,7 @@ class Agent(Entity):
     is_scripted_agent: bool
 
     @classmethod
+    @chex.assert_max_traces(0)
     def create(
         cls,
         name: str,
@@ -226,6 +229,7 @@ class Agent(Entity):
         return self, world
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def _spawn(
         self,
         id: int,
@@ -247,14 +251,17 @@ class Agent(Entity):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _reset(self, env_index: int | float = jnp.nan) -> "Agent":
+    def _reset(
+        self,
+        env_index: Int[Array, ""] | Int[Array, f"{batch_axis_dim}"] = jnp.asarray(-1),
+    ) -> "Agent":
         self = self.replace(action=self.action._reset(env_index))
         self = self.replace(dynamics=self.dynamics.reset(env_index))
         return super(Agent, self)._reset(env_index)
 
     @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
-    def render(self, env_index: int = 0) -> "list[Geom]":
+    def render(self, env_index: Int[Array, ""] = jnp.asarray(0)) -> "list[Geom]":
         from jaxvmas.simulator import rendering
 
         geoms = super(Agent, self).render(env_index)

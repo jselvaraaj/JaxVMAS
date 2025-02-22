@@ -11,12 +11,14 @@ variables and threads the RNG key through every functional call.
 
 import math
 from ctypes import byref
-from typing import Callable
 
+import chex
 import equinox as eqx
 import jax
-from jax import numpy as jnp
-from jaxtyping import Array
+import jax.numpy as jnp
+from beartype import beartype
+from beartype.typing import Callable
+from jaxtyping import Array, Int, jaxtyped
 
 import jaxvmas
 from jaxvmas.simulator.core.agent import Agent
@@ -33,6 +35,8 @@ from jaxvmas.simulator.environment.jaxgym.spaces import (
 from jaxvmas.simulator.rendering import Image, TextLine, Viewer
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, JaxUtils, X, Y
+
+batch_axis_dim = "batch_axis_dim"
 
 
 class RenderObject:
@@ -188,6 +192,8 @@ class Environment(JaxVectorizedObject):
     steps: Array
 
     @classmethod
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def create(
         cls,
         scenario: BaseScenario,
@@ -273,6 +279,7 @@ class Environment(JaxVectorizedObject):
 
         return super().replace(**kwargs)
 
+    @jaxtyped(typechecker=beartype)
     def reset(
         self,
         PRNG_key: Array,
@@ -286,10 +293,9 @@ class Environment(JaxVectorizedObject):
         """
         # reset world
         scenario = self.scenario.env_reset_world_at(
-            PRNG_key=PRNG_key, env_index=jnp.nan
+            PRNG_key=PRNG_key, env_index=jnp.asarray(-1)
         )
-        self = self.replace(scenario=scenario)
-        self = self.replace(steps=jnp.zeros(self.num_envs))
+        self = self.replace(scenario=scenario, steps=jnp.zeros(self.num_envs))
 
         result = self.get_from_scenario(
             get_observations=return_observations,
@@ -299,10 +305,11 @@ class Environment(JaxVectorizedObject):
         )
         return self, result[0] if result and len(result) == 1 else result
 
+    @jaxtyped(typechecker=beartype)
     def reset_at(
         self,
         PRNG_key: Array,
-        index: int,
+        index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
@@ -313,8 +320,7 @@ class Environment(JaxVectorizedObject):
         """
         self._check_batch_index(index)
         scenario = self.scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=index)
-        self = self.replace(scenario=scenario)
-        self = self.replace(steps=self.steps.at[index].set(0))
+        self = self.replace(scenario=scenario, steps=self.steps.at[index].set(0))
 
         result = self.get_from_scenario(
             get_observations=return_observations,
@@ -325,6 +331,7 @@ class Environment(JaxVectorizedObject):
 
         return self, result[0] if result and len(result) == 1 else result
 
+    @jaxtyped(typechecker=beartype)
     def get_from_scenario(
         self,
         get_observations: bool,
@@ -381,6 +388,7 @@ class Environment(JaxVectorizedObject):
         return [data for data in result if data is not None]
 
     @eqx.filter_jit
+    @jaxtyped(typechecker=beartype)
     def step(
         self, PRNG_key: Array, actions: list | dict
     ) -> tuple["Environment", list | dict]:
@@ -477,6 +485,7 @@ class Environment(JaxVectorizedObject):
             get_dones=True,
         )
 
+    @jaxtyped(typechecker=beartype)
     def done(self):
         terminated = self.scenario.done().copy()
 
@@ -491,6 +500,7 @@ class Environment(JaxVectorizedObject):
         else:
             return terminated + truncated
 
+    @jaxtyped(typechecker=beartype)
     def get_action_space(self) -> Space:
         if not self.dict_spaces:
             return Tuple([self.get_agent_action_space(agent) for agent in self.agents])
@@ -502,6 +512,7 @@ class Environment(JaxVectorizedObject):
                 }
             )
 
+    @jaxtyped(typechecker=beartype)
     def get_observation_space(self, observations: list | dict) -> Space:
         if not self.dict_spaces:
             return Tuple(
@@ -520,6 +531,7 @@ class Environment(JaxVectorizedObject):
                 }
             )
 
+    @jaxtyped(typechecker=beartype)
     def get_agent_action_size(self, agent: Agent) -> int:
         if self.continuous_actions:
             return agent.action.action_size + (
@@ -532,6 +544,7 @@ class Environment(JaxVectorizedObject):
         else:
             return 1
 
+    @jaxtyped(typechecker=beartype)
     def get_agent_action_space(self, agent: Agent) -> Space:
         if self.continuous_actions:
             return Box(
@@ -562,6 +575,7 @@ class Environment(JaxVectorizedObject):
                 )
             )
 
+    @jaxtyped(typechecker=beartype)
     def get_agent_observation_space(self, agent: Agent, obs: AGENT_OBS_TYPE) -> Space:
         if isinstance(obs, Array):
             return Box(
@@ -582,6 +596,7 @@ class Environment(JaxVectorizedObject):
                 f"Invalid type of observation {obs} for agent {agent.name}"
             )
 
+    @jaxtyped(typechecker=beartype)
     def get_random_action(self, PRNG_key: Array, agent: Agent) -> Array:
         """Returns a random action for the given agent.
 
@@ -647,6 +662,7 @@ class Environment(JaxVectorizedObject):
                 )
         return action
 
+    @jaxtyped(typechecker=beartype)
     def get_random_actions(self, PRNG_key: Array) -> list[Array]:
         """Returns random actions for all agents that you can feed to :class:`step`
 
@@ -675,6 +691,7 @@ class Environment(JaxVectorizedObject):
             for i in range(len(self.agents))
         ]
 
+    @jaxtyped(typechecker=beartype)
     def _check_discrete_action(
         self, action: Array, low: int, high: int, type: str
     ) -> None:
@@ -684,6 +701,7 @@ class Environment(JaxVectorizedObject):
         ), f"Discrete {type} actions are out of bounds, allowed int range [{low},{high})"
 
     # set env action for a particular agent
+    @jaxtyped(typechecker=beartype)
     def _set_action(
         self, PRNG_key: Array, action: Array, agent: Agent
     ) -> tuple["Environment", Agent]:
@@ -823,12 +841,14 @@ class Environment(JaxVectorizedObject):
                 )
         return self, agent
 
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def render(
         self,
         render_object: RenderObject,
         mode="human",
-        env_index=0,
-        agent_index_focus: int = None,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(0),
+        agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         plot_position_function: Callable = None,
         plot_position_function_precision: float = 0.01,

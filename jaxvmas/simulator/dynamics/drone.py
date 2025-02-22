@@ -2,17 +2,22 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
+import chex
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, jaxtyped
+from jaxtyping import Array, Int, jaxtyped
 
 if TYPE_CHECKING:
     from jaxvmas.simulator.core.agent import Agent
     from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import JaxUtils, X, Y
+
+batch_axis_dim = "batch_axis_dim"
 
 
 @jaxtyped(typechecker=beartype)
@@ -27,6 +32,7 @@ class Drone(Dynamics):
     drone_state: Array
 
     @classmethod
+    @chex.assert_max_traces(0)
     def create(
         cls,
         world: "World",
@@ -52,7 +58,10 @@ class Drone(Dynamics):
         return cls(integration, I_xx, I_yy, I_zz, g, dt, batch_dim, drone_state)
 
     @jaxtyped(typechecker=beartype)
-    def reset(self, index: Array | int | float = jnp.nan) -> "Drone":
+    def reset(
+        self,
+        index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ) -> "Drone":
         # Drone state: phi(roll), theta (pitch), psi (yaw),
         #              p (roll_rate), q (pitch_rate), r (yaw_rate),
         #              x_dot (vel_x), y_dot (vel_y), z_dot (vel_z),
@@ -65,6 +74,7 @@ class Drone(Dynamics):
         self = self.replace(drone_state=drone_state)
         return self
 
+    @jaxtyped(typechecker=beartype)
     def f(
         self,
         agent: "Agent",
@@ -121,6 +131,7 @@ class Drone(Dynamics):
         # Constraint roll and pitch within +-30 degrees
         return jnp.any(jnp.abs(self.drone_state[:, :2]) > 30 * (jnp.pi / 180), axis=-1)
 
+    @jaxtyped(typechecker=beartype)
     def euler(
         self,
         agent: "Agent",
@@ -130,6 +141,7 @@ class Drone(Dynamics):
     ) -> Array:
         return self.dt * self.f(agent, state, thrust, torque)
 
+    @jaxtyped(typechecker=beartype)
     def runge_kutta(
         self,
         agent: "Agent",
@@ -147,6 +159,7 @@ class Drone(Dynamics):
     def needed_action_size(self) -> int:
         return 4
 
+    @jaxtyped(typechecker=beartype)
     def process_action(self, agent: "Agent") -> tuple["Drone", "Agent"]:
         u = agent.action.u
         thrust = u[:, 0]  # Thrust, sum of all propeller thrusts

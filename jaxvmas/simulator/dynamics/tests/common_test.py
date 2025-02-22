@@ -48,11 +48,11 @@ class TestDynamicsClass:
         assert isinstance(reset_dynamics, Dynamics)
 
         # Test reset with index
-        reset_dynamics_index = basic_dynamics.reset(index=0)
+        reset_dynamics_index = basic_dynamics.reset(index=jnp.asarray(0))
         assert isinstance(reset_dynamics_index, Dynamics)
 
         # Test reset with array index
-        reset_dynamics_array = basic_dynamics.reset(index=jnp.array([0, 1]))
+        reset_dynamics_array = basic_dynamics.reset(index=jnp.asarray([0, 1]))
         assert isinstance(reset_dynamics_array, Dynamics)
 
     def test_check_and_process_action_valid(
@@ -113,7 +113,7 @@ class TestDynamicsClass:
         def reset_with_index(dynamics: Dynamics, index: Array):
             return dynamics.reset(index=index)
 
-        reset_index_result = reset_with_index(basic_dynamics, jnp.array([0]))
+        reset_index_result = reset_with_index(basic_dynamics, jnp.asarray([0]))
         assert isinstance(reset_index_result, Dynamics)
 
     def test_batch_processing(self, basic_dynamics: Dynamics):

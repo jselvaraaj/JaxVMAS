@@ -1,14 +1,14 @@
 from enum import Enum
 
 import chex
+import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, Float, jaxtyped
+from jaxtyping import Array, Bool, Float, Int, jaxtyped
 
 from jaxvmas.equinox_utils import (
     equinox_filter_cond_return_dynamic,
-    equinox_filter_cond_return_pytree_node,
 )
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
@@ -161,6 +161,7 @@ class Entity(JaxVectorizedObject):
             entity,
         )
 
+    @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
     def _spawn(self, id: int, *, batch_dim: int, dim_p: int, **kwargs) -> "Entity":
         if self.gravity is not None:
@@ -175,69 +176,96 @@ class Entity(JaxVectorizedObject):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _reset(self, env_index: int | float = jnp.nan):
+    def _reset(
+        self,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         return self.replace(state=self.state._reset(env_index))
 
     @jaxtyped(typechecker=beartype)
-    def set_pos(self, pos: Array, batch_index: int | float = jnp.nan):
+    def set_pos(
+        self,
+        pos: Array,
+        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         return self._set_state_property("pos", pos, batch_index)
 
     @jaxtyped(typechecker=beartype)
-    def set_vel(self, vel: Array, batch_index: int | float = jnp.nan):
+    def set_vel(
+        self,
+        vel: Array,
+        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         return self._set_state_property("vel", vel, batch_index)
 
     @jaxtyped(typechecker=beartype)
-    def set_rot(self, rot: Array, batch_index: int | float = jnp.nan):
+    def set_rot(
+        self,
+        rot: Array,
+        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         return self._set_state_property("rot", rot, batch_index)
 
     @jaxtyped(typechecker=beartype)
-    def set_ang_vel(self, ang_vel: Array, batch_index: int | float = jnp.nan):
+    def set_ang_vel(
+        self,
+        ang_vel: Array,
+        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ):
         return self._set_state_property("ang_vel", ang_vel, batch_index)
 
     @jaxtyped(typechecker=beartype)
     def _set_state_property(
-        self, prop_name: str, new: Array, batch_index: int | float = jnp.nan
+        self,
+        prop_name: str,
+        new: Array,
+        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
     ):
         chex.assert_scalar(self.batch_dim)
 
-        def batch_index_is_nan(old_state: EntityState, batch_index: float, new: Array):
+        def batch_index_is_nan(
+            batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            new: Array,
+            value: Array,
+        ):
+            ret = new
             if len(new.shape) > 1 and new.shape[0] == self.batch_dim:
-                new_state = old_state.replace(**{prop_name: new})
+                ret = new
             else:
-                value = getattr(old_state, prop_name)
                 if new.ndim == value.ndim - 1:
                     new = new[None]
-                new_state = old_state.replace(
-                    **{prop_name: new.repeat(self.batch_dim, 0)}
-                )
-            return new_state
+                ret = new.repeat(self.batch_dim, 0)
+            return ret
 
         def batch_index_is_not_nan(
-            old_state: EntityState, batch_index: float, new: Array
+            batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            new: Array,
+            value: Array,
         ):
-            value = getattr(old_state, prop_name)
-
             new = jnp.broadcast_to(
                 new, value.shape
             )  # This should never happen. Here to make jax jit happy
 
             new_value = JaxUtils.where_from_index(batch_index, new, value)
-            new_state = old_state.replace(**{prop_name: new_value})
-            return new_state
+            return new_value
 
-        new_state = equinox_filter_cond_return_pytree_node(
-            jnp.any(jnp.isnan(batch_index)),
+        prop_value = jax.lax.cond(
+            batch_index == -1,
             batch_index_is_nan,
             batch_index_is_not_nan,
-            self.state,
             batch_index,
             new,
+            getattr(self.state, prop_name),
         )
+        new_state = self.state.replace(**{prop_name: prop_value})
         # there was a notify_observers call in the past, so we need to notify observers manually
         return self.replace(state=new_state)
 
     @chex.assert_max_traces(0)
-    def render(self, env_index: int = 0) -> "list[Geom]":
+    def render(
+        self,
+        env_index: Int[Array, ""] = jnp.asarray(0),
+    ) -> "list[Geom]":
         from jaxvmas.simulator import rendering
 
         if not self.is_rendering[env_index]:

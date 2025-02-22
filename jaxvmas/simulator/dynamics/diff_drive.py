@@ -1,15 +1,17 @@
 #  Copyright (c) 2022-2024.
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
-
+from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from beartype import beartype
+from jaxtyping import Array, jaxtyped
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core.core import Agent, World
+    from jaxvmas.simulator.core.agent import Agent
+    from jaxvmas.simulator.core.world import World
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import X, Y
 
@@ -30,6 +32,7 @@ class DiffDrive(Dynamics):
         integration = integration
         return cls(dt, integration)
 
+    @jaxtyped(typechecker=beartype)
     def f(self, state: Array, u_command: Array, ang_vel_command: Array) -> Array:
         theta = state[:, 2]
         dx = u_command * jnp.cos(theta)
@@ -37,9 +40,11 @@ class DiffDrive(Dynamics):
         dtheta = ang_vel_command
         return jnp.stack((dx, dy, dtheta), axis=-1)  # [batch_size,3]
 
+    @jaxtyped(typechecker=beartype)
     def euler(self, state: Array, u_command: Array, ang_vel_command: Array) -> Array:
         return self.dt * self.f(state, u_command, ang_vel_command)
 
+    @jaxtyped(typechecker=beartype)
     def runge_kutta(
         self, state: Array, u_command: Array, ang_vel_command: Array
     ) -> Array:
@@ -53,6 +58,7 @@ class DiffDrive(Dynamics):
     def needed_action_size(self) -> int:
         return 2
 
+    @jaxtyped(typechecker=beartype)
     def process_action(self, agent: "Agent") -> tuple["DiffDrive", "Agent"]:
         u_command = agent.action.u[:, 0]  # Forward velocity
         ang_vel_command = agent.action.u[:, 1]  # Angular velocity

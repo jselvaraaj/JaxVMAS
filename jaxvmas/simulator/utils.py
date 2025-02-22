@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from beartype import beartype
+from jaxtyping import Array, Float, Int, jaxtyped
 
 if TYPE_CHECKING:
     from jaxvmas.simulator.rendering import Geom
@@ -36,6 +37,8 @@ OBS_TYPE = list[AGENT_OBS_TYPE] | dict[str, AGENT_OBS_TYPE]
 INFO_TYPE = list[AGENT_INFO_TYPE] | dict[str, AGENT_INFO_TYPE]
 REWARD_TYPE = list[AGENT_REWARD_TYPE] | dict[str, AGENT_REWARD_TYPE]
 DONE_TYPE = Array
+
+batch_dim = "batch_dim"
 
 
 class Color(Enum):
@@ -191,35 +194,57 @@ class JaxUtils:
         return {key: JaxUtils.recursive_clone(val) for key, val in value.items()}
 
     @staticmethod
-    def where_from_index(env_index: int | float, new_value: Array, old_value: Array):
+    @jaxtyped(typechecker=beartype)
+    def where_from_index(
+        env_index: Int[Array, f"{batch_dim}"] | Int[Array, ""],
+        new_value: Array,
+        old_value: Array,
+    ):
         """If env_index is nan, return new_value, otherwise return old_value in the env_index position and new_value in all other positions.
 
         Args:
-            env_index (int | float): The environment index to use.
+            env_index (Array): The environment index to use.
             new_value (Array): The value to return if env_index is nan or to use in all positions if env_index is not nan.
             old_value (Array): The value to return in env_index position if env_index is not nan.
         """
 
-        def env_index_is_nan(
-            env_index: int | float, new_value: Array, old_value: Array
-        ):
-            return new_value
+        # def env_index_is_nan(
+        #     reset_index: Bool[Array, f"{batch_dim}"],
+        #     new_value: Array,
+        #     old_value: Array,
+        # ):
+        #     return new_value
 
-        def env_index_is_not_nan(
-            env_index: int | float, new_value: Array, old_value: Array
-        ):
-            # Replace nan with a safe dummy index (e.g. 0) for tracing. Note, at this point, env_index should never be nan during execution.
-            safe_index = jnp.where(jnp.isnan(env_index), 0, env_index).astype(jnp.int32)
+        # def env_index_is_not_nan(
+        #     reset_index: Bool[Array, f"{batch_dim}"],
+        #     new_value: Array,
+        #     old_value: Array,
+        # ):
 
-            mask = jnp.zeros_like(old_value, dtype=jnp.bool)
-            mask = mask.at[safe_index].set(True)
-            return jnp.where(mask, new_value, old_value)
+        #     mask = jnp.zeros_like(old_value, dtype=jnp.bool)
+        #     mask = mask.at[reset_index].set(True)
+        #     return jnp.where(mask, new_value, old_value)
 
-        return jax.lax.cond(
-            jnp.isnan(env_index).all(),
-            env_index_is_nan,
-            env_index_is_not_nan,
+        batch_size = old_value.shape[0]
+        assert new_value.shape[0] == batch_size
+
+        reset_index = jnp.where(
+            jnp.isscalar(env_index),
+            jnp.where(
+                env_index == -1,
+                jnp.full((batch_size,), True, dtype=jnp.bool),
+                jnp.full((batch_size,), False, dtype=jnp.bool).at[env_index].set(True),
+            ),
             env_index,
+        )
+
+        return jnp.where(
+            jnp.broadcast_to(
+                jnp.expand_dims(
+                    reset_index, axis=tuple(range(1, len(old_value.shape)))
+                ),
+                old_value.shape,
+            ),
             new_value,
             old_value,
         )

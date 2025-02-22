@@ -81,7 +81,7 @@ class TestWorld:
         world = world_with_agent.replace(agents=[agent])
 
         # Test reset
-        world = world.reset(env_index=0)
+        world = world.reset(env_index=jnp.asarray(0))
         assert jnp.all(world.agents[0].state.pos[0] == 0)
         assert jnp.all(world.agents[0].state.pos[1] == 1)
 
@@ -315,13 +315,12 @@ class TestWorld:
     def test_is_jittable(self, basic_world: World, agent: Agent, landmark: Landmark):
         # Test jit compatibility of world creation and entity addition
         @eqx.filter_jit
-        def create_world_with_entities(world: World, agent: Agent, landmark: Landmark):
-            world = world.add_agent(agent)
-            world = world.add_landmark(landmark)
+        def create_world_with_entities(world: World):
             world = world.reset()
             return world
 
-        world = create_world_with_entities(basic_world, agent, landmark)
+        world = basic_world.add_agent(agent).add_landmark(landmark)
+        world = create_world_with_entities(world)
         assert len(world.agents) == 1
         assert len(world.landmarks) == 1
 
@@ -339,7 +338,7 @@ class TestWorld:
         # Test jit compatibility of reset with specific index
         @eqx.filter_jit
         def reset_env(world: World, env_idx: int):
-            return world.reset(env_index=env_idx)
+            return world.reset(env_index=jnp.asarray(env_idx))
 
         reset_world = reset_env(world, 0)
         assert jnp.all(reset_world.agents[0].state.pos[0] == 0)
@@ -964,8 +963,12 @@ class TestGetDistanceFromPoint:
         test_point = jnp.array([[2.0, 1.0], [3.0, 2.0]])
         # For batch 0: expected distance = norm([1,1]-[2,1]) = 1.0 - 0.5 = 0.5.
         # For batch 1: expected distance = norm([2,2]-[3,2]) = 1.0 - 0.5 = 0.5.
-        result0 = world.get_distance_from_point(sphere_agent, test_point, env_index=0)
-        result1 = world.get_distance_from_point(sphere_agent, test_point, env_index=1)
+        result0 = world.get_distance_from_point(
+            sphere_agent, test_point, env_index=jnp.asarray(0)
+        )
+        result1 = world.get_distance_from_point(
+            sphere_agent, test_point, env_index=jnp.asarray(1)
+        )
         assert jnp.allclose(result0, 0.5, atol=1e-3)
         assert jnp.allclose(result1, 0.5, atol=1e-3)
 

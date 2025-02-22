@@ -8,9 +8,12 @@ Ensures all operations are jittable and compatible with JAX transformations.
 """
 
 
+import chex
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+import jax.numpy as jnp
+from beartype import beartype
+from jaxtyping import Array, PyTree, jaxtyped
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.simulator.environment.environment import Environment, RenderObject
@@ -23,12 +26,15 @@ action = "action"  # Action dimension
 obs = "obs"  # Observation dimension
 
 
+@jaxtyped(typechecker=beartype)
 class JaxGymnasiumWrapper(BaseJaxGymWrapper):
     """JAX-compatible Gymnasium wrapper for single environment instances."""
 
     render_mode: str
 
     @classmethod
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def create(
         cls,
         env: Environment,
@@ -60,6 +66,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         return self.env
 
     @eqx.filter_jit
+    @jaxtyped(typechecker=beartype)
     def step(
         self, PRNG_key: Array, action: list
     ) -> tuple["JaxGymnasiumWrapper", EnvData]:
@@ -92,6 +99,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
 
         return self, env_data
 
+    @jaxtyped(typechecker=beartype)
     def reset(
         self,
         PRNG_key: Array,
@@ -102,7 +110,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         # Reset environment state
         env, (obs, info) = self.env.reset_at(
             PRNG_key=PRNG_key,
-            index=0,
+            index=jnp.asarray(0),
             return_observations=True,
             return_info=True,
         )
@@ -112,6 +120,8 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         env_data = self._convert_env_data(obs=obs, info=info)
         return self, (env_data.obs, env_data.info)
 
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def render(
         self,
         render_object: RenderObject,
@@ -122,7 +132,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
 
         kwargs = {
             "mode": self.render_mode,
-            "env_index": 0,
+            "env_index": jnp.asarray(0),
             "agent_index_focus": agent_index_focus,
             "visualize_when_rgb": visualize_when_rgb,
             **kwargs,

@@ -2,7 +2,7 @@ from dataclasses import fields
 
 import chex
 from beartype import beartype
-from jaxtyping import jaxtyped
+from jaxtyping import Array, Int, jaxtyped
 
 from jaxvmas.equinox_utils import (
     PyTreeNode,
@@ -35,10 +35,12 @@ class JaxVectorizedObject(PyTreeNode):
         assert self.batch_dim is not None, msg
 
     @jaxtyped(typechecker=beartype)
-    def _check_batch_index(self, batch_index: int | float):
-        if isinstance(batch_index, float):
-            # This mean bathc_index is jnp.nan
-            # directly checking that with if statment is not allowed with jit compilation.
-            pass
-        else:
-            chex.assert_scalar_in(batch_index, 0, self.batch_dim - 1)
+    def _check_batch_index(self, batch_index: Int[Array, ""]):
+        # cannot check dynamic batch index
+        pass
+        # if isinstance(batch_index, float):
+        #     # This mean bathc_index is jnp.nan
+        #     # directly checking that with if statment is not allowed with jit compilation.
+        #     pass
+        # else:
+        #     chex.assert_scalar_in(batch_index, 0, self.batch_dim - 1)

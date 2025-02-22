@@ -2,14 +2,17 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from beartype import beartype
+from jaxtyping import Array, Float, jaxtyped
 
 if TYPE_CHECKING:
-    from jaxvmas.simulator.core.core import Agent
+    from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.dynamics.common import Dynamics
 
 dim_batch = "batch"
@@ -41,6 +44,7 @@ class KinematicBicycle(Dynamics):
     def needed_action_size(self) -> int:
         return 2
 
+    @jaxtyped(typechecker=beartype)
     def process_action(self, agent: "Agent") -> tuple["KinematicBicycle", "Agent"]:
         v_command = agent.action.u[:, 0]
         steering_command = agent.action.u[:, 1]

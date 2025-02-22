@@ -2,7 +2,7 @@ import chex
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Sequence
-from jaxtyping import Array, Float, jaxtyped
+from jaxtyping import Array, Float, Int, jaxtyped
 
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
@@ -30,6 +30,7 @@ class Action(JaxVectorizedObject):
     u_noise_jax_array: Float[Array, f"{action_size_dim}"]
 
     @classmethod
+    @chex.assert_max_traces(0)
     def create(
         cls,
         u_range: float | Sequence[float],
@@ -86,6 +87,7 @@ class Action(JaxVectorizedObject):
         self.assert_is_spwaned()
         return self._u
 
+    @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
     def _spawn(self, batch_dim: int, comm_dim: int):
         chex.assert_scalar_non_negative(comm_dim)
@@ -114,23 +116,25 @@ class Action(JaxVectorizedObject):
                 )
 
     @jaxtyped(typechecker=beartype)
-    def _reset(self, env_index: int | float = jnp.nan) -> "Action":
+    def _reset(
+        self,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+    ) -> "Action":
         self.assert_is_spwaned()
         u = self.u
         u_reset = jnp.where(
-            jnp.isnan(env_index),
+            env_index == -1,
             jnp.zeros_like(u),
             JaxUtils.where_from_index(env_index, jnp.zeros_like(u), u),
         )
-        self = self.replace(u=u_reset)
 
         c = self.c
         c_reset = jnp.where(
-            jnp.isnan(env_index),
+            env_index == -1,
             jnp.zeros_like(c),
             JaxUtils.where_from_index(env_index, jnp.zeros_like(c), c),
         )
-        self = self.replace(c=c_reset)
+        self = self.replace(c=c_reset, u=u_reset)
 
         return self
 
