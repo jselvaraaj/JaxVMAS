@@ -43,11 +43,11 @@ jobs:
       # macOS: Run tests normally
       - name: Run Tests with Coverage on macOS
         if: runner.os == 'macOS'
-        run: pytest -n auto -v --cov=jaxvmas --cov-report=xml jaxvmas
+        run: pytest -n auto -v --cov=jaxvmas --cov-report=json jaxvmas
 
       - name: Generate Coverage Badge
         uses: jaywcjlove/coverage-badges-cli@main
         with:
           style: flat
-          source: coverage.xml
+          source: coverage.json
           output: badges/coverage.svg
