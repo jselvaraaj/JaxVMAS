@@ -49,5 +49,5 @@ jobs:
         uses: jaywcjlove/coverage-badges-cli@main
         with:
           style: flat
-          source: coverage/coverage.xml
+          source: coverage.xml
           output: badges/coverage.svg
