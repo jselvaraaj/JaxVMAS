@@ -101,7 +101,7 @@ class Joint(PyTreeNode):
 
             self = self.replace(
                 landmark=Landmark.create(
-                    name=f"joint {entity_a.name} {entity_b.name}",
+                    name=f"joint {entity_a.id} {entity_b.id}",
                     collide=collidable,
                     movable=True,
                     rotatable=True,
@@ -142,11 +142,11 @@ class Joint(PyTreeNode):
         """Pure function to update joint state based on entity states"""
 
         assert (
-            entity_a.name == self.entity_a.name
-        ), f"Entity a name mismatch: {entity_a.name} != {self.entity_a.name}"
+            entity_a.id == self.entity_a_id
+        ), f"Entity a id mismatch: {entity_a.id} != {self.entity_a_id}"
         assert (
-            entity_b.name == self.entity_b.name
-        ), f"Entity b name mismatch: {entity_b.name} != {self.entity_b.name}"
+            entity_b.id == self.entity_b_id
+        ), f"Entity b id mismatch: {entity_b.id} != {self.entity_b_id}"
 
         self = self.replace(entity_a=entity_a, entity_b=entity_b)
 
@@ -170,13 +170,13 @@ class Joint(PyTreeNode):
 
         if not self.rotate_a and self.fixed_rotation_a is None:
             new_constraint = new_joint_constraints[0].replace(
-                fixed_rotation=angle - self.entity_a.state.rot
+                fixed_rotation=angle - entity_a.state.rot
             )
             new_joint_constraints[0] = new_constraint
 
         if not self.rotate_b and self.fixed_rotation_b is None:
             new_constraint = new_joint_constraints[1].replace(
-                fixed_rotation=angle - self.entity_b.state.rot
+                fixed_rotation=angle - entity_b.state.rot
             )
             new_joint_constraints[1] = new_constraint
 
@@ -252,16 +252,16 @@ class JointConstraint(PyTreeNode):
             anchor = self.anchor_b
         else:
             raise ValueError(
-                f"Entity {entity.name} is not part of joint {self.entity_a.name} {self.entity_b.name}"
+                f"Entity {entity.id} is not part of joint {self.entity_a_id} {self.entity_b_id}"
             )
 
         delta = jnp.broadcast_to(
             entity.shape.get_delta_from_anchor(anchor)[None],
             entity.state.pos.shape,
         )
-        _delta_anchor_tensor_map[entity.name] = delta
+        _delta_anchor_tensor_map[entity.id] = delta
 
-        return _delta_anchor_tensor_map[entity.name]
+        return _delta_anchor_tensor_map[entity.id]
 
     def get_delta_anchor(self, entity: "Entity"):
         delta_anchor = self._delta_anchor_jax_array(entity)

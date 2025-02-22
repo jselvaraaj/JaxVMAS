@@ -174,12 +174,12 @@ class TestWorld:
         assert isinstance(list(world._joints.values())[0], JointConstraint)
         assert isinstance(list(world._joints.values())[1], JointConstraint)
 
-    def test_entity_index_map(self, world_with_agent: World):
+    def test_entity_id_to_entity(self, world_with_agent: World):
         # Test entity index map is properly updated
         world = world_with_agent.reset()
-        assert len(world.entity_index_map) == 1
-        assert world.agents[0].name in world.entity_index_map
-        assert world.entity_index_map[world.agents[0].name] == 0
+        assert (
+            world.agents[0].name == world.entity_id_to_entity(world.agents[0].id).name
+        )
 
     def test_boundary_conditions(self, basic_world: World):
         # Test world with boundaries
@@ -258,8 +258,8 @@ class TestWorld:
             drag=0.1,  # Reduce drag for smoother motion
         )
         world = world.add_agent(agent1).add_agent(agent2)
-        agent1, agent2 = world.agents
         world = world.reset()
+        agent1, agent2 = world.agents
         world = world.replace(
             agents=[
                 agent1.replace(
@@ -280,9 +280,7 @@ class TestWorld:
             anchor_b=(0.0, 0.0),
             dist=0.5,  # Target distance
         )
-        world = world.replace(
-            _joints={frozenset({agent1.name, agent2.name}): constraint}
-        )
+        world = world.replace(_joints={frozenset({agent1.id, agent2.id}): constraint})
 
         # Step and verify joint constraint
         stepped_world = world
@@ -1437,7 +1435,7 @@ class TestForceApplication:
         )
         agent1, world = world._apply_action_force(agent1)
         assert jnp.allclose(agent1.state.force, jnp.array([[2.0, 0.0]]))
-        assert jnp.allclose(world.force_dict[agent1.name], jnp.array([[2.0, 0.0]]))
+        assert jnp.allclose(world.force_dict[agent1.id], jnp.array([[2.0, 0.0]]))
 
         # Test force range limiting
         agent2 = agent2.replace(
@@ -1445,7 +1443,7 @@ class TestForceApplication:
         )
         agent2, world = world._apply_action_force(agent2)
         assert jnp.allclose(agent2.state.force, jnp.array([[1.0, 1.5]]))
-        assert jnp.allclose(world.force_dict[agent2.name], jnp.array([[1.0, 1.5]]))
+        assert jnp.allclose(world.force_dict[agent2.id], jnp.array([[1.0, 1.5]]))
 
     def test_apply_action_torque(self):
         world = World.create(batch_dim=1)
@@ -1459,13 +1457,13 @@ class TestForceApplication:
         agent = agent.replace(state=agent.state.replace(torque=jnp.array([[3.0]])))
         agent, world = world._apply_action_torque(agent)
         assert jnp.allclose(agent.state.torque, jnp.array([[1.5]]))
-        assert jnp.allclose(world.torque_dict[agent.name], jnp.array([[1.5]]))
+        assert jnp.allclose(world.torque_dict[agent.id], jnp.array([[1.5]]))
 
         # Test torque range limiting
         agent2 = agent2.replace(state=agent2.state.replace(torque=jnp.array([[-3.0]])))
         agent2, world = world._apply_action_torque(agent2)
         assert jnp.allclose(agent2.state.torque, jnp.array([[-2.0]]))
-        assert jnp.allclose(world.torque_dict[agent2.name], jnp.array([[-2.0]]))
+        assert jnp.allclose(world.torque_dict[agent2.id], jnp.array([[-2.0]]))
 
     def test_apply_gravity(self):
         world = World.create(batch_dim=1, gravity=jnp.array([0.0, -9.81]))
@@ -1478,13 +1476,13 @@ class TestForceApplication:
         # Test global gravity
         _, world = world._apply_gravity(agent)
         expected_force = jnp.array([[0.0, -19.62]])  # 2.0 * -9.81
-        assert jnp.allclose(world.force_dict[agent.name], expected_force)
+        assert jnp.allclose(world.force_dict[agent.id], expected_force)
 
         # Test entity-specific gravity
         agent2 = agent2.replace(gravity=jnp.asarray([[0.0, -5.0]]))
         _, world = world._apply_gravity(agent2)
         expected_force = jnp.array([[0.0, -29.62]])  # Previous + (2.0 * -5.0)
-        assert jnp.allclose(world.force_dict[agent2.name], expected_force)
+        assert jnp.allclose(world.force_dict[agent2.id], expected_force)
 
     def test_apply_friction_force(self):
         world = World.create(batch_dim=1, dt=0.1, substeps=1)
@@ -1503,12 +1501,12 @@ class TestForceApplication:
         # Test linear friction
         agent = agent.replace(state=agent.state.replace(vel=jnp.array([[1.0, 0.0]])))
         _, world = world._apply_friction_force(agent)
-        assert jnp.all(world.force_dict[agent.name] <= 0)  # Friction opposes motion
+        assert jnp.all(world.force_dict[agent.id] <= 0)  # Friction opposes motion
 
         # Test angular friction
         agent = agent.replace(state=agent.state.replace(ang_vel=jnp.array([[1.0]])))
         _, world = world._apply_friction_force(agent)
-        assert jnp.all(world.torque_dict[agent.name] <= 0)  # Friction opposes rotation
+        assert jnp.all(world.torque_dict[agent.id] <= 0)  # Friction opposes rotation
 
 
 class TestVectorizedShapeForce:
@@ -1530,6 +1528,7 @@ class TestVectorizedShapeForce:
 
         world = world.add_agent(agent1).add_agent(agent2)
         world = world.reset()
+        agent1, agent2 = world.agents
 
         # Test force and torque updates
         f_a = jnp.array([[1.0, 1.0]])
@@ -1540,12 +1539,12 @@ class TestVectorizedShapeForce:
         updated_world = world.update_env_forces(agent1, f_a, t_a, agent2, f_b, t_b)
 
         # Check force updates
-        assert jnp.allclose(updated_world.force_dict[agent1.name], f_a)
-        assert jnp.allclose(updated_world.force_dict[agent2.name], f_b)
+        assert jnp.allclose(updated_world.force_dict[agent1.id], f_a)
+        assert jnp.allclose(updated_world.force_dict[agent2.id], f_b)
 
         # Check torque updates - agent1 should get torque, agent2 shouldn't
-        assert jnp.allclose(updated_world.torque_dict[agent1.name], t_a)
-        assert jnp.allclose(updated_world.torque_dict[agent2.name], 0.0)
+        assert jnp.allclose(updated_world.torque_dict[agent1.id], t_a)
+        assert jnp.allclose(updated_world.torque_dict[agent2.id], 0.0)
 
     def test_vectorized_joint_constraints(self):
         """Test joint constraint forces and torques."""
@@ -1565,6 +1564,7 @@ class TestVectorizedShapeForce:
 
         world = world.add_agent(agent1).add_agent(agent2)
         world = world.reset()
+        agent1, agent2 = world.agents
 
         # Create a joint between agents
         from jaxvmas.simulator.joints import JointConstraint
@@ -1622,8 +1622,8 @@ class TestVectorizedShapeForce:
         world_collision = world._sphere_sphere_vectorized_collision(
             sphere_pairs, collision_mask
         )
-        assert jnp.any(world_collision.force_dict["sphere1"] != 0)
-        assert jnp.any(world_collision.force_dict["sphere2"] != 0)
+        assert jnp.any(world_collision.force_dict[sphere1.id] != 0)
+        assert jnp.any(world_collision.force_dict[sphere2.id] != 0)
 
         # Test with non-colliding spheres
         sphere2 = sphere2.replace(
@@ -1635,8 +1635,8 @@ class TestVectorizedShapeForce:
         world_no_collision = world._sphere_sphere_vectorized_collision(
             sphere_pairs, collision_mask
         )
-        assert jnp.all(world_no_collision.force_dict["sphere1"] == 0)
-        assert jnp.all(world_no_collision.force_dict["sphere2"] == 0)
+        assert jnp.all(world_no_collision.force_dict[sphere1.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[sphere2.id] == 0)
 
     def test_sphere_line_vectorized_collision(self):
         """Test collision forces between sphere and line."""
@@ -1668,9 +1668,9 @@ class TestVectorizedShapeForce:
         world = world.replace(agents=[sphere, line])
 
         world_collision = world._sphere_line_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_collision.force_dict["sphere"] != 0)
-        assert jnp.any(world_collision.force_dict["line"] != 0)
-        assert jnp.any(world_collision.torque_dict["line"] != 0)
+        assert jnp.any(world_collision.force_dict[sphere.id] != 0)
+        assert jnp.any(world_collision.force_dict[line.id] != 0)
+        assert jnp.any(world_collision.torque_dict[line.id] != 0)
 
         # Test with non-colliding objects
         sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[0.0, 3.0]])))
@@ -1680,9 +1680,9 @@ class TestVectorizedShapeForce:
         world_no_collision = world._sphere_line_vectorized_collision(
             pairs, collision_mask
         )
-        assert jnp.all(world_no_collision.force_dict["sphere"] == 0)
-        assert jnp.all(world_no_collision.force_dict["line"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["line"] == 0)
+        assert jnp.all(world_no_collision.force_dict[sphere.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[line.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[line.id] == 0)
 
     def test_line_line_vectorized_collision(self):
         """Test collision forces between lines."""
@@ -1721,12 +1721,12 @@ class TestVectorizedShapeForce:
         world_collision = world._line_line_vectorized_collision(pairs, collision_mask)
 
         # Check both force and torque generation
-        forces_present = jnp.any(world_collision.force_dict["line1"] != 0) or jnp.any(
-            world_collision.force_dict["line2"] != 0
+        forces_present = jnp.any(world_collision.force_dict[line1.id] != 0) or jnp.any(
+            world_collision.force_dict[line2.id] != 0
         )
-        torques_present = jnp.any(world_collision.torque_dict["line1"] != 0) or jnp.any(
-            world_collision.torque_dict["line2"] != 0
-        )
+        torques_present = jnp.any(
+            world_collision.torque_dict[line1.id] != 0
+        ) or jnp.any(world_collision.torque_dict[line2.id] != 0)
 
         assert forces_present, "No collision forces generated"
         assert torques_present, "No collision torques generated"
@@ -1744,10 +1744,10 @@ class TestVectorizedShapeForce:
         world_no_collision = world._line_line_vectorized_collision(
             pairs, collision_mask
         )
-        assert jnp.all(world_no_collision.force_dict["line1"] == 0)
-        assert jnp.all(world_no_collision.force_dict["line2"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["line1"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["line2"] == 0)
+        assert jnp.all(world_no_collision.force_dict[line1.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[line2.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[line1.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[line2.id] == 0)
 
     def test_multiple_batch_dimensions(self):
         """Test vectorized collision handling with multiple batch dimensions."""
@@ -1781,10 +1781,10 @@ class TestVectorizedShapeForce:
         )
 
         # Check that forces are applied only in the first batch
-        assert jnp.any(world_collision.force_dict["sphere1"][0] != 0)
-        assert jnp.all(world_collision.force_dict["sphere1"][1] == 0)
-        assert jnp.any(world_collision.force_dict["sphere2"][0] != 0)
-        assert jnp.all(world_collision.force_dict["sphere2"][1] == 0)
+        assert jnp.any(world_collision.force_dict[sphere1.id][0] != 0)
+        assert jnp.all(world_collision.force_dict[sphere1.id][1] == 0)
+        assert jnp.any(world_collision.force_dict[sphere2.id][0] != 0)
+        assert jnp.all(world_collision.force_dict[sphere2.id][1] == 0)
 
     def test_box_sphere_vectorized_collision(self):
         """Test collision forces between box and sphere."""
@@ -1818,9 +1818,9 @@ class TestVectorizedShapeForce:
         pairs = [(box, sphere)]
 
         world_collision = world._box_sphere_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_collision.force_dict["box"] != 0)
-        assert jnp.any(world_collision.force_dict["sphere"] != 0)
-        assert jnp.any(world_collision.torque_dict["box"] != 0)
+        assert jnp.any(world_collision.force_dict[box.id] != 0)
+        assert jnp.any(world_collision.force_dict[sphere.id] != 0)
+        assert jnp.any(world_collision.torque_dict[box.id] != 0)
 
         # Test with non-colliding objects
         sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[3.0, 0.0]])))
@@ -1830,9 +1830,9 @@ class TestVectorizedShapeForce:
         world_no_collision = world._box_sphere_vectorized_collision(
             pairs, collision_mask
         )
-        assert jnp.all(world_no_collision.force_dict["box"] == 0)
-        assert jnp.all(world_no_collision.force_dict["sphere"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["box"] == 0)
+        assert jnp.all(world_no_collision.force_dict[box.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[sphere.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[box.id] == 0)
 
         # Test with hollow box
         hollow_box = Agent.create(
@@ -1859,8 +1859,8 @@ class TestVectorizedShapeForce:
         collision_mask = jnp.array([True])
 
         world_hollow = world._box_sphere_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_hollow.force_dict["hollow_box"] != 0)
-        assert jnp.any(world_hollow.force_dict["sphere"] != 0)
+        assert jnp.any(world_hollow.force_dict[hollow_box.id] != 0)
+        assert jnp.any(world_hollow.force_dict[sphere.id] != 0)
 
     def test_box_line_vectorized_collision(self):
         """Test collision forces between box and line."""
@@ -1897,10 +1897,10 @@ class TestVectorizedShapeForce:
         pairs = [(box, line)]
 
         world_collision = world._box_line_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_collision.force_dict["box"] != 0)
-        assert jnp.any(world_collision.force_dict["line"] != 0)
-        assert jnp.any(world_collision.torque_dict["box"] != 0)
-        assert jnp.any(world_collision.torque_dict["line"] != 0)
+        assert jnp.any(world_collision.force_dict[box.id] != 0)
+        assert jnp.any(world_collision.force_dict[line.id] != 0)
+        assert jnp.any(world_collision.torque_dict[box.id] != 0)
+        assert jnp.any(world_collision.torque_dict[line.id] != 0)
 
         # Test with non-intersecting objects
         line = line.replace(
@@ -1913,10 +1913,10 @@ class TestVectorizedShapeForce:
         collision_mask = jnp.array([False])
 
         world_no_collision = world._box_line_vectorized_collision(pairs, collision_mask)
-        assert jnp.all(world_no_collision.force_dict["box"] == 0)
-        assert jnp.all(world_no_collision.force_dict["line"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["box"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["line"] == 0)
+        assert jnp.all(world_no_collision.force_dict[box.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[line.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[box.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[line.id] == 0)
 
         # Test with hollow box
         hollow_box = Agent.create(
@@ -1947,8 +1947,8 @@ class TestVectorizedShapeForce:
         collision_mask = jnp.array([True])
 
         world_hollow = world._box_line_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_hollow.force_dict["hollow_box"] != 0)
-        assert jnp.any(world_hollow.force_dict["line"] != 0)
+        assert jnp.any(world_hollow.force_dict[hollow_box.id] != 0)
+        assert jnp.any(world_hollow.force_dict[line.id] != 0)
 
     def test_box_box_vectorized_collision(self):
         """Test collision forces between two boxes."""
@@ -1986,10 +1986,10 @@ class TestVectorizedShapeForce:
         pairs = [(box1, box2)]
 
         world_collision = world._box_box_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_collision.force_dict["box1"] != 0)
-        assert jnp.any(world_collision.force_dict["box2"] != 0)
-        assert jnp.any(world_collision.torque_dict["box1"] != 0)
-        assert jnp.any(world_collision.torque_dict["box2"] != 0)
+        assert jnp.any(world_collision.force_dict[box1.id] != 0)
+        assert jnp.any(world_collision.force_dict[box2.id] != 0)
+        assert jnp.any(world_collision.torque_dict[box1.id] != 0)
+        assert jnp.any(world_collision.torque_dict[box2.id] != 0)
 
         # Test with non-overlapping boxes
         box2 = box2.replace(
@@ -2002,10 +2002,10 @@ class TestVectorizedShapeForce:
         collision_mask = jnp.array([False])
 
         world_no_collision = world._box_box_vectorized_collision(pairs, collision_mask)
-        assert jnp.all(world_no_collision.force_dict["box1"] == 0)
-        assert jnp.all(world_no_collision.force_dict["box2"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["box1"] == 0)
-        assert jnp.all(world_no_collision.torque_dict["box2"] == 0)
+        assert jnp.all(world_no_collision.force_dict[box1.id] == 0)
+        assert jnp.all(world_no_collision.force_dict[box2.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[box1.id] == 0)
+        assert jnp.all(world_no_collision.torque_dict[box2.id] == 0)
 
         # Test with one hollow box and one solid box
         hollow_box = Agent.create(
@@ -2036,8 +2036,8 @@ class TestVectorizedShapeForce:
         collision_mask = jnp.array([True])
 
         world_hollow = world._box_box_vectorized_collision(pairs, collision_mask)
-        assert jnp.any(world_hollow.force_dict["hollow_box"] != 0)
-        assert jnp.any(world_hollow.force_dict["box2"] != 0)
+        assert jnp.any(world_hollow.force_dict[hollow_box.id] != 0)
+        assert jnp.any(world_hollow.force_dict[box2.id] != 0)
 
     def test_box_collisions_batch_dimensions(self):
         """Test box collisions with multiple batch dimensions."""
@@ -2070,10 +2070,10 @@ class TestVectorizedShapeForce:
         world_collision = world._box_sphere_vectorized_collision(pairs, collision_mask)
 
         # Check first batch has collision forces, second doesn't
-        assert jnp.any(world_collision.force_dict["box"][0] != 0)
-        assert jnp.all(world_collision.force_dict["box"][1] == 0)
-        assert jnp.any(world_collision.force_dict["sphere"][0] != 0)
-        assert jnp.all(world_collision.force_dict["sphere"][1] == 0)
+        assert jnp.any(world_collision.force_dict[box.id][0] != 0)
+        assert jnp.all(world_collision.force_dict[box.id][1] == 0)
+        assert jnp.any(world_collision.force_dict[sphere.id][0] != 0)
+        assert jnp.all(world_collision.force_dict[sphere.id][1] == 0)
 
 
 class TestVectorizedEnvironmentForce:
@@ -2105,9 +2105,11 @@ class TestVectorizedEnvironmentForce:
 
         # Test line-sphere collision
         world = World.create(batch_dim=1)
-        world = world.add_agent(line1).add_agent(sphere1)
+        world = world.add_agent(line1)
         world = world.reset()
-        line1, sphere1 = world.agents
+        line1, sphere1 = world.entity_id_to_entity(line1.id), world.entity_id_to_entity(
+            sphere1.id
+        )
         line1 = line1.replace(
             state=line1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2123,9 +2125,11 @@ class TestVectorizedEnvironmentForce:
 
         # Test line-line collision
         world = World.create(batch_dim=1)
-        world = world.add_agent(line1).add_agent(line2)
+        world = world.add_agent(line1)
         world = world.reset()
-        line1, line2 = world.agents
+        line1, line2 = world.entity_id_to_entity(line1.id), world.entity_id_to_entity(
+            line2.id
+        )
         line1 = line1.replace(
             state=line1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2144,9 +2148,11 @@ class TestVectorizedEnvironmentForce:
 
         # Test box-sphere collision
         world = World.create(batch_dim=1)
-        world = world.add_agent(box1).add_agent(sphere1)
+        world = world.add_agent(box1)
         world = world.reset()
-        box1, sphere1 = world.agents
+        box1, sphere1 = world.entity_id_to_entity(box1.id), world.entity_id_to_entity(
+            sphere1.id
+        )
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2162,9 +2168,11 @@ class TestVectorizedEnvironmentForce:
 
         # Test box-line collision
         world = World.create(batch_dim=1)
-        world = world.add_agent(box1).add_agent(line1)
+        world = world.add_agent(box1)
         world = world.reset()
-        box1, line1 = world.agents
+        box1, line1 = world.entity_id_to_entity(box1.id), world.entity_id_to_entity(
+            line1.id
+        )
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2183,9 +2191,11 @@ class TestVectorizedEnvironmentForce:
 
         # Test box-box collision
         world = World.create(batch_dim=1)
-        world = world.add_agent(box1).add_agent(box2)
+        world = world.add_agent(box1)
         world = world.reset()
-        box1, box2 = world.agents
+        box1, box2 = world.entity_id_to_entity(box1.id), world.entity_id_to_entity(
+            box2.id
+        )
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2214,6 +2224,8 @@ class TestVectorizedEnvironmentForce:
         from jaxvmas.simulator.joints import Joint
 
         world = world.add_agent(agent1).add_agent(agent2)
+        world = world.reset()
+        agent1, agent2 = world.agents
         joint = Joint.create(
             entity_a=agent1,
             entity_b=agent2,
@@ -2285,8 +2297,8 @@ class TestVectorizedEnvironmentForce:
         # Apply forces
         world = world._apply_vectorized_enviornment_force()
         # First batch should have collision forces, second batch should not
-        assert jnp.any(world.force_dict["sphere1"][0] != 0)
-        assert jnp.all(world.force_dict["sphere1"][1] == 0)
+        assert jnp.any(world.force_dict[sphere1.id][0] != 0)
+        assert jnp.all(world.force_dict[sphere1.id][1] == 0)
 
     def test_vectorized_environment_force_empty_world(self):
         """Test vectorized environment force with no entities."""
@@ -2451,7 +2463,7 @@ class TestMoreTests:
                 vel=jnp.array([[1.0, 1.0]]),
             )
         )
-        world = world.replace(force_dict={"agent": jnp.array([[1.0, 1.0]])})
+        world = world.replace(force_dict={agent.id: jnp.array([[1.0, 1.0]])})
 
         # Test integration
         updated_agent = world._integrate_state(agent, substep=0)
@@ -2479,7 +2491,7 @@ class TestMoreTests:
                 ang_vel=jnp.array([[1.0]]),
             )
         )
-        world = world.replace(torque_dict={"rotating": jnp.array([[1.0]])})
+        world = world.replace(torque_dict={rotating_agent.id: jnp.array([[1.0]])})
 
         updated_rotating = world._integrate_state(rotating_agent, substep=0)
         assert jnp.all(updated_rotating.state.rot > rotating_agent.state.rot)
