@@ -4,7 +4,7 @@ import chex
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, Float, Int, jaxtyped
+from jaxtyping import Array, Bool, Float, jaxtyped
 
 from jaxvmas.equinox_utils import (
     equinox_filter_cond_return_dynamic,
@@ -31,7 +31,7 @@ class Entity(JaxVectorizedObject):
     gravity: Float[Array, f"{batch_axis_dim} {pos_dim}"] | None
 
     name: str
-    id: Int[Array, ""]
+    id: int
     movable: bool
     rotatable: bool
     collide: bool
@@ -119,7 +119,7 @@ class Entity(JaxVectorizedObject):
             state,
             gravity,
             name,
-            jnp.asarray(-1, dtype=int),
+            -1,  # id
             movable,
             rotatable,
             collide,
@@ -162,9 +162,7 @@ class Entity(JaxVectorizedObject):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _spawn(
-        self, id: Int[Array, ""], *, batch_dim: int, dim_p: int, **kwargs
-    ) -> "Entity":
+    def _spawn(self, id: int, *, batch_dim: int, dim_p: int, **kwargs) -> "Entity":
         if self.gravity is not None:
             chex.assert_shape(self.gravity, (batch_dim, dim_p))
         _render = jnp.full((batch_dim,), True)

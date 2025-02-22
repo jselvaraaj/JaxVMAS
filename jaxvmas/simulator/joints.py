@@ -14,7 +14,6 @@ from jaxvmas.simulator import rendering
 
 if TYPE_CHECKING:
     from jaxvmas.simulator.core.entity import Entity
-from jaxtyping import Array, Int
 
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
@@ -24,8 +23,8 @@ UNCOLLIDABLE_JOINT_RENDERING_WIDTH = 1
 
 @jaxtyped(typechecker=beartype)
 class Joint(PyTreeNode):
-    entity_a_id: Int[Array, ""]
-    entity_b_id: Int[Array, ""]
+    entity_a_id: int
+    entity_b_id: int
     rotate_a: bool
     rotate_b: bool
     fixed_rotation_a: float | None
@@ -194,8 +193,8 @@ class JointConstraint(PyTreeNode):
     This is an uncollidable constraint that bounds two entities in the specified anchor points at the specified distance
     """
 
-    entity_a_id: Int[Array, ""]
-    entity_b_id: Int[Array, ""]
+    entity_a_id: int
+    entity_b_id: int
     anchor_a: tuple[float, float]
     anchor_b: tuple[float, float]
     dist: float

@@ -46,13 +46,9 @@ class TestJaxGymnasiumWrapper:
             PRNG_key=PRNG_key,
         )
         mock_agent_1 = Agent.create(name="agent_0")
-        mock_agent_1 = mock_agent_1._spawn(
-            id=jnp.asarray(1), batch_dim=1, dim_c=2, dim_p=2
-        )
+        mock_agent_1 = mock_agent_1._spawn(id=1, batch_dim=1, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1")
-        mock_agent_2 = mock_agent_2._spawn(
-            id=jnp.asarray(2), batch_dim=1, dim_c=2, dim_p=2
-        )
+        mock_agent_2 = mock_agent_2._spawn(id=2, batch_dim=1, dim_c=2, dim_p=2)
         world = env.world
         world = world.add_agent(mock_agent_1)
         world = world.add_agent(mock_agent_2)
@@ -138,9 +134,9 @@ class TestJaxGymnasiumWrapper:
             PRNG_key=PRNG_key,
         )
         agent_0 = Agent.create(name="agent_0")
-        agent_0 = agent_0._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=2, dim_p=2)
+        agent_0 = agent_0._spawn(id=1, batch_dim=1, dim_c=2, dim_p=2)
         agent_1 = Agent.create(name="agent_1")
-        agent_1 = agent_1._spawn(id=jnp.asarray(2), batch_dim=1, dim_c=2, dim_p=2)
+        agent_1 = agent_1._spawn(id=2, batch_dim=1, dim_c=2, dim_p=2)
         env = env.replace(world=env.world.add_agent(agent_0).add_agent(agent_1))
         wrapper = JaxGymnasiumWrapper.create(env=env)
 

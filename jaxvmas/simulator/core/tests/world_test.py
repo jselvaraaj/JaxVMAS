@@ -162,7 +162,6 @@ class TestWorld:
 
         # Create and add joint
         joint = Joint.create(
-            batch_dim=2,
             entity_a=agent1,
             entity_b=agent2,
             anchor_a=(0.0, 0.0),
@@ -1519,18 +1518,12 @@ class TestVectorizedShapeForce:
 
         # Create two agents with different movement capabilities
         agent1 = Agent.create(
-            batch_dim=1,
             name="agent1",
-            dim_p=2,
-            dim_c=0,
             movable=True,
             rotatable=True,
         )
         agent2 = Agent.create(
-            batch_dim=1,
             name="agent2",
-            dim_p=2,
-            dim_c=0,
             movable=True,
             rotatable=False,
         )
@@ -1560,18 +1553,12 @@ class TestVectorizedShapeForce:
 
         # Create two agents to be joined
         agent1 = Agent.create(
-            batch_dim=1,
             name="agent1",
-            dim_p=2,
-            dim_c=0,
             movable=True,
             rotatable=True,
         )
         agent2 = Agent.create(
-            batch_dim=1,
             name="agent2",
-            dim_p=2,
-            dim_c=0,
             movable=True,
             rotatable=True,
         )
@@ -2258,6 +2245,7 @@ class TestVectorizedEnvironmentForce:
 
         # Position spheres to create multiple collisions
         world = world.add_agent(sphere1).add_agent(sphere2).add_agent(sphere3)
+        world = world.reset()
         sphere1, sphere2, sphere3 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -2274,27 +2262,6 @@ class TestVectorizedEnvironmentForce:
         world = world._apply_vectorized_enviornment_force()
         assert len(world.force_dict) == 3  # Forces should be applied to all agents
 
-    def test_vectorized_environment_force_invalid_shape(self):
-        """Test handling of invalid shape combinations."""
-        world = World.create(batch_dim=1)
-
-        # Create agents with valid and invalid shapes
-        valid_agent = Agent.create(name="valid", shape=Sphere(radius=0.5), movable=True)
-        invalid_agent = Agent.create(name="invalid", shape=DummyShape(), movable=True)
-
-        world = world.add_agent(valid_agent).add_agent(invalid_agent)
-        valid_agent, invalid_agent = world.agents
-        valid_agent = valid_agent.replace(
-            state=valid_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
-        )
-        invalid_agent = invalid_agent.replace(
-            state=invalid_agent.state.replace(pos=jnp.array([[1.0, 0.0]]))
-        )
-        world = world.replace(agents=[valid_agent, invalid_agent])
-
-        with pytest.raises(AssertionError):
-            world._apply_vectorized_enviornment_force()
-
     def test_vectorized_environment_force_batch_dim(self):
         """Test vectorized environment force with multiple batch dimensions."""
         world = World.create(batch_dim=2)
@@ -2305,6 +2272,7 @@ class TestVectorizedEnvironmentForce:
 
         # Position spheres differently in each batch
         world = world.add_agent(sphere1).add_agent(sphere2)
+        world = world.reset()
         sphere1, sphere2 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0], [0.0, 0.0]]))

@@ -23,7 +23,7 @@ class TestDroneDynamics:
             name="test_agent",
             action_size=5,  # Larger than needed_action_size for testing
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         return agent
 
     def test_create(self, world: World):
@@ -84,7 +84,7 @@ class TestDroneDynamics:
             name="test_agent",
             action_size=3,  # Less than needed_action_size
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
 
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -155,9 +155,7 @@ class TestDroneDynamics:
                 name="test_agent",
                 action_size=5,
             )
-            agent = agent._spawn(
-                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
-            )
+            agent = agent._spawn(id=1, batch_dim=batch_dim, dim_c=0, dim_p=2)
 
             dynamics, processed_agent = dynamics.check_and_process_action(agent)
             assert processed_agent.state.force.shape == (batch_dim, 2)
@@ -170,7 +168,7 @@ class TestDroneDynamics:
             name="test_agent",
             action_size=5,
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 5))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -185,9 +183,7 @@ class TestDroneDynamics:
             name="test_agent",
             action_size=4,
         )
-        agent = agent._spawn(
-            id=jnp.asarray(1), batch_dim=basic_dynamics.batch_dim, dim_c=0, dim_p=2
-        )
+        agent = agent._spawn(id=1, batch_dim=basic_dynamics.batch_dim, dim_c=0, dim_p=2)
         # Set thrust = 0 (will be compensated by mg), zero torques
         hover_action = jnp.zeros((basic_dynamics.batch_dim, 4))
         agent = agent.replace(action=agent.action.replace(u=hover_action))
@@ -206,9 +202,7 @@ class TestDroneDynamics:
             name="test_agent",
             action_size=4,
         )
-        agent = agent._spawn(
-            id=jnp.asarray(1), batch_dim=basic_dynamics.batch_dim, dim_c=0, dim_p=2
-        )
+        agent = agent._spawn(id=1, batch_dim=basic_dynamics.batch_dim, dim_c=0, dim_p=2)
         # Set some non-zero position and rotation
         pos = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         rot = jnp.array([[0.5], [0.6]])

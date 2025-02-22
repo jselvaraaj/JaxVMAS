@@ -35,13 +35,13 @@ class MockScenario(BaseScenario):
             movable=True,
             silent=False,
         )
-        agent1 = agent1._spawn(id=jnp.asarray(1), batch_dim=batch_dim, dim_c=3, dim_p=2)
+        agent1 = agent1._spawn(id=1, batch_dim=batch_dim, dim_c=3, dim_p=2)
         agent2 = Agent.create(
             name="agent_2",
             movable=True,
             silent=True,
         )
-        agent2 = agent2._spawn(id=jnp.asarray(2), batch_dim=batch_dim, dim_c=3, dim_p=2)
+        agent2 = agent2._spawn(id=2, batch_dim=batch_dim, dim_c=3, dim_p=2)
         world = world.add_agent(agent1)
         world = world.add_agent(agent2)
         return world

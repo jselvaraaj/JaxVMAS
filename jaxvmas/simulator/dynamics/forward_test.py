@@ -19,7 +19,7 @@ class TestForwardDynamics:
             name="test_agent",
             action_size=2,  # Larger than needed_action_size for testing
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(
             action=agent.action.replace(u=jnp.array([[1.0, 2.0], [3.0, 4.0]]))
         )
@@ -63,7 +63,7 @@ class TestForwardDynamics:
             name="test_agent",
             action_size=0,  # Less than needed_action_size
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 0))))
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -108,9 +108,7 @@ class TestForwardDynamics:
                 name="test_agent",
                 action_size=2,
             )
-            agent = agent._spawn(
-                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
-            )
+            agent = agent._spawn(id=1, batch_dim=batch_dim, dim_c=0, dim_p=2)
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
             assert processed_agent.state.force.shape == (batch_dim, 2)
@@ -121,7 +119,7 @@ class TestForwardDynamics:
             name="test_agent",
             action_size=2,
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 2))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -133,7 +131,7 @@ class TestForwardDynamics:
             name="test_agent",
             action_size=2,
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=1, dim_c=0, dim_p=2)
 
         # Test with different rotations
         rotations = [0.0, jnp.pi / 2, jnp.pi, 3 * jnp.pi / 2]

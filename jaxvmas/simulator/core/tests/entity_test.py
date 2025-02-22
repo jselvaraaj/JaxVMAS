@@ -13,7 +13,7 @@ class TestEntity:
             movable=True,
             rotatable=True,
         )
-        entity = entity._spawn(jnp.asarray(2), batch_dim=2, dim_p=2)
+        entity = entity._spawn(id=2, batch_dim=2, dim_p=2)
         return entity
 
     def test_create(self, basic_entity: Entity):
@@ -35,7 +35,7 @@ class TestEntity:
             v_range=5.0,
             max_speed=10.0,
         )
-        custom_entity = custom_entity._spawn(jnp.asarray(3), batch_dim=2, dim_p=2)
+        custom_entity = custom_entity._spawn(id=3, batch_dim=2, dim_p=2)
         assert custom_entity.mass == 2.0
         assert custom_entity.v_range == 5.0
         assert custom_entity.max_speed == 10.0
@@ -89,9 +89,7 @@ class TestEntity:
         basic_entity = basic_entity.set_vel(jnp.array([3.0, 4.0]))
         basic_entity = basic_entity.set_rot(jnp.array([0.5]))
 
-        spawned_entity = basic_entity._spawn(
-            id=jnp.asarray(0, dtype=int), batch_dim=2, dim_p=2
-        )
+        spawned_entity = basic_entity._spawn(id=0, batch_dim=2, dim_p=2)
         # Check shapes are preserved
         assert spawned_entity.state.pos.shape == (2, 2)
         assert spawned_entity.state.vel.shape == (2, 2)

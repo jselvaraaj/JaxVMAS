@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, Int, jaxtyped
+from jaxtyping import Array, Bool, jaxtyped
 
 from jaxvmas.simulator.core.action import Action
 from jaxvmas.simulator.core.entity import Entity
@@ -221,7 +221,7 @@ class Agent(Entity):
     @jaxtyped(typechecker=beartype)
     def _spawn(
         self,
-        id: Int[Array, ""],
+        id: int,
         *,
         batch_dim: int,
         dim_c: int,

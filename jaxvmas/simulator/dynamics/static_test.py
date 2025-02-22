@@ -18,7 +18,7 @@ class TestStaticDynamics:
             name="test_agent",
             action_size=1,  # Any action size is valid since needed_action_size is 0
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         return agent
 
     def test_create(self, basic_dynamics: Static):
@@ -90,9 +90,7 @@ class TestStaticDynamics:
                 name="test_agent",
                 action_size=1,
             )
-            agent = agent._spawn(
-                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
-            )
+            agent = agent._spawn(id=1, batch_dim=batch_dim, dim_c=0, dim_p=2)
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
             assert processed_agent.state.force.shape == (batch_dim, 2)
@@ -107,7 +105,7 @@ class TestStaticDynamics:
             name="test_agent",
             action_size=1,
         )
-        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        agent = agent._spawn(id=1, batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(
             state=agent.state.replace(force=initial_force, torque=initial_torque)
         )

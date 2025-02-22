@@ -33,7 +33,7 @@ class TestAgent:
             rotatable=True,
         )
         agent = agent._spawn(
-            id=jnp.asarray(1),
+            id=1,
             batch_dim=2,
             dim_c=3,
             dim_p=2,
@@ -59,7 +59,7 @@ class TestAgent:
             alpha=alpha,
         )
         agent = agent._spawn(
-            id=jnp.asarray(2),
+            id=2,
             batch_dim=2,
             dim_c=3,
             dim_p=2,
@@ -84,7 +84,7 @@ class TestAgent:
             dynamics=dynamics,
         )
         agent = agent._spawn(
-            id=jnp.asarray(2),
+            id=2,
             batch_dim=2,
             dim_c=3,
             dim_p=2,
@@ -100,7 +100,7 @@ class TestAgent:
             sensors=sensors,
         )
         agent = agent._spawn(
-            id=jnp.asarray(2),
+            id=2,
             batch_dim=2,
             dim_c=3,
             dim_p=2,
@@ -112,16 +112,14 @@ class TestAgent:
         # Test spawn with different dimensions
         basic_agent = Agent.create(name="one")
         basic_agent = basic_agent.replace(silent=False)
-        spawned = basic_agent._spawn(id=jnp.asarray(2), batch_dim=2, dim_c=5, dim_p=2)
+        spawned = basic_agent._spawn(id=2, batch_dim=2, dim_c=5, dim_p=2)
         assert spawned.state.c.shape == (2, 5)
         assert spawned.state.pos.shape == (2, 2)
 
         # Test spawn with silent agent and zero comm dimension
         basic_agent = Agent.create(name="one")
         silent_agent = basic_agent.replace(silent=True)
-        spawned_silent = silent_agent._spawn(
-            id=jnp.asarray(0, dtype=int), batch_dim=2, dim_c=0, dim_p=2
-        )
+        spawned_silent = silent_agent._spawn(id=0, batch_dim=2, dim_c=0, dim_p=2)
         assert spawned_silent.state.c.shape == (2, 0)
 
     @pytest.mark.parametrize(
@@ -142,7 +140,7 @@ class TestAgent:
         )
 
         agent = agent._spawn(
-            id=jnp.asarray(2),
+            id=2,
             batch_dim=2,
             dim_c=3,
             dim_p=2,
@@ -161,7 +159,7 @@ class TestAgent:
             shape=Sphere(radius=0.5),
         )
         agent = agent._spawn(
-            id=jnp.asarray(2),
+            id=2,
             batch_dim=2,
             dim_c=3,
             dim_p=2,

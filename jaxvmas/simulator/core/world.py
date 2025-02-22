@@ -173,7 +173,7 @@ class World(JaxVectorizedObject):
         agent = agent.replace(batch_dim=self.batch_dim)
         id = len(self.entities)
         agent = agent._spawn(
-            id=jnp.asarray(id, dtype=int),
+            id=id,
             batch_dim=self.batch_dim,
             dim_c=self.dim_c,
             dim_p=self.dim_p,
@@ -190,9 +190,7 @@ class World(JaxVectorizedObject):
         """Only way to add landmarks to the world"""
         landmark = landmark.replace(batch_dim=self.batch_dim)
         id = len(self.entities)
-        landmark = landmark._spawn(
-            id=jnp.asarray(id, dtype=int), batch_dim=self.batch_dim, dim_p=self.dim_p
-        )
+        landmark = landmark._spawn(id=id, batch_dim=self.batch_dim, dim_p=self.dim_p)
         self = self.replace(landmarks=self.landmarks + [landmark])
         return self
 
