@@ -6,5 +6,5 @@ chex
 beartype
 
 pyglet<=1.5.27
-cv2
+opencv-python
 
