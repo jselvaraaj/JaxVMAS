@@ -17,6 +17,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Ubuntu-specific: Install system dependencies
+      - name: Install System Dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-opengl xvfb
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
@@ -28,9 +35,15 @@ jobs:
           pip install pytest pytest-xdist pytest-cov
           pip install -r requirements.txt
 
-      - name: Run tests with coverage
-        run: |
-          pytest -n auto -v --cov=jaxvmas --cov-report=xml jaxvmas
+      # Ubuntu-specific: Run tests with a virtual display
+      - name: Run Tests with Coverage on Ubuntu
+        if: runner.os == 'Linux'
+        run: xvfb-run -s "-screen 0 1400x900x24" pytest -n auto -v --cov=jaxvmas --cov-report=xml jaxvmas
+
+      # macOS: Run tests normally
+      - name: Run Tests with Coverage on macOS
+        if: runner.os == 'macOS'
+        run: pytest -n auto -v --cov=jaxvmas --cov-report=xml jaxvmas
 
       - name: Generate Coverage Badge
         uses: jaywcjlove/coverage-badges-cli@main
