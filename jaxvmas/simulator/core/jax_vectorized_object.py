@@ -32,7 +32,7 @@ class JaxVectorizedObject(PyTreeNode):
     def assert_is_spwaned(self):
         msg = "_spwan first"
 
-        assert batch_axis_dim is not None, msg
+        assert self.batch_dim is not None, msg
 
     @jaxtyped(typechecker=beartype)
     def _check_batch_index(self, batch_index: int | float):

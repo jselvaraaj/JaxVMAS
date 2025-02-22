@@ -137,6 +137,9 @@ class TestAgent:
     ):
         agent = Agent.create(
             name="action_test",
+            u_range=u_range,
+            u_multiplier=u_multiplier,
+            u_noise=u_noise,
         )
 
         agent = agent._spawn(
@@ -144,9 +147,6 @@ class TestAgent:
             batch_dim=2,
             dim_c=3,
             dim_p=2,
-            u_range=u_range,
-            u_multiplier=u_multiplier,
-            u_noise=u_noise,
         )
         assert agent.action.u_range == u_range
         assert agent.action.u_multiplier == u_multiplier

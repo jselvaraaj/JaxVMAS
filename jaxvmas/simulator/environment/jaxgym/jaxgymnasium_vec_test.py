@@ -47,14 +47,15 @@ class TestJaxGymnasiumVecWrapper:
             num_envs=2,
             terminated_truncated=True,
             PRNG_key=PRNG_key,
+            dim_c=2,
+            dim_p=2,
         )
         mock_agent_1 = Agent.create(name="agent_0")
-        mock_agent_1 = mock_agent_1._spawn(id=1, batch_dim=2, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1")
-        mock_agent_2 = mock_agent_2._spawn(id=2, batch_dim=2, dim_c=2, dim_p=2)
         world = env.world
         world = world.add_agent(mock_agent_1)
         world = world.add_agent(mock_agent_2)
+        mock_agent_1, mock_agent_2 = world.agents
         env = env.replace(world=world)
         return JaxGymnasiumVecWrapper.create(env=env)
 
@@ -128,12 +129,16 @@ class TestJaxGymnasiumVecWrapper:
             num_envs=2,
             terminated_truncated=True,
             PRNG_key=PRNG_key,
+            dim_c=2,
+            dim_p=2,
         )
         agent_0 = Agent.create(name="agent_0")
-        agent_0 = agent_0._spawn(id=1, batch_dim=2, dim_c=2, dim_p=2)
         agent_1 = Agent.create(name="agent_1")
-        agent_1 = agent_1._spawn(id=2, batch_dim=2, dim_c=2, dim_p=2)
-        env = env.replace(world=env.world.add_agent(agent_0).add_agent(agent_1))
+        world = env.world
+        world = world.add_agent(agent_0)
+        world = world.add_agent(agent_1)
+        mock_agent_0, mock_agent_1 = world.agents
+        env = env.replace(world=world)
         wrapper = JaxGymnasiumVecWrapper.create(env=env)
         PRNG_key, key_step_i = jax.random.split(PRNG_key)
         wrapper, _ = wrapper.reset(PRNG_key=key_step_i)

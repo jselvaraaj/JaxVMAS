@@ -176,10 +176,7 @@ class World(JaxVectorizedObject):
         agent = agent.replace(batch_dim=self.batch_dim)
         id = len(self.entities)
         agent = agent._spawn(
-            id=id,
-            batch_dim=self.batch_dim,
-            dim_c=self.dim_c,
-            dim_p=self.dim_p,
+            id=id, batch_dim=self.batch_dim, dim_c=self.dim_c, dim_p=self.dim_p
         )
 
         self = self.replace(agents=self.agents + [agent])

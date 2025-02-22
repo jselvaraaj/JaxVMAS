@@ -22,7 +22,7 @@ class MockScenario(BaseScenario):
     """Mock scenario for testing."""
 
     def make_world(self, batch_dim: int, **kwargs) -> World:
-        return MockWorld.create(batch_dim=batch_dim)
+        return MockWorld.create(batch_dim=batch_dim, **kwargs)
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         return self
@@ -44,14 +44,15 @@ class TestJaxGymnasiumWrapper:
             num_envs=1,
             terminated_truncated=True,
             PRNG_key=PRNG_key,
+            dim_c=2,
+            dim_p=2,
         )
         mock_agent_1 = Agent.create(name="agent_0")
-        mock_agent_1 = mock_agent_1._spawn(id=1, batch_dim=1, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1")
-        mock_agent_2 = mock_agent_2._spawn(id=2, batch_dim=1, dim_c=2, dim_p=2)
         world = env.world
         world = world.add_agent(mock_agent_1)
         world = world.add_agent(mock_agent_2)
+        mock_agent_1, mock_agent_2 = world.agents
         env = env.replace(world=world)
         return JaxGymnasiumWrapper.create(env=env)
 
@@ -132,12 +133,15 @@ class TestJaxGymnasiumWrapper:
             num_envs=1,
             terminated_truncated=True,
             PRNG_key=PRNG_key,
+            dim_c=2,
+            dim_p=2,
         )
         agent_0 = Agent.create(name="agent_0")
-        agent_0 = agent_0._spawn(id=1, batch_dim=1, dim_c=2, dim_p=2)
         agent_1 = Agent.create(name="agent_1")
-        agent_1 = agent_1._spawn(id=2, batch_dim=1, dim_c=2, dim_p=2)
-        env = env.replace(world=env.world.add_agent(agent_0).add_agent(agent_1))
+        world = env.world
+        world = world.add_agent(agent_0)
+        world = world.add_agent(agent_1)
+        env = env.replace(world=world)
         wrapper = JaxGymnasiumWrapper.create(env=env)
 
         @eqx.filter_jit

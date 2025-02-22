@@ -17,8 +17,8 @@ from jaxvmas.simulator.utils import (
 
 @jaxtyped(typechecker=beartype)
 class Action(JaxVectorizedObject):
-    u: Float[Array, f"{batch_axis_dim} {action_size_dim}"]
-    c: Float[Array, f"{batch_axis_dim} {comm_dim}"]
+    _u: Float[Array, f"{batch_axis_dim} {action_size_dim}"] | None
+    _c: Float[Array, f"{batch_axis_dim} {comm_dim}"] | None
 
     u_range: float | Sequence[float]
     u_multiplier: float | Sequence[float]
@@ -32,24 +32,12 @@ class Action(JaxVectorizedObject):
     @classmethod
     def create(
         cls,
-        batch_dim: int,
-        action_size: int,
-        comm_dim: int,
         u_range: float | Sequence[float],
         u_multiplier: float | Sequence[float],
         u_noise: float | Sequence[float],
+        action_size: int,
     ):
         chex.assert_scalar_non_negative(action_size)
-        chex.assert_scalar_non_negative(comm_dim)
-        chex.assert_scalar_positive(batch_dim)
-
-        u = jnp.full((batch_dim, action_size), jnp.nan)
-
-        # This is okay since filter jit would make comm_dim as static jitted variable
-        if comm_dim > 0:
-            c = jnp.zeros((batch_dim, comm_dim))
-        else:
-            c = jnp.full((batch_dim, comm_dim), jnp.nan)
 
         # control range
         _u_range = u_range
@@ -75,9 +63,9 @@ class Action(JaxVectorizedObject):
         )
 
         action = cls(
-            batch_dim,
-            u,
-            c,
+            None,
+            None,
+            None,
             u_range,
             u_multiplier,
             u_noise,
@@ -87,6 +75,35 @@ class Action(JaxVectorizedObject):
             u_noise_jax_array,
         )
         return action
+
+    def assert_is_spwaned(self):
+        super().assert_is_spwaned()
+        assert self._u is not None, "Action must be spawned first"
+        assert self._c is not None, "Action must be spawned first"
+
+    @property
+    def u(self):
+        self.assert_is_spwaned()
+        return self._u
+
+    @jaxtyped(typechecker=beartype)
+    def _spawn(self, batch_dim: int, comm_dim: int):
+        chex.assert_scalar_non_negative(comm_dim)
+        chex.assert_scalar_positive(batch_dim)
+
+        u = jnp.zeros((batch_dim, self.action_size))
+
+        # This is okay since filter jit would make comm_dim as static jitted variable
+        if comm_dim > 0:
+            c = jnp.zeros((batch_dim, comm_dim))
+        else:
+            c = jnp.full((batch_dim, comm_dim), jnp.nan)
+        return self.replace(batch_dim=batch_dim, u=u, c=c)
+
+    @property
+    def c(self):
+        self.assert_is_spwaned()
+        return self._c
 
     def __post_init__(self):
         for attr in (self.u_multiplier, self.u_range, self.u_noise):
@@ -98,6 +115,7 @@ class Action(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "Action":
+        self.assert_is_spwaned()
         u = self.u
         u_reset = jnp.where(
             jnp.isnan(env_index),
@@ -118,10 +136,14 @@ class Action(JaxVectorizedObject):
 
     def replace(self, **kwargs):
         if "u" in kwargs:
-            u = kwargs["u"]
-            chex.assert_shape(u, self.u.shape)
-        elif "c" in kwargs:
-            c = kwargs["c"]
-            chex.assert_shape(c, self.c.shape)
+            u = kwargs.pop("u")
+            kwargs["_u"] = u
+            if self._u is not None:
+                chex.assert_shape(u, self._u.shape)
+        if "c" in kwargs:
+            c = kwargs.pop("c")
+            kwargs["_c"] = c
+            if self._c is not None:
+                chex.assert_shape(c, self._c.shape)
 
         return super().replace(**kwargs)

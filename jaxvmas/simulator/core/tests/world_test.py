@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
 
-from jaxvmas.simulator.core.action import Action
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
 from jaxvmas.simulator.core.landmark import Landmark
@@ -2528,21 +2527,14 @@ class TestMoreTests:
 
     def test_update_comm_state(self):
         """Test communication state updates."""
-        world = World.create(batch_dim=1)
+        world = World.create(batch_dim=1, dim_p=2, dim_c=2)
 
         # Test silent agent
         silent_agent = Agent.create(name="silent", silent=True)
         world = world.add_agent(silent_agent)
         silent_agent = world.agents[-1]
         silent_agent = silent_agent.replace(
-            action=Action.create(
-                batch_dim=1,
-                action_size=2,
-                comm_dim=2,
-                u_range=1.0,
-                u_multiplier=1.0,
-                u_noise=0.0,
-            ).replace(c=jnp.array([[1.0, 2.0]]))
+            action=silent_agent.action.replace(c=jnp.array([[1.0, 2.0]]))
         )
         updated_silent = world._update_comm_state(silent_agent)
         assert jnp.allclose(
@@ -2555,14 +2547,7 @@ class TestMoreTests:
         world = world.add_agent(comm_agent)
         comm_agent = world.agents[-1]
         comm_agent = comm_agent.replace(
-            action=Action.create(
-                batch_dim=1,
-                action_size=2,
-                comm_dim=2,
-                u_range=1.0,
-                u_multiplier=1.0,
-                u_noise=0.0,
-            ).replace(c=jnp.array([[1.0, 2.0]]))
+            action=comm_agent.action.replace(c=jnp.array([[1.0, 2.0]]))
         )
         updated_comm = world._update_comm_state(comm_agent)
         assert jnp.allclose(

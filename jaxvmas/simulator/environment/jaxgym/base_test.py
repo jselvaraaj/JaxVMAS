@@ -29,7 +29,7 @@ class MockScenario(BaseScenario):
     """Mock scenario for testing."""
 
     def make_world(self, batch_dim: int, **kwargs) -> World:
-        return MockWorld.create(batch_dim=batch_dim)
+        return MockWorld.create(batch_dim=batch_dim, **kwargs)
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         return self
@@ -134,17 +134,20 @@ class TestBaseJaxGymWrapper:
         PRNG_key = jax.random.PRNGKey(0)
         key_step, key_step_i = jax.random.split(PRNG_key)
         env = Environment.create(
-            scenario=MockScenario.create(), num_envs=2, PRNG_key=key_step_i
+            scenario=MockScenario.create(),
+            num_envs=2,
+            PRNG_key=key_step_i,
+            dim_c=2,
+            dim_p=2,
         )
         mock_agent_1 = Agent.create(
             name="agent_0",
         )
-        mock_agent_1 = mock_agent_1._spawn(id=1, batch_dim=2, dim_c=2, dim_p=2)
         mock_agent_2 = Agent.create(name="agent_1")
-        mock_agent_2 = mock_agent_2._spawn(id=2, batch_dim=2, dim_c=2, dim_p=2)
         world = env.world
         world = world.add_agent(mock_agent_1)
         world = world.add_agent(mock_agent_2)
+        mock_agent_1, mock_agent_2 = world.agents
         env = env.replace(world=world)
         env, _ = env.reset(PRNG_key=key_step)
         return MockJaxGymWrapper.create(env=env, vectorized=True)

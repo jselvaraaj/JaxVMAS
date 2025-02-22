@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 @jaxtyped(typechecker=beartype)
 class Agent(Entity):
     state: AgentState
-    action: Action | None
+    action: Action
 
     obs_range: float
     obs_noise: float
@@ -85,6 +85,9 @@ class Agent(Entity):
         render_action: bool = False,
         dynamics: Dynamics = None,  # Defaults to holonomic
         action_size: int | None = None,  # Defaults to what required by the dynamics
+        u_noise: float | Sequence[float] = 0.0,
+        u_range: float | Sequence[float] = 1.0,
+        u_multiplier: float | Sequence[float] = 1.0,
         discrete_action_nvec: (
             list[int] | None
         ) = None,  # Defaults to 3-way discretization if discrete actions are chosen (stay, decrement, increment)
@@ -152,17 +155,21 @@ class Agent(Entity):
         # Dynamics
         dynamics = dynamics if dynamics is not None else Holonomic()
         # Action
-        if action_size is not None:
-            action_size = action_size
-        elif discrete_action_nvec is not None:
-            action_size = len(discrete_action_nvec)
-        else:
-            action_size = dynamics.needed_action_size
+        if action_size is None:
+            if discrete_action_nvec is not None:
+                action_size = len(discrete_action_nvec)
+            else:
+                action_size = dynamics.needed_action_size
         if discrete_action_nvec is None:
             discrete_action_nvec = [3] * action_size
         else:
             discrete_action_nvec = discrete_action_nvec
-        action = None
+        action = Action.create(
+            u_range=u_range,
+            u_multiplier=u_multiplier,
+            u_noise=u_noise,
+            action_size=action_size,
+        )
 
         agent = cls(
             **(
@@ -226,18 +233,8 @@ class Agent(Entity):
         batch_dim: int,
         dim_c: int,
         dim_p: int,
-        u_noise: float | Sequence[float] = 0.0,
-        u_range: float | Sequence[float] = 1.0,
-        u_multiplier: float | Sequence[float] = 1.0,
     ) -> "Agent":
-        action = Action.create(
-            batch_dim=batch_dim,
-            u_range=u_range,
-            u_multiplier=u_multiplier,
-            u_noise=u_noise,
-            action_size=self.action_size,
-            comm_dim=dim_c,
-        )
+        action = self.action._spawn(batch_dim, dim_c)
         if dim_c == 0:
             assert (
                 self.silent

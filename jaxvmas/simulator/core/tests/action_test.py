@@ -8,16 +8,16 @@ class TestAction:
     @pytest.fixture
     def basic_action(self):
         # Create basic action with float inputs
-        return Action.create(
-            batch_dim=2,
+        action = Action.create(
             action_size=3,
-            comm_dim=2,
             u_range=1.0,
             u_multiplier=1.0,
             u_noise=0.1,
         )
+        action = action._spawn(2, 2)
+        return action
 
-    def test_create_with_float_inputs(self, basic_action):
+    def test_create_with_float_inputs(self, basic_action: Action):
         # Test creation with float inputs
         assert basic_action.u.shape == (2, 3)
         assert basic_action.c.shape == (2, 2)
@@ -28,13 +28,12 @@ class TestAction:
     def test_create_with_sequence_inputs(self):
         # Test creation with sequence inputs
         action = Action.create(
-            batch_dim=2,
             action_size=3,
-            comm_dim=2,
             u_range=[1.0, 2.0, 3.0],
             u_multiplier=[0.5, 1.0, 1.5],
             u_noise=[0.1, 0.2, 0.3],
         )
+        action = action._spawn(2, 2)
         assert jnp.array_equal(action.u_range_jax_array, jnp.asarray([1.0, 2.0, 3.0]))
         assert jnp.array_equal(
             action.u_multiplier_jax_array, jnp.asarray([0.5, 1.0, 1.5])
@@ -75,9 +74,7 @@ class TestAction:
         # Test validation of sequence length
         with pytest.raises(AssertionError):
             Action.create(
-                batch_dim=2,
                 action_size=3,
-                comm_dim=2,
                 u_range=[1.0, 2.0],  # Wrong length
                 u_multiplier=1.0,
                 u_noise=0.1,

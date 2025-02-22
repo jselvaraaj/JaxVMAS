@@ -20,11 +20,9 @@ class MockScenario(BaseScenario):
     """A simple scenario for testing."""
 
     def make_world(self, batch_dim: int, **kwargs) -> World:
-        world = World.create(batch_dim=batch_dim)
+        world = World.create(batch_dim=batch_dim, **kwargs)
         agent = Agent.create(name="test_agent")
-        agent = agent._spawn(id=1, batch_dim=batch_dim, dim_c=2, dim_p=2)
         landmark = Landmark.create(name="test_landmark")
-        landmark = landmark._spawn(id=1, batch_dim=batch_dim, dim_p=2)
         world = world.add_agent(agent)
         world = world.add_landmark(landmark)
         return world
@@ -64,7 +62,7 @@ class TestBaseScenario:
     @pytest.fixture
     def scenario(self):
         scenario = MockScenario.create()
-        scenario = scenario.env_make_world(batch_dim=2)
+        scenario = scenario.env_make_world(batch_dim=2, dim_c=2, dim_p=2)
         return scenario
 
     def test_create(self):
