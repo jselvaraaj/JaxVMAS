@@ -21,13 +21,12 @@ class TestKinematicBicycleDynamics:
 
     @pytest.fixture
     def basic_agent(self):
-        return Agent.create(
-            batch_dim=2,
+        agent = Agent.create(
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=3,  # Larger than needed_action_size for testing
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        return agent
 
     def test_create(self):
         # Test creation with default integration
@@ -92,12 +91,10 @@ class TestKinematicBicycleDynamics:
     def test_check_and_process_action_invalid(self, basic_dynamics: KinematicBicycle):
         # Create agent with insufficient action size
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=1,  # Less than needed_action_size
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
 
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -105,12 +102,10 @@ class TestKinematicBicycleDynamics:
 
     def test_steering_angle_clipping(self, basic_dynamics: KinematicBicycle):
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
 
         # Test with steering angles beyond limits
         large_steering = jnp.array([[1.0, 2 * jnp.pi], [1.0, -2 * jnp.pi]])
@@ -152,11 +147,11 @@ class TestKinematicBicycleDynamics:
         # Test processing with different batch sizes
         for batch_dim in [1, 2, 4]:
             agent = Agent.create(
-                batch_dim=batch_dim,
                 name="test_agent",
-                dim_c=0,
-                dim_p=2,
                 action_size=3,
+            )
+            agent = agent._spawn(
+                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
             )
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -166,12 +161,10 @@ class TestKinematicBicycleDynamics:
     def test_zero_action(self, basic_dynamics: KinematicBicycle):
         # Test processing with zero actions
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=3,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 3))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -181,12 +174,10 @@ class TestKinematicBicycleDynamics:
     def test_straight_line_motion(self, basic_dynamics: KinematicBicycle):
         # Test straight line motion with forward velocity only
         agent = Agent.create(
-            batch_dim=1,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=0, dim_p=2)
         # Set forward velocity = 1, steering angle = 0
         agent = agent.replace(action=agent.action.replace(u=jnp.array([[1.0, 0.0]])))
 
@@ -202,12 +193,11 @@ class TestKinematicBicycleDynamics:
     def test_turning_motion(self, basic_dynamics: KinematicBicycle):
         # Test turning motion with forward velocity and steering
         agent = Agent.create(
-            batch_dim=1,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=0, dim_p=2)
+
         # Set forward velocity = 1, steering angle = pi/4
         agent = agent.replace(
             action=agent.action.replace(u=jnp.array([[1.0, jnp.pi / 4]]))

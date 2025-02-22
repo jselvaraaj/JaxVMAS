@@ -28,12 +28,15 @@ class TestAgent:
     @pytest.fixture
     def basic_agent(self):
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=3,
-            dim_p=2,
             movable=True,
             rotatable=True,
+        )
+        agent = agent._spawn(
+            id=jnp.asarray(1),
+            batch_dim=2,
+            dim_c=3,
+            dim_p=2,
         )
         chex.block_until_chexify_assertions_complete()
         return agent
@@ -50,13 +53,16 @@ class TestAgent:
         self, shape: Shape, color: Color, alpha: float
     ):
         agent = Agent.create(
-            batch_dim=2,
             name="shape_test",
-            dim_c=3,
-            dim_p=2,
             shape=shape,
             color=color,
             alpha=alpha,
+        )
+        agent = agent._spawn(
+            id=jnp.asarray(2),
+            batch_dim=2,
+            dim_c=3,
+            dim_p=2,
         )
         chex.block_until_chexify_assertions_complete()
 
@@ -74,11 +80,14 @@ class TestAgent:
     )
     def test_different_dynamics(self, dynamics: Dynamics, expected_action_size: int):
         agent = Agent.create(
-            batch_dim=2,
             name="dynamics_test",
+            dynamics=dynamics,
+        )
+        agent = agent._spawn(
+            id=jnp.asarray(2),
+            batch_dim=2,
             dim_c=3,
             dim_p=2,
-            dynamics=dynamics,
         )
         chex.block_until_chexify_assertions_complete()
         assert isinstance(agent.dynamics, type(dynamics))
@@ -87,26 +96,31 @@ class TestAgent:
     def test_sensor_integration(self):
         sensors = [MockSensor.create(), MockSensor.create()]
         agent = Agent.create(
-            batch_dim=2,
             name="sensor_test",
+            sensors=sensors,
+        )
+        agent = agent._spawn(
+            id=jnp.asarray(2),
+            batch_dim=2,
             dim_c=3,
             dim_p=2,
-            sensors=sensors,
         )
         assert len(agent.sensors) == 2
         assert all(isinstance(s, MockSensor) for s in agent.sensors)
 
     def test_spawn_behavior(self, basic_agent: Agent):
         # Test spawn with different dimensions
+        basic_agent = Agent.create(name="one")
         basic_agent = basic_agent.replace(silent=False)
-        spawned = basic_agent._spawn(id=jnp.asarray(0, dtype=int), dim_c=5, dim_p=2)
+        spawned = basic_agent._spawn(id=jnp.asarray(2), batch_dim=2, dim_c=5, dim_p=2)
         assert spawned.state.c.shape == (2, 5)
         assert spawned.state.pos.shape == (2, 2)
 
         # Test spawn with silent agent and zero comm dimension
+        basic_agent = Agent.create(name="one")
         silent_agent = basic_agent.replace(silent=True)
         spawned_silent = silent_agent._spawn(
-            id=jnp.asarray(0, dtype=int), dim_c=0, dim_p=2
+            id=jnp.asarray(0, dtype=int), batch_dim=2, dim_c=0, dim_p=2
         )
         assert spawned_silent.state.c.shape == (2, 0)
 
@@ -124,8 +138,12 @@ class TestAgent:
         u_noise: float | Sequence[float],
     ):
         agent = Agent.create(
-            batch_dim=2,
             name="action_test",
+        )
+
+        agent = agent._spawn(
+            id=jnp.asarray(2),
+            batch_dim=2,
             dim_c=3,
             dim_p=2,
             u_range=u_range,
@@ -138,12 +156,15 @@ class TestAgent:
 
     def test_render_with_action(self):
         agent = Agent.create(
-            batch_dim=2,
             name="render_test",
-            dim_c=3,
-            dim_p=2,
             render_action=True,
             shape=Sphere(radius=0.5),
+        )
+        agent = agent._spawn(
+            id=jnp.asarray(2),
+            batch_dim=2,
+            dim_c=3,
+            dim_p=2,
         )
 
         # Add non-zero force to test force rendering
@@ -158,10 +179,7 @@ class TestAgent:
         # Test invalid discrete action configuration
         with pytest.raises(ValueError):
             Agent.create(
-                batch_dim=2,
                 name="invalid",
-                dim_c=3,
-                dim_p=2,
                 discrete_action_nvec=[1, 2],  # Invalid: must be > 1
             )
 

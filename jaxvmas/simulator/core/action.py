@@ -7,7 +7,7 @@ from jaxtyping import Array, Float, jaxtyped
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
     action_size_dim,
-    batch_dim,
+    batch_axis_dim,
     comm_dim,
 )
 from jaxvmas.simulator.utils import (
@@ -17,8 +17,8 @@ from jaxvmas.simulator.utils import (
 
 @jaxtyped(typechecker=beartype)
 class Action(JaxVectorizedObject):
-    u: Float[Array, f"{batch_dim} {action_size_dim}"]
-    c: Float[Array, f"{batch_dim} {comm_dim}"]
+    u: Float[Array, f"{batch_axis_dim} {action_size_dim}"]
+    c: Float[Array, f"{batch_axis_dim} {comm_dim}"]
 
     u_range: float | Sequence[float]
     u_multiplier: float | Sequence[float]

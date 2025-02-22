@@ -15,12 +15,10 @@ class TestHolonomicWithRotationDynamics:
     @pytest.fixture
     def basic_agent(self):
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=4,  # Larger than needed_action_size for testing
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 4))))
         return agent
 
@@ -59,12 +57,10 @@ class TestHolonomicWithRotationDynamics:
     ):
         # Create agent with insufficient action size
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,  # Less than needed_action_size
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
 
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -111,11 +107,11 @@ class TestHolonomicWithRotationDynamics:
         # Test processing with different batch sizes
         for batch_dim in [1, 2, 4]:
             agent = Agent.create(
-                batch_dim=batch_dim,
                 name="test_agent",
-                dim_c=0,
-                dim_p=2,
                 action_size=4,
+            )
+            agent = agent._spawn(
+                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
             )
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -125,12 +121,10 @@ class TestHolonomicWithRotationDynamics:
     def test_zero_action(self, basic_dynamics: HolonomicWithRotation):
         # Test processing with zero actions
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=4,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 4))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)

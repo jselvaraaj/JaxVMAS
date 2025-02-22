@@ -40,17 +40,14 @@ class TestWorld:
     @pytest.fixture
     def agent(self):
         return Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=3,
-            dim_p=2,
             movable=True,
             rotatable=True,
         )
 
     @pytest.fixture
     def landmark(self):
-        return Landmark.create(batch_dim=2, name="test_landmark")
+        return Landmark.create(name="test_landmark")
 
     @pytest.fixture
     def world_with_agent(self, basic_world: World, agent: Agent):
@@ -107,35 +104,33 @@ class TestWorld:
         # Create two overlapping spherical agents
         # Create two overlapping spherical agents
         agent1 = Agent.create(
-            batch_dim=2,
             name="agent1",
-            dim_c=0,
-            dim_p=2,
             movable=True,
         )
         agent2 = Agent.create(
-            batch_dim=2,
             name="agent2",
-            dim_c=0,
-            dim_p=2,
             movable=True,
         )
 
         world = basic_world.add_agent(agent1).add_agent(agent2)
 
+        agent1, agent2 = world.agents
+
         # Test collision detection
         assert world.collides(agent1, agent2)
 
         # Test no collision with non-collidable entity
-        landmark = Landmark.create(batch_dim=2, name="landmark", collide=False)
+        landmark = Landmark.create(name="landmark", collide=False)
         world = world.add_landmark(landmark)
+        (landmark,) = world.landmarks
         assert not world.collides(agent1, landmark)
 
     def test_communication(self, basic_world: World):
         # Create world with communication
         world = World.create(batch_dim=2, dim_c=3)
-        agent = Agent.create(batch_dim=2, name="agent", dim_c=3, dim_p=2, silent=False)
+        agent = Agent.create(name="agent", silent=False)
         world = world.add_agent(agent)
+        (agent,) = world.agents
 
         # Set communication action
         agent = world.agents[0]
@@ -154,21 +149,16 @@ class TestWorld:
 
         # Create two agents to be joined
         agent1 = Agent.create(
-            batch_dim=2,
             name="agent1",
-            dim_c=0,
-            dim_p=2,
             movable=True,
         )
         agent2 = Agent.create(
-            batch_dim=2,
             name="agent2",
-            dim_c=0,
-            dim_p=2,
             movable=True,
         )
 
         world = world.add_agent(agent1).add_agent(agent2)
+        agent1, agent2 = world.agents
 
         # Create and add joint
         joint = Joint.create(
@@ -196,10 +186,7 @@ class TestWorld:
         # Test world with boundaries
         world = World.create(batch_dim=2, x_semidim=1.0, y_semidim=1.0)
         agent = Agent.create(
-            batch_dim=2,
             name="agent",
-            dim_c=0,
-            dim_p=2,
             movable=True,
         )
         world = world.add_agent(agent)
@@ -217,14 +204,19 @@ class TestWorld:
         assert jnp.all(jnp.abs(world.agents[0].state.pos) <= 1.0)
 
     def test_collision_response(self):
+        world = World.create(batch_dim=1, substeps=10)
+
         # Create two colliding agents with no initial forces
         agent1 = Agent.create(
-            batch_dim=1,
             name="collider1",
-            dim_p=2,
-            dim_c=0,
             mass=1.0,
         )
+        agent2 = Agent.create(
+            name="collider2",
+            mass=1.0,
+        )
+        world = world.add_agent(agent1).add_agent(agent2)
+        agent1, agent2 = world.agents
         agent1 = agent1.replace(
             state=agent1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -232,13 +224,6 @@ class TestWorld:
             shape=Sphere(radius=0.1),
         )
 
-        agent2 = Agent.create(
-            batch_dim=1,
-            name="collider2",
-            dim_p=2,
-            dim_c=0,
-            mass=1.0,
-        )
         agent2 = agent2.replace(
             state=agent2.state.replace(
                 pos=jnp.array([[0.15, 0.0]]),
@@ -246,7 +231,6 @@ class TestWorld:
             shape=Sphere(radius=0.1),
         )
 
-        world = World.create(batch_dim=1, substeps=10)
         world = world.replace(agents=[agent1, agent2])
         initial_dist = jnp.linalg.norm(
             world.agents[0].state.pos - world.agents[1].state.pos
@@ -264,8 +248,8 @@ class TestWorld:
 
     def test_joint_constraint_satisfaction(self):
         # Create joined agents
-        agent1 = Agent.create(batch_dim=1, name="joint1", dim_p=2, dim_c=0)
-        agent2 = Agent.create(batch_dim=1, name="joint2", dim_p=2, dim_c=0)
+        agent1 = Agent.create(name="joint1")
+        agent2 = Agent.create(name="joint2")
         world = World.create(
             batch_dim=1,
             dt=0.1,
@@ -275,6 +259,7 @@ class TestWorld:
             drag=0.1,  # Reduce drag for smoother motion
         )
         world = world.add_agent(agent1).add_agent(agent2)
+        agent1, agent2 = world.agents
         world = world.reset()
         world = world.replace(
             agents=[
@@ -320,7 +305,7 @@ class TestWorld:
     def test_extreme_boundary_conditions(self):
         # Test negative boundaries
         world = World.create(batch_dim=1, x_semidim=-1.0, y_semidim=-0.5)
-        agent = Agent.create(batch_dim=1, name="boundary_test", dim_p=2, dim_c=0)
+        agent = Agent.create(name="boundary_test")
         agent = agent.replace(state=agent.state.replace(pos=jnp.array([[2.0, 1.0]])))
         world = world.add_agent(agent)
 
@@ -371,37 +356,6 @@ class TestWorld:
         collides = check_collision(world, world.agents[0], world.landmarks[0])
         assert isinstance(collides, Array)
 
-        # Test jit compatibility with joints
-        from jaxvmas.simulator.joints import Joint
-
-        @eqx.filter_jit
-        def add_and_step_with_joint(world: World):
-            agent2 = Agent.create(
-                batch_dim=2,
-                name="agent2",
-                dim_c=0,
-                dim_p=2,
-                movable=True,
-            )
-            world = world.add_agent(agent2)
-            world = world.replace(substeps=2)
-            joint = Joint.create(
-                batch_dim=2,
-                entity_a=world.agents[0],
-                entity_b=world.agents[1],
-                anchor_a=(0.0, 0.0),
-                anchor_b=(0.0, 0.0),
-                dist=1.0,
-            )
-            world = world.add_joint(joint)
-
-            world = world.reset()
-
-            return world.step()
-
-        joint_world = add_and_step_with_joint(world)
-        assert len(joint_world._joints) == 2
-
         # Test jit compatibility with boundary conditions
         @eqx.filter_jit
         def step_with_boundaries(world: World, pos: Array):
@@ -434,20 +388,15 @@ class TestRayCasting:
 
             # Create source agent (ray origin)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Create target sphere
             sphere_agent = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent, sphere_agent = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -484,20 +433,15 @@ class TestRayCasting:
 
             # Create source agent (ray origin)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Create target box
             box_agent = Agent.create(
-                batch_dim=1,
                 name="box",
-                dim_p=2,
-                dim_c=0,
                 shape=Box(length=1.0, width=1.0),
             )
             world = world.add_agent(source_agent).add_agent(box_agent)
+            source_agent, box_agent = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -548,29 +492,21 @@ class TestRayCasting:
 
             # Create source agent (ray origin)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Add sphere
             sphere = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             # Add box
             box = Agent.create(
-                batch_dim=1,
                 name="box",
-                dim_p=2,
-                dim_c=0,
                 shape=Box(length=1.0, width=1.0),
             )
 
             world = world.add_agent(source_agent).add_agent(sphere).add_agent(box)
+            source_agent, sphere, box = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -631,28 +567,21 @@ class TestRayCasting:
 
             # Create source agent (ray origin)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Add two target agents
             agent1 = Agent.create(
-                batch_dim=1,
                 name="agent1",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             agent2 = Agent.create(
-                batch_dim=1,
                 name="agent2",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
 
             world = world.add_agent(source_agent).add_agent(agent1).add_agent(agent2)
+
+            source_agent, agent1, agent2 = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -701,24 +630,15 @@ class TestRayCasting:
 
             # Create source agent (ray origin)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Add target agents
             sphere_agent = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             box_agent = Agent.create(
-                batch_dim=1,
                 name="box",
-                dim_p=2,
-                dim_c=0,
                 shape=Box(length=1.0, width=1.0),
             )
 
@@ -727,6 +647,7 @@ class TestRayCasting:
                 .add_agent(sphere_agent)
                 .add_agent(box_agent)
             )
+            source_agent, sphere_agent, box_agent = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -771,20 +692,15 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             # Create a line agent with a 2.0 length segment.
             line_agent = Agent.create(
-                batch_dim=1,
                 name="line",
-                dim_p=2,
-                dim_c=0,
                 shape=Line(length=2.0),
             )
             world = world.add_agent(source_agent).add_agent(line_agent)
+            source_agent, line_agent = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -812,23 +728,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             sphere_agent = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             box_agent = Agent.create(
-                batch_dim=1,
                 name="box",
-                dim_p=2,
-                dim_c=0,
                 shape=Box(length=1.0, width=1.0),
             )
             world = (
@@ -836,6 +743,7 @@ class TestRayCasting:
                 .add_agent(sphere_agent)
                 .add_agent(box_agent)
             )
+            source_agent, sphere_agent, box_agent = world.agents
 
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -865,19 +773,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=2)
             source_agent = Agent.create(
-                batch_dim=2,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             sphere_agent = Agent.create(
-                batch_dim=2,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent, sphere_agent = world.agents
             # For batch 0 and batch 1, set different positions.
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(
@@ -907,19 +810,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             dummy_agent = Agent.create(
-                batch_dim=1,
                 name="dummy",
-                dim_p=2,
-                dim_c=0,
                 shape=DummyShape(),
             )
             world = world.add_agent(source_agent).add_agent(dummy_agent)
+            source_agent, dummy_agent = world.agents
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
             )
@@ -943,16 +841,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             world = world.add_agent(source_agent)
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
             )
             world = world.replace(agents=[source_agent])
+            (source_agent,) = world.agents
             angles = jnp.array([0.0, jnp.pi / 2])
             dists = world.cast_rays(
                 source_agent,
@@ -968,19 +864,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             sphere_agent = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent, sphere_agent = world.agents
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
             )
@@ -1004,19 +895,14 @@ class TestRayCasting:
         with jax.disable_jit():
             world = World.create(batch_dim=1)
             source_agent = Agent.create(
-                batch_dim=1,
                 name="source",
-                dim_p=2,
-                dim_c=0,
             )
             sphere_agent = Agent.create(
-                batch_dim=1,
                 name="sphere",
-                dim_p=2,
-                dim_c=0,
                 shape=Sphere(radius=0.5),
             )
             world = world.add_agent(source_agent).add_agent(sphere_agent)
+            source_agent, sphere_agent = world.agents
             source_agent = source_agent.replace(
                 state=source_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
             )
@@ -1043,10 +929,9 @@ class TestGetDistanceFromPoint:
         world = World.create(batch_dim=1)
         world = world.reset()
         # Create a sphere agent at position [1, 1] with radius 0.5.
-        sphere_agent = Agent.create(
-            batch_dim=1, name="sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        sphere_agent = Agent.create(name="sphere", shape=Sphere(radius=0.5))
         world = world.add_agent(sphere_agent)
+        (sphere_agent,) = world.agents
         sphere_agent = sphere_agent.replace(
             state=sphere_agent.state.replace(pos=jnp.array([[1.0, 1.0]]))
         )
@@ -1060,9 +945,7 @@ class TestGetDistanceFromPoint:
     def test_invalid_shape(self):
         """Test that an unsupported shape raises a RuntimeError."""
         world = World.create(batch_dim=1)
-        dummy_agent = Agent.create(
-            batch_dim=1, name="dummy", dim_p=2, dim_c=0, shape=DummyShape()
-        )
+        dummy_agent = Agent.create(name="dummy", shape=DummyShape())
         dummy_agent = dummy_agent.replace(
             state=dummy_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -1074,9 +957,9 @@ class TestGetDistanceFromPoint:
         """Test that when an env_index is provided, a scalar from the batch is returned."""
         # Create a world with batch_dim=2.
         world = World.create(batch_dim=2)
-        sphere_agent = Agent.create(
-            batch_dim=2, name="sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        sphere_agent = Agent.create(name="sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(sphere_agent)
+        (sphere_agent,) = world.agents
         # Set different positions for the two environments.
         sphere_agent = sphere_agent.replace(
             state=sphere_agent.state.replace(pos=jnp.array([[1.0, 1.0], [2.0, 2.0]]))
@@ -1101,18 +984,17 @@ class TestDistanceAndOverlap:
         """
         world = World.create(batch_dim=1)
         # Create two spheres.
-        sphere_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
-        sphere_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        sphere_a = Agent.create(name="A", shape=Sphere(radius=0.5))
+        sphere_b = Agent.create(name="B", shape=Sphere(radius=0.5))
+        world = world.add_agent(sphere_a).add_agent(sphere_b)
+        sphere_a, sphere_b = world.agents
         sphere_a = sphere_a.replace(
             state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
         sphere_b = sphere_b.replace(
             state=sphere_b.state.replace(pos=jnp.array([[2.0, 0.0]]))
         )
+
         world = world.replace(agents=[sphere_a, sphere_b])
         # Expected: norm([0,0]-[2,0]) = 2, then 2 - (0.5+0.5) = 1.
         result = world.get_distance(sphere_a, sphere_b)
@@ -1129,12 +1011,10 @@ class TestDistanceAndOverlap:
           so expected = 8 - LINE_MIN_DIST - 0.5.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(box).add_agent(sphere)
+        box, sphere = world.agents
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1156,12 +1036,10 @@ class TestDistanceAndOverlap:
           In this branch the code forces the final return value to -1.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(box).add_agent(sphere)
+        box, sphere = world.agents
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1183,12 +1061,10 @@ class TestDistanceAndOverlap:
             expected = 3.5 - LINE_MIN_DIST - 0.5 = 3.0 - LINE_MIN_DIST.
         """
         world = World.create(batch_dim=1)
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(line).add_agent(sphere)
+        line, sphere = world.agents
         line = line.replace(
             state=line.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1209,12 +1085,10 @@ class TestDistanceAndOverlap:
           so distance = 1 - LINE_MIN_DIST.
         """
         world = World.create(batch_dim=1)
-        line_a = Agent.create(
-            batch_dim=1, name="LineA", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        line_b = Agent.create(
-            batch_dim=1, name="LineB", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        line_a = Agent.create(name="LineA", shape=Line(length=5.0))
+        line_b = Agent.create(name="LineB", shape=Line(length=5.0))
+        world = world.add_agent(line_a).add_agent(line_b)
+        line_a, line_b = world.agents
         line_a = line_a.replace(
             state=line_a.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1240,12 +1114,10 @@ class TestDistanceAndOverlap:
         Thus, the gap is 0, and the expected value is 0 - LINE_MIN_DIST = -LINE_MIN_DIST.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        world = world.add_agent(box).add_agent(line)
+        box, line = world.agents
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1271,12 +1143,9 @@ class TestDistanceAndOverlap:
         Thus, the expected result is –LINE_MIN_DIST.
         """
         world = World.create(batch_dim=1)
-        box_a = Agent.create(
-            batch_dim=1, name="BoxA", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        box_b = Agent.create(
-            batch_dim=1, name="BoxB", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
+        box_a = Agent.create(name="BoxA", shape=Box(length=4.0, width=4.0))
+        box_b = Agent.create(name="BoxB", shape=Box(length=4.0, width=4.0))
+        world = world.add_agent(box_a).add_agent(box_b)
         box_a = box_a.replace(
             state=box_a.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1298,10 +1167,10 @@ class TestDistanceAndOverlap:
         """
 
         world = World.create(batch_dim=1)
-        a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
-        b = Agent.create(batch_dim=1, name="B", dim_p=2, dim_c=0, shape=DummyShape())
+        a = Agent.create(name="A", shape=Sphere(radius=0.5))
+        b = Agent.create(name="B", shape=DummyShape())
+        world = world.add_agent(a).add_agent(b)
+        a, b = world.agents
         a = a.replace(state=a.state.replace(pos=jnp.array([[0.0, 0.0]])))
         b = b.replace(state=b.state.replace(pos=jnp.array([[1.0, 1.0]])))
         world = world.replace(agents=[a, b])
@@ -1317,12 +1186,9 @@ class TestDistanceAndOverlap:
           then get_distance returns a negative value and is_overlapping should be True.
         """
         world = World.create(batch_dim=1)
-        sphere_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
-        sphere_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        sphere_a = Agent.create(name="A", shape=Sphere(radius=0.5))
+        sphere_b = Agent.create(name="B", shape=Sphere(radius=0.5))
+        world = world.add_agent(sphere_a).add_agent(sphere_b)
         sphere_a = sphere_a.replace(
             state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -1338,12 +1204,9 @@ class TestDistanceAndOverlap:
           E.g. sphere A at [0,0] and sphere B at [2,0] should not overlap.
         """
         world = World.create(batch_dim=1)
-        sphere_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
-        sphere_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        sphere_a = Agent.create(name="A", shape=Sphere(radius=0.5))
+        sphere_b = Agent.create(name="B", shape=Sphere(radius=0.5))
+        world = world.add_agent(sphere_a).add_agent(sphere_b)
         sphere_a = sphere_a.replace(
             state=sphere_a.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -1358,12 +1221,9 @@ class TestDistanceAndOverlap:
         Two boxes that overlap (e.g. centers at [0,0] and [0,1]) should be overlapping.
         """
         world = World.create(batch_dim=1)
-        box_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        box_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
+        box_a = Agent.create(name="A", shape=Box(length=4.0, width=4.0))
+        box_b = Agent.create(name="B", shape=Box(length=4.0, width=4.0))
+        world = world.add_agent(box_a).add_agent(box_b)
         box_a = box_a.replace(
             state=box_a.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1382,12 +1242,9 @@ class TestDistanceAndOverlap:
         Two boxes that do not overlap (e.g. centers at [0,0] and [0,6]) should not be overlapping.
         """
         world = World.create(batch_dim=1)
-        box_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        box_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
+        box_a = Agent.create(name="A", shape=Box(length=4.0, width=4.0))
+        box_b = Agent.create(name="B", shape=Box(length=4.0, width=4.0))
+        world = world.add_agent(box_a).add_agent(box_b)
         box_a = box_a.replace(
             state=box_a.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1408,12 +1265,9 @@ class TestDistanceAndOverlap:
           the sphere lies within the box.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(box).add_agent(sphere)
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1428,12 +1282,9 @@ class TestDistanceAndOverlap:
           they should not overlap.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(box).add_agent(sphere)
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1450,12 +1301,9 @@ class TestDistanceAndOverlap:
           The projection of [2,0] onto the line is [2,0], so the distance will be negative.
         """
         world = World.create(batch_dim=1)
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(line).add_agent(sphere)
         line = line.replace(
             state=line.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1471,12 +1319,9 @@ class TestDistanceAndOverlap:
           Place a line at [0,0] (length 5) and a sphere at [6,0] (radius 0.5).
         """
         world = World.create(batch_dim=1)
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        sphere = Agent.create(
-            batch_dim=1, name="Sphere", dim_p=2, dim_c=0, shape=Sphere(radius=0.5)
-        )
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        sphere = Agent.create(name="Sphere", shape=Sphere(radius=0.5))
+        world = world.add_agent(line).add_agent(sphere)
         line = line.replace(
             state=line.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1493,12 +1338,9 @@ class TestDistanceAndOverlap:
           They should overlap.
         """
         world = World.create(batch_dim=1)
-        line_h = Agent.create(
-            batch_dim=1, name="Horiz", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        line_v = Agent.create(
-            batch_dim=1, name="Vert", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        line_h = Agent.create(name="Horiz", shape=Line(length=5.0))
+        line_v = Agent.create(name="Vert", shape=Line(length=5.0))
+        world = world.add_agent(line_h).add_agent(line_v)
         line_h = line_h.replace(
             state=line_h.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1518,12 +1360,9 @@ class TestDistanceAndOverlap:
           For example, one at [0,0] and one at [10,10] should not overlap.
         """
         world = World.create(batch_dim=1)
-        line_a = Agent.create(
-            batch_dim=1, name="A", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
-        line_b = Agent.create(
-            batch_dim=1, name="B", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        line_a = Agent.create(name="A", shape=Line(length=5.0))
+        line_b = Agent.create(name="B", shape=Line(length=5.0))
+        world = world.add_agent(line_a).add_agent(line_b)
         line_a = line_a.replace(
             state=line_a.state.replace(
                 pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])
@@ -1544,12 +1383,9 @@ class TestDistanceAndOverlap:
           They intersect.
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        world = world.add_agent(box).add_agent(line)
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1567,12 +1403,9 @@ class TestDistanceAndOverlap:
           Place a box at [0,0] (4x4) and a line starting at [10,0] (length 5).
         """
         world = World.create(batch_dim=1)
-        box = Agent.create(
-            batch_dim=1, name="Box", dim_p=2, dim_c=0, shape=Box(length=4.0, width=4.0)
-        )
-        line = Agent.create(
-            batch_dim=1, name="Line", dim_p=2, dim_c=0, shape=Line(length=5.0)
-        )
+        box = Agent.create(name="Box", shape=Box(length=4.0, width=4.0))
+        line = Agent.create(name="Line", shape=Line(length=5.0))
+        world = world.add_agent(box).add_agent(line)
         box = box.replace(
             state=box.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]]))
         )
@@ -1593,24 +1426,10 @@ class TestForceApplication:
             dim_p=2,
             dim_c=0,
         )
-        agent1 = Agent.create(
-            batch_dim=1,
-            name="test",
-            dim_p=2,
-            dim_c=0,
-            movable=True,
-            max_f=2.0,
-        )
-        agent2 = Agent.create(
-            batch_dim=1,
-            name="test2",
-            dim_p=2,
-            dim_c=0,
-            movable=True,
-            f_range=1.5,
-        )
-        world = world.add_agent(agent1)
-        world = world.add_agent(agent2)
+        agent1 = Agent.create(name="test", movable=True, max_f=2.0)
+        agent2 = Agent.create(name="test2", movable=True, f_range=1.5)
+        world = world.add_agent(agent1).add_agent(agent2)
+        agent1, agent2 = world.agents
         world = world.reset()
 
         # Test force clamping with max_f
@@ -1631,24 +1450,10 @@ class TestForceApplication:
 
     def test_apply_action_torque(self):
         world = World.create(batch_dim=1)
-        agent = Agent.create(
-            batch_dim=1,
-            name="test",
-            dim_p=2,
-            dim_c=0,
-            rotatable=True,
-            t_range=1.5,
-        )
-        agent2 = Agent.create(
-            batch_dim=1,
-            name="test2",
-            dim_p=2,
-            dim_c=0,
-            rotatable=True,
-            max_t=2.0,
-        )
-        world = world.add_agent(agent)
-        world = world.add_agent(agent2)
+        agent = Agent.create(name="test", rotatable=True, t_range=1.5)
+        agent2 = Agent.create(name="test2", rotatable=True, max_t=2.0)
+        world = world.add_agent(agent).add_agent(agent2)
+        agent, agent2 = world.agents
         world = world.reset()
 
         # Test torque clamping with max_t
@@ -1665,25 +1470,10 @@ class TestForceApplication:
 
     def test_apply_gravity(self):
         world = World.create(batch_dim=1, gravity=jnp.array([0.0, -9.81]))
-        agent = Agent.create(
-            batch_dim=1,
-            name="test",
-            dim_p=2,
-            dim_c=0,
-            movable=True,
-            mass=2.0,
-        )
-        agent2 = Agent.create(
-            batch_dim=1,
-            name="test2",
-            dim_p=2,
-            dim_c=0,
-            movable=True,
-            mass=2.0,
-            gravity=jnp.asarray([[0.0, -5.0]]),
-        )
-        world = world.add_agent(agent)
-        world = world.add_agent(agent2)
+        agent = Agent.create(name="test", movable=True, mass=2.0)
+        agent2 = Agent.create(name="test2", movable=True, mass=2.0)
+        world = world.add_agent(agent).add_agent(agent2)
+        agent, agent2 = world.agents
         world = world.reset()
 
         # Test global gravity
@@ -1700,21 +1490,16 @@ class TestForceApplication:
     def test_apply_friction_force(self):
         world = World.create(batch_dim=1, dt=0.1, substeps=1)
         agent = Agent.create(
-            batch_dim=1,
             name="test",
-            dim_p=2,
-            dim_c=0,
             movable=True,
             rotatable=True,
             mass=1.0,
             linear_friction=0.5,
             angular_friction=0.3,
-            shape=Box(
-                length=1.0,
-                width=1.0,
-            ),
+            shape=Box(length=1.0, width=1.0),
         )
         world = world.add_agent(agent)
+        (agent,) = world.agents
         world = world.reset()
         # Test linear friction
         agent = agent.replace(state=agent.state.replace(vel=jnp.array([[1.0, 0.0]])))
@@ -1827,25 +1612,12 @@ class TestVectorizedShapeForce:
         world = World.create(batch_dim=1)
 
         # Create two sphere agents
-        sphere1 = Agent.create(
-            batch_dim=1,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=1,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
 
         world = world.add_agent(sphere1).add_agent(sphere2)
         world = world.reset()
+        sphere1, sphere2 = world.agents
 
         # Test collision detection
         collision_mask = jnp.array([True])
@@ -1884,26 +1656,14 @@ class TestVectorizedShapeForce:
         world = World.create(batch_dim=1)
 
         # Create sphere and line agents
-        sphere = Agent.create(
-            batch_dim=1,
-            name="sphere",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere = Agent.create(name="sphere", shape=Sphere(radius=0.5), movable=True)
         line = Agent.create(
-            batch_dim=1,
-            name="line",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=2.0),
-            movable=True,
-            rotatable=True,
+            name="line", shape=Line(length=2.0), movable=True, rotatable=True
         )
 
         world = world.add_agent(sphere).add_agent(line)
         world = world.reset()
+        sphere, line = world.agents
 
         # Test collision detection
         collision_mask = jnp.array([True])
@@ -1943,27 +1703,15 @@ class TestVectorizedShapeForce:
 
         # Create two line agents
         line1 = Agent.create(
-            batch_dim=1,
-            name="line1",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=5.0),  # Increased length for clearer intersection
-            movable=True,
-            rotatable=True,
+            name="line1", shape=Line(length=5.0), movable=True, rotatable=True
         )
         line2 = Agent.create(
-            batch_dim=1,
-            name="line2",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=5.0),  # Increased length for clearer intersection
-            movable=True,
-            rotatable=True,
+            name="line2", shape=Line(length=5.0), movable=True, rotatable=True
         )
 
         world = world.add_agent(line1).add_agent(line2)
         world = world.reset()
-
+        line1, line2 = world.agents
         # Test collision detection
         collision_mask = jnp.array([True])
 
@@ -2019,25 +1767,12 @@ class TestVectorizedShapeForce:
         world = World.create(batch_dim=2)
 
         # Create two sphere agents
-        sphere1 = Agent.create(
-            batch_dim=2,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=2,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
 
         world = world.add_agent(sphere1).add_agent(sphere2)
         world = world.reset()
+        sphere1, sphere2 = world.agents
 
         # Position spheres differently in each batch
         sphere1 = sphere1.replace(
@@ -2070,26 +1805,17 @@ class TestVectorizedShapeForce:
 
         # Create box and sphere agents
         box = Agent.create(
-            batch_dim=1,
-            name="box",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=2.0, width=2.0),
-            movable=True,
-            rotatable=True,
+            name="box", shape=Box(length=2.0, width=2.0), movable=True, rotatable=True
         )
         sphere = Agent.create(
-            batch_dim=1,
             name="sphere",
-            dim_p=2,
-            dim_c=0,
             shape=Sphere(radius=0.5),
             movable=True,
         )
 
         world = world.add_agent(box).add_agent(sphere)
         world = world.reset()
-
+        box, sphere = world.agents
         # Test collision detection
         collision_mask = jnp.array([True])
 
@@ -2123,17 +1849,16 @@ class TestVectorizedShapeForce:
 
         # Test with hollow box
         hollow_box = Agent.create(
-            batch_dim=1,
             name="hollow_box",
-            dim_p=2,
-            dim_c=0,
             shape=Box(length=2.0, width=2.0, hollow=True),
             movable=True,
             rotatable=True,
         )
+
         world = World.create(batch_dim=1)
         world = world.add_agent(hollow_box).add_agent(sphere)
         world = world.reset()
+        hollow_box, sphere = world.agents
 
         hollow_box = hollow_box.replace(
             state=hollow_box.state.replace(
@@ -2156,27 +1881,15 @@ class TestVectorizedShapeForce:
 
         # Create box and line agents
         box = Agent.create(
-            batch_dim=1,
-            name="box",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=2.0, width=2.0),
-            movable=True,
-            rotatable=True,
+            name="box", shape=Box(length=2.0, width=2.0), movable=True, rotatable=True
         )
         line = Agent.create(
-            batch_dim=1,
-            name="line",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=2.0),
-            movable=True,
-            rotatable=True,
+            name="line", shape=Line(length=2.0), movable=True, rotatable=True
         )
 
         world = world.add_agent(box).add_agent(line)
         world = world.reset()
-
+        box, line = world.agents
         # Test collision detection
         collision_mask = jnp.array([True])
 
@@ -2220,10 +1933,7 @@ class TestVectorizedShapeForce:
 
         # Test with hollow box
         hollow_box = Agent.create(
-            batch_dim=1,
             name="hollow_box",
-            dim_p=2,
-            dim_c=0,
             shape=Box(length=2.0, width=2.0, hollow=True),
             movable=True,
             rotatable=True,
@@ -2231,6 +1941,7 @@ class TestVectorizedShapeForce:
         world = World.create(batch_dim=1)
         world = world.add_agent(hollow_box).add_agent(line)
         world = world.reset()
+        hollow_box, line = world.agents
 
         hollow_box = hollow_box.replace(
             state=hollow_box.state.replace(
@@ -2258,26 +1969,15 @@ class TestVectorizedShapeForce:
 
         # Create two box agents
         box1 = Agent.create(
-            batch_dim=1,
-            name="box1",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=2.0, width=2.0),
-            movable=True,
-            rotatable=True,
+            name="box1", shape=Box(length=2.0, width=2.0), movable=True, rotatable=True
         )
         box2 = Agent.create(
-            batch_dim=1,
-            name="box2",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=2.0, width=2.0),
-            movable=True,
-            rotatable=True,
+            name="box2", shape=Box(length=2.0, width=2.0), movable=True, rotatable=True
         )
 
         world = world.add_agent(box1).add_agent(box2)
         world = world.reset()
+        box1, box2 = world.agents
 
         # Test collision detection
         collision_mask = jnp.array([True])
@@ -2322,10 +2022,7 @@ class TestVectorizedShapeForce:
 
         # Test with one hollow box and one solid box
         hollow_box = Agent.create(
-            batch_dim=1,
             name="hollow_box",
-            dim_p=2,
-            dim_c=0,
             shape=Box(length=2.0, width=2.0, hollow=True),
             movable=True,
             rotatable=True,
@@ -2333,6 +2030,7 @@ class TestVectorizedShapeForce:
         world = World.create(batch_dim=1)
         world = world.add_agent(hollow_box).add_agent(box2)
         world = world.reset()
+        hollow_box, box2 = world.agents
 
         hollow_box = hollow_box.replace(
             state=hollow_box.state.replace(
@@ -2360,26 +2058,13 @@ class TestVectorizedShapeForce:
 
         # Create box and sphere for testing
         box = Agent.create(
-            batch_dim=2,
-            name="box",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=2.0, width=2.0),
-            movable=True,
-            rotatable=True,
+            name="box", shape=Box(length=2.0, width=2.0), movable=True, rotatable=True
         )
-        sphere = Agent.create(
-            batch_dim=2,
-            name="sphere",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere = Agent.create(name="sphere", shape=Sphere(radius=0.5), movable=True)
 
         world = world.add_agent(box).add_agent(sphere)
         world = world.reset()
-
+        box, sphere = world.agents
         # Position differently in each batch - first batch collides, second doesn't
         box = box.replace(
             state=box.state.replace(
@@ -2409,58 +2094,17 @@ class TestVectorizedEnvironmentForce:
         """Test vectorized environment force application for all shape combinations."""
 
         # Create entities with different shapes
-        sphere1 = Agent.create(
-            batch_dim=1,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=1,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        line1 = Agent.create(
-            batch_dim=1,
-            name="line1",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=2.0),
-            movable=True,
-        )
-        line2 = Agent.create(
-            batch_dim=1,
-            name="line2",
-            dim_p=2,
-            dim_c=0,
-            shape=Line(length=2.0),
-            movable=True,
-        )
-        box1 = Agent.create(
-            batch_dim=1,
-            name="box1",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=1.0, width=1.0),
-            movable=True,
-        )
-        box2 = Agent.create(
-            batch_dim=1,
-            name="box2",
-            dim_p=2,
-            dim_c=0,
-            shape=Box(length=1.0, width=1.0),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
+        line1 = Agent.create(name="line1", shape=Line(length=2.0), movable=True)
+        line2 = Agent.create(name="line2", shape=Line(length=2.0), movable=True)
+        box1 = Agent.create(name="box1", shape=Box(length=1.0, width=1.0), movable=True)
+        box2 = Agent.create(name="box2", shape=Box(length=1.0, width=1.0), movable=True)
 
         # Test sphere-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(sphere1).add_agent(sphere2)
+        sphere1, sphere2 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -2474,6 +2118,7 @@ class TestVectorizedEnvironmentForce:
         # Test line-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(line1).add_agent(sphere1)
+        line1, sphere1 = world.agents
         line1 = line1.replace(
             state=line1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2490,6 +2135,7 @@ class TestVectorizedEnvironmentForce:
         # Test line-line collision
         world = World.create(batch_dim=1)
         world = world.add_agent(line1).add_agent(line2)
+        line1, line2 = world.agents
         line1 = line1.replace(
             state=line1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2509,6 +2155,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(sphere1)
+        box1, sphere1 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2525,6 +2172,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-line collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(line1)
+        box1, line1 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2544,6 +2192,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-box collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(box2)
+        box1, box2 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2610,33 +2259,13 @@ class TestVectorizedEnvironmentForce:
         world = World.create(batch_dim=1)
 
         # Create multiple spheres that will collide
-        sphere1 = Agent.create(
-            batch_dim=1,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=1,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere3 = Agent.create(
-            batch_dim=1,
-            name="sphere3",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
+        sphere3 = Agent.create(name="sphere3", shape=Sphere(radius=0.5), movable=True)
 
         # Position spheres to create multiple collisions
         world = world.add_agent(sphere1).add_agent(sphere2).add_agent(sphere3)
+        sphere1, sphere2, sphere3 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -2657,24 +2286,11 @@ class TestVectorizedEnvironmentForce:
         world = World.create(batch_dim=1)
 
         # Create agents with valid and invalid shapes
-        valid_agent = Agent.create(
-            batch_dim=1,
-            name="valid",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        invalid_agent = Agent.create(
-            batch_dim=1,
-            name="invalid",
-            dim_p=2,
-            dim_c=0,
-            shape=DummyShape(),
-            movable=True,
-        )
+        valid_agent = Agent.create(name="valid", shape=Sphere(radius=0.5), movable=True)
+        invalid_agent = Agent.create(name="invalid", shape=DummyShape(), movable=True)
 
         world = world.add_agent(valid_agent).add_agent(invalid_agent)
+        valid_agent, invalid_agent = world.agents
         valid_agent = valid_agent.replace(
             state=valid_agent.state.replace(pos=jnp.array([[0.0, 0.0]]))
         )
@@ -2691,25 +2307,12 @@ class TestVectorizedEnvironmentForce:
         world = World.create(batch_dim=2)
 
         # Create two spheres
-        sphere1 = Agent.create(
-            batch_dim=2,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=2,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
 
         # Position spheres differently in each batch
         world = world.add_agent(sphere1).add_agent(sphere2)
+        sphere1, sphere2 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0], [0.0, 0.0]]))
         )
@@ -2734,18 +2337,12 @@ class TestVectorizedEnvironmentForce:
         """Test vectorized environment force with a single entity."""
         world = World.create(batch_dim=1)
 
-        sphere = Agent.create(
-            batch_dim=1,
-            name="sphere",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere = Agent.create(name="sphere", shape=Sphere(radius=0.5), movable=True)
 
         world = world.add_agent(sphere)
         sphere = sphere.replace(state=sphere.state.replace(pos=jnp.array([[0.0, 0.0]])))
         world = world.replace(agents=[sphere])
+        sphere = world.agents[0]
 
         world = world._apply_vectorized_enviornment_force()
         assert len(world.force_dict) == 0  # No forces should be applied
@@ -2757,22 +2354,10 @@ class TestMoreTests:
         world = World.create(batch_dim=1)
 
         # Create test agents
-        sphere1 = Agent.create(
-            batch_dim=1,
-            name="sphere1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        sphere2 = Agent.create(
-            batch_dim=1,
-            name="sphere2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        sphere1 = Agent.create(name="sphere1", shape=Sphere(radius=0.5), movable=True)
+        sphere2 = Agent.create(name="sphere2", shape=Sphere(radius=0.5), movable=True)
+        world = world.add_agent(sphere1).add_agent(sphere2)
+        sphere1, sphere2 = world.agents
 
         # Test same entity (should not collide)
         assert not world.collides(sphere1, sphere1)
@@ -2791,23 +2376,17 @@ class TestMoreTests:
             state=sphere2.state.replace(pos=jnp.array([[3.0, 0.0]]))
         )
         assert not world.collides(sphere1, sphere2)
-
+        world = world.replace(agents=[])
         # Test with non-movable entities
         static_sphere = Agent.create(
-            batch_dim=1,
-            name="static",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=False,
-            rotatable=False,
+            name="static", shape=Sphere(radius=0.5), movable=False
         )
         moving_sphere = Agent.create(
-            batch_dim=1,
-            name="moving",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
+            name="moving", shape=Sphere(radius=0.5), movable=True
+        )
+        world = world.add_agent(static_sphere).add_agent(moving_sphere)
+        static_sphere, moving_sphere = world.agents
+        static_sphere = static_sphere.replace(
             movable=True,
         )
         static_sphere = static_sphere.replace(
@@ -2825,7 +2404,7 @@ class TestMoreTests:
         # Test repulsive forces (default)
         pos_a = jnp.array([[0.0, 0.0]])
         pos_b = jnp.array([[0.5, 0.0]])
-        dist_min = 1.0
+        dist_min = 0.5
         force_multiplier = 1.0
 
         force_a, force_b = world._get_constraint_forces(
@@ -2894,27 +2473,24 @@ class TestMoreTests:
 
     def test_integrate_state(self):
         """Test physical state integration."""
-        world = World.create(batch_dim=1)
+        world = World.create(batch_dim=1, drag=0.0)
 
         # Test translation
         agent = Agent.create(
-            batch_dim=1,
-            name="agent",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-            mass=1.0,
+            name="agent", shape=Sphere(radius=0.5), movable=True, mass=1.0
         )
+        world = world.add_agent(agent)
+        world = world.reset()
+        agent = world.agents[-1]
 
         # Set initial conditions
         agent = agent.replace(
             state=agent.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
-                vel=jnp.array([[1.0, 0.0]]),
+                vel=jnp.array([[1.0, 1.0]]),
             )
         )
-        world = world.replace(force_dict={"agent": jnp.array([[1.0, 0.0]])})
+        world = world.replace(force_dict={"agent": jnp.array([[1.0, 1.0]])})
 
         # Test integration
         updated_agent = world._integrate_state(agent, substep=0)
@@ -2927,15 +2503,14 @@ class TestMoreTests:
 
         # Test rotation
         rotating_agent = Agent.create(
-            batch_dim=1,
             name="rotating",
-            dim_p=2,
-            dim_c=0,
             shape=Box(length=1.0, width=1.0),
             movable=True,
             rotatable=True,
-            moment_of_inertia=1.0,
         )
+        world = world.add_agent(rotating_agent)
+        world = world.reset()
+        rotating_agent = world.agents[-1]
 
         rotating_agent = rotating_agent.replace(
             state=rotating_agent.state.replace(
@@ -2951,6 +2526,10 @@ class TestMoreTests:
 
         # Test boundary conditions
         world = World.create(batch_dim=1, x_semidim=1.0, y_semidim=1.0)
+        agent = Agent.create(name="agent", shape=Sphere(radius=0.5), movable=True)
+        world = world.add_agent(agent)
+        world = world.reset()
+        agent = world.agents[-1]
         agent = agent.replace(
             state=agent.state.replace(
                 pos=jnp.array([[0.0, 0.0]]),
@@ -2977,13 +2556,9 @@ class TestMoreTests:
         world = World.create(batch_dim=1)
 
         # Test silent agent
-        silent_agent = Agent.create(
-            batch_dim=1,
-            name="silent",
-            dim_p=2,
-            dim_c=2,
-            silent=True,
-        )
+        silent_agent = Agent.create(name="silent", silent=True)
+        world = world.add_agent(silent_agent)
+        silent_agent = world.agents[-1]
         silent_agent = silent_agent.replace(
             action=Action.create(
                 batch_dim=1,
@@ -2999,14 +2574,11 @@ class TestMoreTests:
             updated_silent.state.c, silent_agent.state.c
         )  # Should not change
 
+        world = World.create(batch_dim=1, dim_p=2, dim_c=2)
         # Test communicating agent
-        comm_agent = Agent.create(
-            batch_dim=1,
-            name="comm",
-            dim_p=2,
-            dim_c=2,
-            silent=False,
-        )
+        comm_agent = Agent.create(name="comm", silent=False)
+        world = world.add_agent(comm_agent)
+        comm_agent = world.agents[-1]
         comm_agent = comm_agent.replace(
             action=Action.create(
                 batch_dim=1,

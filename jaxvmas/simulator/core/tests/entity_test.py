@@ -8,14 +8,15 @@ from jaxvmas.simulator.core.entity import Entity
 class TestEntity:
     @pytest.fixture
     def basic_entity(self):
-        return Entity.create(
-            batch_dim=2,
+        entity = Entity.create(
             name="test_entity",
             movable=True,
             rotatable=True,
         )
+        entity = entity._spawn(jnp.asarray(2), batch_dim=2, dim_p=2)
+        return entity
 
-    def test_create(self, basic_entity):
+    def test_create(self, basic_entity: Entity):
         # Test basic properties
         assert basic_entity.name == "test_entity"
         assert basic_entity.movable is True
@@ -27,7 +28,6 @@ class TestEntity:
 
         # Test creation with custom parameters
         custom_entity = Entity.create(
-            batch_dim=2,
             name="custom",
             movable=False,
             gravity=jnp.asarray([[0.0, -9.81], [0.0, -9.81]]),
@@ -35,6 +35,7 @@ class TestEntity:
             v_range=5.0,
             max_speed=10.0,
         )
+        custom_entity = custom_entity._spawn(jnp.asarray(3), batch_dim=2, dim_p=2)
         assert custom_entity.mass == 2.0
         assert custom_entity.v_range == 5.0
         assert custom_entity.max_speed == 10.0
@@ -42,7 +43,7 @@ class TestEntity:
             custom_entity.gravity, jnp.array([[0.0, -9.81], [0.0, -9.81]])
         )
 
-    def test_property_setters(self, basic_entity):
+    def test_property_setters(self, basic_entity: Entity):
         # Test setting position
         new_pos = jnp.array([1.0, 2.0])
         updated_entity = basic_entity.set_pos(new_pos, batch_index=0)
@@ -58,20 +59,20 @@ class TestEntity:
         updated_entity = basic_entity.set_rot(new_rot, batch_index=0)
         assert jnp.array_equal(updated_entity.state.rot[0], new_rot)
 
-    def test_collision_filter(self, basic_entity):
+    def test_collision_filter(self, basic_entity: Entity):
         # Test default collision filter
-        other_entity = Entity.create(batch_dim=2, name="other")
+        other_entity = Entity.create(name="other")
         assert jnp.all(basic_entity.collides(other_entity))
 
         # Test custom collision filter
         custom_filter_entity = Entity.create(
-            batch_dim=2, name="filtered", collision_filter=lambda e: e.name == "target"
+            name="filtered", collision_filter=lambda e: e.name == "target"
         )
         assert not jnp.all(custom_filter_entity.collides(other_entity))
-        target_entity = Entity.create(batch_dim=2, name="target")
+        target_entity = Entity.create(name="target")
         assert jnp.all(custom_filter_entity.collides(target_entity))
 
-    def test_render_flags(self, basic_entity):
+    def test_render_flags(self, basic_entity: Entity):
         # Test initial render state
         assert jnp.all(basic_entity._render)
 
@@ -81,14 +82,16 @@ class TestEntity:
         basic_entity = basic_entity.reset_render()
         assert jnp.all(basic_entity._render)
 
-    def test_spawn_and_reset(self, basic_entity):
+    def test_spawn_and_reset(self, basic_entity: Entity):
         # Test spawn
         # First set non-zero values
         basic_entity = basic_entity.set_pos(jnp.array([1.0, 2.0]))
         basic_entity = basic_entity.set_vel(jnp.array([3.0, 4.0]))
         basic_entity = basic_entity.set_rot(jnp.array([0.5]))
 
-        spawned_entity = basic_entity._spawn(id=jnp.asarray(0, dtype=int), dim_p=2)
+        spawned_entity = basic_entity._spawn(
+            id=jnp.asarray(0, dtype=int), batch_dim=2, dim_p=2
+        )
         # Check shapes are preserved
         assert spawned_entity.state.pos.shape == (2, 2)
         assert spawned_entity.state.vel.shape == (2, 2)
@@ -116,7 +119,7 @@ class TestEntity:
         assert jnp.allclose(reset_entity.state.rot[0], jnp.zeros(1))
         assert jnp.allclose(reset_entity.state.rot[1], jnp.array([0.5]))
 
-    def test_is_jittable(self, basic_entity):
+    def test_is_jittable(self, basic_entity: Entity):
         @eqx.filter_jit
         def f(entity, pos):
             return entity.set_pos(pos, batch_index=0)

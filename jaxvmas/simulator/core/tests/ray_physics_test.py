@@ -21,19 +21,25 @@ EPSILON = 1e-5
 
 @pytest.fixture
 def box_entity():
-    return Entity.create(
-        batch_dim=1, shape=Box(length=2.0, width=1.0), dim_p=2, name="box"
-    )
+    entity = Entity.create(shape=Box(length=2.0, width=1.0), name="box")
+    entity = entity._spawn(id=jnp.asarray(2), batch_dim=1, dim_p=2)
+
+    return entity
 
 
 @pytest.fixture
 def sphere_entity():
-    return Entity.create(batch_dim=1, shape=Sphere(radius=1.0), dim_p=2, name="sphere")
+    entity = Entity.create(shape=Sphere(radius=1.0), name="sphere")
+    entity = entity._spawn(id=jnp.asarray(2), batch_dim=1, dim_p=2)
+    return entity
 
 
 @pytest.fixture
 def line_entity():
-    return Entity.create(batch_dim=1, shape=Line(length=2.0), dim_p=2, name="line")
+    entity = Entity.create(shape=Line(length=2.0), name="line")
+    entity = entity._spawn(id=jnp.asarray(2), batch_dim=1, dim_p=2)
+
+    return entity
 
 
 def test_cast_ray_to_box_direct_hit(box_entity):
@@ -152,9 +158,9 @@ def test_cast_rays_to_line_batch():
 
 def test_edge_cases():
     # Test ray origin inside objects
-    box = Entity.create(
-        batch_dim=1, shape=Box(length=2.0, width=1.0), dim_p=2, name="box"
-    )
+    box = Entity.create(shape=Box(length=2.0, width=1.0), name="box")
+    box = box._spawn(id=jnp.asarray(2), batch_dim=1, dim_p=2)
+
     ray_origin = jnp.array([[0.0, 0.0]])  # Origin inside box
     ray_direction = jnp.array([0.0])
 
@@ -164,9 +170,9 @@ def test_edge_cases():
 
 def test_rotated_objects():
     # Test with rotated box
-    box = Entity.create(
-        batch_dim=1, shape=Box(length=2.0, width=1.0), dim_p=2, name="box"
-    )
+    box = Entity.create(shape=Box(length=2.0, width=1.0), name="box")
+    box = box._spawn(id=jnp.asarray(2), batch_dim=1, dim_p=2)
+
     ray_origin = jnp.array([[2.0, 0.0]])
     ray_direction = jnp.array([jnp.pi])
 

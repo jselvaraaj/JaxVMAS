@@ -17,10 +17,7 @@ class Scenario(BaseScenario):
         # Add agents
         for i in range(1):
             agent = Agent.create(
-                batch_dim=batch_dim,
                 name=f"agent_{i}",
-                dim_p=world.dim_p,
-                dim_c=world.dim_c,
                 collide=False,
                 color=Color.GRAY,
             )
@@ -28,7 +25,6 @@ class Scenario(BaseScenario):
         # Add landmarks
         for i in range(1):
             landmark = Landmark.create(
-                batch_dim=batch_dim,
                 name=f"landmark {i}",
                 collide=False,
                 color=Color.RED,

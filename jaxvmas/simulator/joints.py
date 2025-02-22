@@ -101,7 +101,6 @@ class Joint(PyTreeNode):
 
             self = self.replace(
                 landmark=Landmark.create(
-                    batch_dim=batch_dim,
                     name=f"joint {entity_a.name} {entity_b.name}",
                     collide=collidable,
                     movable=True,

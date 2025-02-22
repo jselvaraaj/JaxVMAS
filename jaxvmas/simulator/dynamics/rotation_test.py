@@ -15,12 +15,10 @@ class TestRotationDynamics:
     @pytest.fixture
     def basic_agent(self):
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,  # Larger than needed_action_size for testing
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 2))))
         return agent
 
@@ -56,12 +54,10 @@ class TestRotationDynamics:
     def test_check_and_process_action_invalid(self, basic_dynamics: Rotation):
         # Create agent with insufficient action size
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=0,  # Less than needed_action_size
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
 
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -103,11 +99,11 @@ class TestRotationDynamics:
         # Test processing with different batch sizes
         for batch_dim in [1, 2, 4]:
             agent = Agent.create(
-                batch_dim=batch_dim,
                 name="test_agent",
-                dim_c=0,
-                dim_p=2,
                 action_size=2,
+            )
+            agent = agent._spawn(
+                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
             )
 
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -116,12 +112,10 @@ class TestRotationDynamics:
     def test_zero_action(self, basic_dynamics: Rotation):
         # Test processing with zero actions
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=2,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 2))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
@@ -130,12 +124,10 @@ class TestRotationDynamics:
     def test_positive_rotation(self, basic_dynamics: Rotation):
         # Test with positive rotation action
         agent = Agent.create(
-            batch_dim=1,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=1,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=0, dim_p=2)
         # Set positive rotation
         agent = agent.replace(action=agent.action.replace(u=jnp.array([[1.0]])))
 
@@ -147,12 +139,10 @@ class TestRotationDynamics:
     def test_negative_rotation(self, basic_dynamics: Rotation):
         # Test with negative rotation action
         agent = Agent.create(
-            batch_dim=1,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=1,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=1, dim_c=0, dim_p=2)
         # Set negative rotation
         agent = agent.replace(action=agent.action.replace(u=jnp.array([[-1.0]])))
 

@@ -12,7 +12,7 @@ from beartype.typing import Callable
 from jaxtyping import Array, Float
 
 from jaxvmas.simulator.core.entity import Entity
-from jaxvmas.simulator.core.jax_vectorized_object import batch_dim
+from jaxvmas.simulator.core.jax_vectorized_object import batch_axis_dim
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import (
     Color,
@@ -37,9 +37,9 @@ n_rays = "n_rays"
 
 
 class Lidar(Sensor):
-    angles: Float[Array, f"{batch_dim} {n_rays}"]
+    angles: Float[Array, f"{batch_axis_dim} {n_rays}"]
     max_range: float
-    last_measurement: Float[Array, f"{batch_dim} {n_rays}"]
+    last_measurement: Float[Array, f"{batch_axis_dim} {n_rays}"]
     render_color: Color | tuple[float, float, float]
     alpha: float
     entity_filter: Callable[[Entity], bool]
@@ -83,7 +83,7 @@ class Lidar(Sensor):
 
     def measure(
         self, agent: "Agent", world: "World", vectorized: bool = True
-    ) -> tuple["Lidar", Float[Array, f"{batch_dim} {n_rays}"]]:
+    ) -> tuple["Lidar", Float[Array, f"{batch_axis_dim} {n_rays}"]]:
         if not vectorized:
             dists = []
             for angle in tuple(jnp.moveaxis(self.angles, 1, 0)):

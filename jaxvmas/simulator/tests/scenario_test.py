@@ -21,8 +21,10 @@ class MockScenario(BaseScenario):
 
     def make_world(self, batch_dim: int, **kwargs) -> World:
         world = World.create(batch_dim=batch_dim)
-        agent = Agent.create(batch_dim=batch_dim, name="test_agent", dim_c=2, dim_p=2)
-        landmark = Landmark.create(batch_dim=batch_dim, name="test_landmark")
+        agent = Agent.create(name="test_agent")
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=batch_dim, dim_c=2, dim_p=2)
+        landmark = Landmark.create(name="test_landmark")
+        landmark = landmark._spawn(id=jnp.asarray(1), batch_dim=batch_dim, dim_p=2)
         world = world.add_agent(agent)
         world = world.add_landmark(landmark)
         return world

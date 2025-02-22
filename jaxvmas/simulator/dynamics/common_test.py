@@ -30,13 +30,12 @@ class TestDynamicsClass:
     @pytest.fixture
     def basic_agent(self):
         # Create a basic agent for testing
-        return Agent.create(
-            batch_dim=2,
+        agent = Agent.create(
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=3,  # Larger than needed_action_size for testing
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
+        return agent
 
     def test_create(self, basic_dynamics: Dynamics):
         # Test basic creation
@@ -75,12 +74,10 @@ class TestDynamicsClass:
     def test_check_and_process_action_invalid(self, basic_dynamics: Dynamics):
         # Create agent with insufficient action size
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=1,  # Less than needed_action_size
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
 
         # Test that it raises ValueError for insufficient action size
         with pytest.raises(ValueError):
@@ -123,13 +120,12 @@ class TestDynamicsClass:
         # Test processing with different batch sizes
         for batch_dim in [1, 2, 4]:
             agent = Agent.create(
-                batch_dim=batch_dim,
                 name="test_agent",
-                dim_c=0,
-                dim_p=2,
                 action_size=3,
             )
-
+            agent = agent._spawn(
+                id=jnp.asarray(1), batch_dim=batch_dim, dim_c=0, dim_p=2
+            )
             dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)
             assert processed_agent.state.force.shape == (batch_dim, 2)
             assert processed_agent.state.torque.shape == (batch_dim, 1)
@@ -137,12 +133,10 @@ class TestDynamicsClass:
     def test_action_clipping(self, basic_dynamics: Dynamics):
         # Create agent with large action values
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=3,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         # Set large action values
         agent = agent.replace(
             action=agent.action.replace(
@@ -158,12 +152,10 @@ class TestDynamicsClass:
     def test_zero_action(self, basic_dynamics: Dynamics):
         # Test processing with zero actions
         agent = Agent.create(
-            batch_dim=2,
             name="test_agent",
-            dim_c=0,
-            dim_p=2,
             action_size=3,
         )
+        agent = agent._spawn(id=jnp.asarray(1), batch_dim=2, dim_c=0, dim_p=2)
         agent = agent.replace(action=agent.action.replace(u=jnp.zeros((2, 3))))
 
         dynamics, processed_agent = basic_dynamics.check_and_process_action(agent)

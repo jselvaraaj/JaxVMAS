@@ -12,7 +12,7 @@ from jaxvmas.equinox_utils import (
 )
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
-    batch_dim,
+    batch_axis_dim,
     pos_dim,
 )
 from jaxvmas.simulator.core.shapes import Shape, Sphere
@@ -28,7 +28,7 @@ from jaxvmas.simulator.utils import (
 class Entity(JaxVectorizedObject):
     state: EntityState
 
-    gravity: Float[Array, f"{batch_dim} {pos_dim}"] | None
+    gravity: Float[Array, f"{batch_axis_dim} {pos_dim}"] | None
 
     name: str
     id: Int[Array, ""]
@@ -48,12 +48,12 @@ class Entity(JaxVectorizedObject):
     collision_filter: Callable[["Entity"], Bool[Array, "1"]]
 
     goal: str
-    _render: Bool[Array, f"{batch_dim}"]
+    _render: Bool[Array, f"{batch_axis_dim}"] | None
 
     @classmethod
+    @chex.assert_max_traces(0)
     def create(
         cls,
-        batch_dim: int,
         name: str,
         movable: bool = False,
         rotatable: bool = False,
@@ -70,7 +70,6 @@ class Entity(JaxVectorizedObject):
         angular_friction: float = jnp.nan,
         gravity: float | Sequence[float] | None = None,
         collision_filter: Callable[["Entity"], Bool[Array, "1"]] = lambda _: True,
-        dim_p: int = 2,
     ):
         if shape is None:
             shape = Sphere()
@@ -109,16 +108,14 @@ class Entity(JaxVectorizedObject):
         # else:
         if gravity is not None:
             gravity = jnp.asarray(gravity)
-            chex.assert_shape(gravity, (batch_dim, dim_p))
         # entity goal
         goal = ""
         # Render the entity
-        _render = jnp.full((batch_dim,), True)
-
-        state = EntityState.create(batch_dim, dim_p)
+        _render = None
+        state = EntityState.create()
 
         return cls(
-            batch_dim,
+            None,
             state,
             gravity,
             name,
@@ -165,8 +162,19 @@ class Entity(JaxVectorizedObject):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _spawn(self, id: Int[Array, ""], **kwargs) -> "Entity":
-        return self.replace(id=id, state=self.state._spawn(**kwargs))
+    def _spawn(
+        self, id: Int[Array, ""], *, batch_dim: int, dim_p: int, **kwargs
+    ) -> "Entity":
+        if self.gravity is not None:
+            chex.assert_shape(self.gravity, (batch_dim, dim_p))
+        _render = jnp.full((batch_dim,), True)
+
+        return self.replace(
+            batch_dim=batch_dim,
+            id=id,
+            _render=_render,
+            state=self.state._spawn(batch_dim=batch_dim, dim_p=dim_p, **kwargs),
+        )
 
     @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan):

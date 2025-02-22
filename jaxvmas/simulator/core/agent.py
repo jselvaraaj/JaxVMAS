@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 @jaxtyped(typechecker=beartype)
 class Agent(Entity):
     state: AgentState
-    action: Action
+    action: Action | None
 
     obs_range: float
     obs_noise: float
@@ -53,10 +53,7 @@ class Agent(Entity):
     @classmethod
     def create(
         cls,
-        batch_dim: int,
         name: str,
-        dim_c: int,
-        dim_p: int,
         shape: Shape | None = None,
         movable: bool = True,
         rotatable: bool = True,
@@ -73,9 +70,6 @@ class Agent(Entity):
         alpha: float = 0.5,
         obs_range: float = jnp.nan,
         obs_noise: float = jnp.nan,
-        u_noise: float | Sequence[float] = 0.0,
-        u_range: float | Sequence[float] = 1.0,
-        u_multiplier: float | Sequence[float] = 1.0,
         action_script: (
             Callable[[Array, "Agent", "World"], tuple["Agent", "World"]] | None
         ) = None,
@@ -94,9 +88,8 @@ class Agent(Entity):
         discrete_action_nvec: (
             list[int] | None
         ) = None,  # Defaults to 3-way discretization if discrete actions are chosen (stay, decrement, increment)
-    ):
+    ) -> "Agent":
         entity = Entity.create(
-            batch_dim,
             name,
             movable,
             rotatable,
@@ -132,7 +125,7 @@ class Agent(Entity):
                 raise ValueError(
                     f"All values in discrete_action_nvec must be greater than 1, got {discrete_action_nvec}"
                 )
-        state = AgentState.create(batch_dim, dim_c, dim_p)
+        state = AgentState.create()
         # cannot observe the world
         obs_range = obs_range
         # observation noise
@@ -169,14 +162,7 @@ class Agent(Entity):
             discrete_action_nvec = [3] * action_size
         else:
             discrete_action_nvec = discrete_action_nvec
-        action = Action.create(
-            batch_dim=batch_dim,
-            u_range=u_range,
-            u_multiplier=u_multiplier,
-            u_noise=u_noise,
-            action_size=action_size,
-            comm_dim=dim_c,
-        )
+        action = None
 
         agent = cls(
             **(
@@ -233,14 +219,35 @@ class Agent(Entity):
         return self, world
 
     @jaxtyped(typechecker=beartype)
-    def _spawn(self, id: Int[Array, ""], dim_c: int, dim_p: int) -> "Agent":
+    def _spawn(
+        self,
+        id: Int[Array, ""],
+        *,
+        batch_dim: int,
+        dim_c: int,
+        dim_p: int,
+        u_noise: float | Sequence[float] = 0.0,
+        u_range: float | Sequence[float] = 1.0,
+        u_multiplier: float | Sequence[float] = 1.0,
+    ) -> "Agent":
+        action = Action.create(
+            batch_dim=batch_dim,
+            u_range=u_range,
+            u_multiplier=u_multiplier,
+            u_noise=u_noise,
+            action_size=self.action_size,
+            comm_dim=dim_c,
+        )
         if dim_c == 0:
             assert (
                 self.silent
             ), f"Agent {self.name} must be silent when world has no communication"
         if self.silent:
             dim_c = 0
-        return super(Agent, self)._spawn(id=id, dim_c=dim_c, dim_p=dim_p)
+        self = self.replace(action=action)
+        return super(Agent, self)._spawn(
+            id=id, batch_dim=batch_dim, dim_c=dim_c, dim_p=dim_p
+        )
 
     @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "Agent":

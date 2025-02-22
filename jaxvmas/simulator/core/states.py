@@ -1,4 +1,5 @@
 import chex
+import jax
 import jax.numpy as jnp
 from beartype import beartype
 from jaxtyping import Array, Float, jaxtyped
@@ -8,7 +9,7 @@ from jaxvmas.equinox_utils import (
 )
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
-    batch_dim,
+    batch_axis_dim,
     comm_dim,
     pos_dim,
 )
@@ -19,26 +20,21 @@ from jaxvmas.simulator.utils import (
 
 @jaxtyped(typechecker=beartype)
 class EntityState(JaxVectorizedObject):
-    pos: Float[Array, f"{batch_dim} {pos_dim}"]
-    vel: Float[Array, f"{batch_dim} {pos_dim}"]
-    rot: Float[Array, f"{batch_dim} 1"]
-    ang_vel: Float[Array, f"{batch_dim} 1"]
+    pos: Float[Array, f"{batch_axis_dim} {pos_dim}"] | None
+    vel: Float[Array, f"{batch_axis_dim} {pos_dim}"] | None
+    rot: Float[Array, f"{batch_axis_dim} 1"] | None
+    ang_vel: Float[Array, f"{batch_axis_dim} 1"] | None
 
-    @classmethod
-    def create(cls, batch_dim: int, dim_p: int):
-        chex.assert_scalar_positive(dim_p)
-
-        # physical position
-        pos = jnp.zeros((batch_dim, dim_p))
-        # physical velocity
-        vel = jnp.zeros((batch_dim, dim_p))
-        # physical rotation -- from -pi to pi
-        rot = jnp.zeros((batch_dim, 1))
-        # angular velocity
-        ang_vel = jnp.zeros((batch_dim, 1))
-        return cls(batch_dim, pos, vel, rot, ang_vel)
+    def assert_is_spwaned(self):
+        msg = "_spwan first"
+        assert self.pos is not None, msg
+        assert self.vel is not None, msg
+        assert self.rot is not None, msg
+        assert self.ang_vel is not None, msg
+        super().assert_is_spwaned()
 
     def _reset(self, env_index: int | float = jnp.nan) -> "EntityState":
+        self.assert_is_spwaned()
         return self.replace(
             pos=JaxUtils.where_from_index(
                 env_index, jnp.zeros_like(self.pos), self.pos
@@ -55,73 +51,67 @@ class EntityState(JaxVectorizedObject):
         )
 
     # Resets state for all entities
-    def _spawn(self, dim_p: int) -> "EntityState":
+    @jaxtyped(typechecker=beartype)
+    def _spawn(self, batch_dim: int, dim_p: int) -> "EntityState":
+        chex.assert_scalar_positive(batch_dim)
+        chex.assert_scalar_positive(dim_p)
+
         return self.replace(
-            pos=jnp.zeros((self.batch_dim, dim_p)),
-            vel=jnp.zeros((self.batch_dim, dim_p)),
-            rot=jnp.zeros((self.batch_dim, 1)),
-            ang_vel=jnp.zeros((self.batch_dim, 1)),
+            batch_dim=batch_dim,
+            pos=jnp.zeros((batch_dim, dim_p)),
+            vel=jnp.zeros((batch_dim, dim_p)),
+            rot=jnp.zeros((batch_dim, 1)),
+            ang_vel=jnp.zeros((batch_dim, 1)),
         )
 
     def replace(self, **kwargs):
         if "pos" in kwargs:
             pos = kwargs["pos"]
-            chex.assert_shape(pos, self.pos.shape)
-            chex.assert_equal_shape([pos, self.vel])
+            if self.pos is not None:
+                chex.assert_shape(pos, self.pos.shape)
+            if self.vel is not None:
+                chex.assert_equal_shape([pos, self.vel])
 
         elif "vel" in kwargs:
             vel = kwargs["vel"]
-            chex.assert_shape(vel, self.vel.shape)
-            chex.assert_equal_shape([vel, self.pos])
+            if self.vel is not None:
+                chex.assert_shape(vel, self.vel.shape)
+            if self.pos is not None:
+                chex.assert_equal_shape([vel, self.pos])
 
         elif "ang_vel" in kwargs:
             ang_vel = kwargs["ang_vel"]
-            chex.assert_shape(ang_vel, self.ang_vel.shape)
-            chex.assert_equal_shape([ang_vel, self.rot])
+            if self.ang_vel is not None:
+                chex.assert_shape(ang_vel, self.ang_vel.shape)
+            if self.rot is not None:
+                chex.assert_equal_shape([ang_vel, self.rot])
 
         elif "rot" in kwargs:
             rot = kwargs["rot"]
-            chex.assert_shape(rot, self.rot.shape)
-            chex.assert_equal_shape([rot, self.ang_vel])
+            if self.rot is not None:
+                chex.assert_shape(rot, self.rot.shape)
+            if self.ang_vel is not None:
+                chex.assert_equal_shape([rot, self.ang_vel])
 
         return super().replace(**kwargs)
 
 
 @jaxtyped(typechecker=beartype)
 class AgentState(EntityState):
-    c: Float[Array, f"{batch_dim} {comm_dim}"]
-    force: Float[Array, f"{batch_dim} {pos_dim}"]
-    torque: Float[Array, f"{batch_dim} 1"]
+    c: Float[Array, f"{batch_axis_dim} {comm_dim}"] | None
+    force: Float[Array, f"{batch_axis_dim} {pos_dim}"] | None
+    torque: Float[Array, f"{batch_axis_dim} 1"] | None
 
-    @classmethod
-    def create(cls, batch_dim: int, dim_c: int, dim_p: int):
-        chex.assert_scalar_non_negative(dim_c)
-
-        entity_state = EntityState.create(batch_dim, dim_p)
-
-        # This is okay since filter jit would make dim_c as static jitted variable
-        if dim_c > 0:
-            c = jnp.zeros((batch_dim, dim_c))
-        else:
-            c = jnp.full((batch_dim, dim_c), jnp.nan)
-
-        # Agent force from actions
-        force = jnp.zeros((batch_dim, dim_p))
-        # Agent torque from actions
-        torque = jnp.zeros((batch_dim, 1))
-        return cls(
-            batch_dim,
-            entity_state.pos,
-            entity_state.vel,
-            entity_state.rot,
-            entity_state.ang_vel,
-            c,
-            force,
-            torque,
-        )
+    def assert_is_spwaned(self):
+        assert self.batch_dim is not None
+        assert self.c is not None
+        assert self.force is not None
+        assert self.torque is not None
+        super().assert_is_spwaned()
 
     @jaxtyped(typechecker=beartype)
     def _reset(self, env_index: int | float = jnp.nan) -> "AgentState":
+        self.assert_is_spwaned()
 
         def env_index_is_nan(self, env_index: float):
             return equinox_filter_cond_return_pytree_node(
@@ -176,36 +166,48 @@ class AgentState(EntityState):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def _spawn(self, dim_c: int, dim_p: int) -> "AgentState":
+    def _spawn(self, batch_dim: int, dim_c: int, dim_p: int) -> "AgentState":
 
-        def dim_c_is_greater_than_0(self: "AgentState", dim_c: int):
-            return self.replace(c=jnp.zeros((self.batch_dim, dim_c)))
+        def dim_c_is_greater_than_0():
+            return jnp.zeros((batch_dim, dim_c))
 
-        def dim_c_is_not_greater_than_0(self: "AgentState", dim_c: int):
-            return self.replace(c=jnp.full((self.batch_dim, dim_c), jnp.nan))
+        def dim_c_is_not_greater_than_0():
+            return jnp.full((batch_dim, dim_c), jnp.nan)
 
-        self: "AgentState" = equinox_filter_cond_return_pytree_node(
+        c = jax.lax.cond(
             dim_c > 0,
             dim_c_is_greater_than_0,
             dim_c_is_not_greater_than_0,
-            self,
-            dim_c,
         )
+
         self = self.replace(
-            force=jnp.zeros((self.batch_dim, dim_p)),
-            torque=jnp.zeros((self.batch_dim, 1)),
+            c=c,
+            force=jnp.zeros((batch_dim, dim_p)),
+            torque=jnp.zeros((batch_dim, 1)),
         )
-        return EntityState._spawn(self, dim_p)
+        return EntityState._spawn(self, batch_dim, dim_p)
 
     def replace(self, **kwargs):
+
         if "c" in kwargs:
             c = kwargs["c"]
-            chex.assert_shape(c, (self.batch_dim, None))
+            if self.batch_dim is not None:
+                chex.assert_shape(c, (self.batch_dim, None))
+            if self.c is not None:
+                chex.assert_shape(c, self.c.shape)
 
         elif "force" in kwargs:
             force = kwargs["force"]
-            chex.assert_shape(force, (self.batch_dim, None))
+            if self.batch_dim is not None:
+                chex.assert_shape(force, (self.batch_dim, None))
+            if self.force is not None:
+                chex.assert_shape(force, self.force.shape)
+
         elif "torque" in kwargs:
             torque = kwargs["torque"]
-            chex.assert_shape(torque, (self.batch_dim, None))
+            if self.batch_dim is not None:
+                chex.assert_shape(torque, (self.batch_dim, None))
+            if self.torque is not None:
+                chex.assert_shape(torque, self.torque.shape)
+
         return super().replace(**kwargs)

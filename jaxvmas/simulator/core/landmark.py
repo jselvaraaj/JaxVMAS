@@ -16,7 +16,6 @@ class Landmark(Entity):
     @classmethod
     def create(
         cls,
-        batch_dim: int,
         name: str,
         shape: Shape = None,
         movable: bool = False,
@@ -35,7 +34,6 @@ class Landmark(Entity):
         collision_filter: Callable[[Entity], Bool[Array, "1"]] = lambda _: True,
     ):
         return super(Landmark, cls).create(
-            batch_dim,
             name,
             movable,
             rotatable,

@@ -1,3 +1,5 @@
+from dataclasses import fields
+
 import chex
 from beartype import beartype
 from jaxtyping import jaxtyped
@@ -7,7 +9,7 @@ from jaxvmas.equinox_utils import (
 )
 
 # Dimension type variables (add near top of file)
-batch_dim = "batch"
+batch_axis_dim = "batch"
 pos_dim = "dim_p"
 comm_dim = "dim_c"
 action_size_dim = "action_size"
@@ -20,16 +22,23 @@ dots_dim = "..."
 
 @jaxtyped(typechecker=beartype)
 class JaxVectorizedObject(PyTreeNode):
-    batch_dim: int
+    batch_dim: int | None
 
     @classmethod
-    def create(cls, batch_dim: int):
-        chex.assert_scalar_positive(batch_dim)
-        return cls(batch_dim)
+    @chex.assert_max_traces(0)
+    def create(cls):
+        return cls(*([None] * len(fields(cls))))
+
+    def assert_is_spwaned(self):
+        msg = "_spwan first"
+
+        assert batch_axis_dim is not None, msg
 
     @jaxtyped(typechecker=beartype)
     def _check_batch_index(self, batch_index: int | float):
         if isinstance(batch_index, float):
+            # This mean bathc_index is jnp.nan
+            # directly checking that with if statment is not allowed with jit compilation.
             pass
         else:
             chex.assert_scalar_in(batch_index, 0, self.batch_dim - 1)
