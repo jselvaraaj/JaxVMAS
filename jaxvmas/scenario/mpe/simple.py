@@ -31,7 +31,8 @@ class Scenario(BaseScenario):
             )
             world = world.add_landmark(landmark)
 
-        return world
+        self = self.replace(world=world)
+        return self
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | float = jnp.nan):
         agents = []

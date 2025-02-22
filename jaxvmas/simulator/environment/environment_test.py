@@ -26,7 +26,7 @@ dots_dim = "..."
 class MockScenario(BaseScenario):
     """Mock scenario for testing"""
 
-    def make_world(self, batch_dim: int, **kwargs) -> World:
+    def make_world(self, batch_dim: int, **kwargs):
         world = World.create(batch_dim=batch_dim, dim_c=3, dim_p=2)
 
         # Add agents with different configurations
@@ -44,7 +44,8 @@ class MockScenario(BaseScenario):
         agent2 = agent2._spawn(id=2, batch_dim=batch_dim, dim_c=3, dim_p=2)
         world = world.add_agent(agent1)
         world = world.add_agent(agent2)
-        return world
+        self = self.replace(world=world)
+        return self
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | float) -> "MockScenario":
         # Reset all agents in the world at the specified index

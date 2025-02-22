@@ -19,13 +19,14 @@ dim2 = "dim2"
 class MockScenario(BaseScenario):
     """A simple scenario for testing."""
 
-    def make_world(self, batch_dim: int, **kwargs) -> World:
+    def make_world(self, batch_dim: int, **kwargs):
         world = World.create(batch_dim=batch_dim, **kwargs)
         agent = Agent.create(name="test_agent")
         landmark = Landmark.create(name="test_landmark")
         world = world.add_agent(agent)
         world = world.add_landmark(landmark)
-        return world
+        self = self.replace(world=world)
+        return self
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         agent = self.world.agents[0]

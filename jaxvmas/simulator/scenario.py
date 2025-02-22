@@ -85,10 +85,9 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
             visualize_semidims,
         )
 
-    def env_make_world(self, batch_dim: int, **kwargs) -> WorldType:
+    def env_make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         # Do not override
-        world = self.make_world(batch_dim, **kwargs)
-        self = self.replace(world=world)
+        self = self.make_world(batch_dim, **kwargs)
         return self
 
     def env_reset_world_at(
@@ -114,7 +113,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
 
         return self, agent
 
-    def make_world(self, batch_dim: int, **kwargs) -> WorldType:
+    def make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         """
         This function needs to be implemented when creating a scenario.
         In this function the user should instantiate the world and insert agents and landmarks in it.

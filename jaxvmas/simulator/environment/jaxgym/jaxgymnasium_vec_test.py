@@ -24,8 +24,10 @@ class MockWorld(World):
 class MockScenario(BaseScenario):
     """Mock scenario for testing."""
 
-    def make_world(self, batch_dim: int, **kwargs) -> World:
-        return MockWorld.create(batch_dim=batch_dim)
+    def make_world(self, batch_dim: int, **kwargs):
+        world = MockWorld.create(batch_dim=batch_dim)
+        self = self.replace(world=world)
+        return self
 
     def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
         return self
