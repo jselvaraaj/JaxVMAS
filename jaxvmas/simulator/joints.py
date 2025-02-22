@@ -14,6 +14,8 @@ from jaxvmas.simulator import rendering
 
 if TYPE_CHECKING:
     from jaxvmas.simulator.core.entity import Entity
+from jaxtyping import Array, Int
+
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import Color, JaxUtils, X, Y
 
@@ -22,8 +24,8 @@ UNCOLLIDABLE_JOINT_RENDERING_WIDTH = 1
 
 @jaxtyped(typechecker=beartype)
 class Joint(PyTreeNode):
-    entity_a: "Entity"
-    entity_b: "Entity"
+    entity_a_id: Int[Array, ""]
+    entity_b_id: Int[Array, ""]
     rotate_a: bool
     rotate_b: bool
     fixed_rotation_a: float | None
@@ -34,7 +36,6 @@ class Joint(PyTreeNode):
     @classmethod
     def create(
         cls,
-        batch_dim: int,
         entity_a: "Entity",
         entity_b: "Entity",
         anchor_a: tuple[float, float] = (0.0, 0.0),
@@ -48,7 +49,7 @@ class Joint(PyTreeNode):
         fixed_rotation_a: float | None = None,
         fixed_rotation_b: float | None = None,
     ):
-        assert entity_a != entity_b, "Cannot join same entity"
+        assert entity_a.id != entity_b.id, "Cannot join same entity"
         for anchor in (anchor_a, anchor_b):
             assert (
                 max(anchor) <= 1 and min(anchor) >= -1
@@ -73,8 +74,8 @@ class Joint(PyTreeNode):
             assert collidable
 
         self = cls(
-            entity_a=entity_a,
-            entity_b=entity_b,
+            entity_a_id=entity_a.id,
+            entity_b_id=entity_b.id,
             rotate_a=rotate_a,
             rotate_b=rotate_b,
             fixed_rotation_a=fixed_rotation_a,
@@ -193,8 +194,8 @@ class JointConstraint(PyTreeNode):
     This is an uncollidable constraint that bounds two entities in the specified anchor points at the specified distance
     """
 
-    entity_a: "Entity"
-    entity_b: "Entity"
+    entity_a_id: Int[Array, ""]
+    entity_b_id: Int[Array, ""]
     anchor_a: tuple[float, float]
     anchor_b: tuple[float, float]
     dist: float
@@ -213,7 +214,7 @@ class JointConstraint(PyTreeNode):
         rotate: bool = True,
         fixed_rotation: float | None = None,
     ):
-        assert entity_a != entity_b, "Cannot join same entity"
+        assert entity_a.id != entity_b.id, "Cannot join same entity"
         for anchor in (anchor_a, anchor_b):
             assert (
                 max(anchor) <= 1 and min(anchor) >= -1
@@ -228,8 +229,8 @@ class JointConstraint(PyTreeNode):
             fixed_rotation = 0.0
 
         return cls(
-            entity_a=entity_a,
-            entity_b=entity_b,
+            entity_a_id=entity_a.id,
+            entity_b_id=entity_b.id,
             anchor_a=anchor_a,
             anchor_b=anchor_b,
             dist=dist,
@@ -239,16 +240,16 @@ class JointConstraint(PyTreeNode):
         )
 
     def update_joint_state(self, entity_a: "Entity", entity_b: "Entity"):
-        self = self.replace(entity_a=entity_a, entity_b=entity_b)
+        self = self.replace(entity_a_id=entity_a.id, entity_b_id=entity_b.id)
 
         return self
 
     def _delta_anchor_jax_array(self, entity: "Entity"):
         _delta_anchor_tensor_map = {**self._delta_anchor_tensor_map}
 
-        if entity.name == self.entity_a.name:
+        if entity.id == self.entity_a_id:
             anchor = self.anchor_a
-        elif entity.name == self.entity_b.name:
+        elif entity.id == self.entity_b_id:
             anchor = self.anchor_b
         else:
             raise ValueError(
@@ -279,6 +280,8 @@ class JointConstraint(PyTreeNode):
 
     def render(
         self,
+        entity_a: "Entity",
+        entity_b: "Entity",
         env_index: int = 0,
     ) -> list[Geom]:
         if self.dist == 0:
@@ -290,8 +293,8 @@ class JointConstraint(PyTreeNode):
             (self.dist / 2, 0),
             width=UNCOLLIDABLE_JOINT_RENDERING_WIDTH,
         )
-        pos_point_a = self.pos_point(self.entity_a)
-        pos_point_b = self.pos_point(self.entity_b)
+        pos_point_a = self.pos_point(entity_a)
+        pos_point_b = self.pos_point(entity_b)
 
         pos_point_a = pos_point_a[env_index]
         pos_point_b = pos_point_b[env_index]

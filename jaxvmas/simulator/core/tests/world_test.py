@@ -2104,6 +2104,7 @@ class TestVectorizedEnvironmentForce:
         # Test sphere-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(sphere1).add_agent(sphere2)
+        world = world.reset()
         sphere1, sphere2 = world.agents
         sphere1 = sphere1.replace(
             state=sphere1.state.replace(pos=jnp.array([[0.0, 0.0]]))
@@ -2118,6 +2119,7 @@ class TestVectorizedEnvironmentForce:
         # Test line-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(line1).add_agent(sphere1)
+        world = world.reset()
         line1, sphere1 = world.agents
         line1 = line1.replace(
             state=line1.state.replace(
@@ -2135,6 +2137,7 @@ class TestVectorizedEnvironmentForce:
         # Test line-line collision
         world = World.create(batch_dim=1)
         world = world.add_agent(line1).add_agent(line2)
+        world = world.reset()
         line1, line2 = world.agents
         line1 = line1.replace(
             state=line1.state.replace(
@@ -2155,6 +2158,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-sphere collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(sphere1)
+        world = world.reset()
         box1, sphere1 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
@@ -2172,6 +2176,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-line collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(line1)
+        world = world.reset()
         box1, line1 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
@@ -2192,6 +2197,7 @@ class TestVectorizedEnvironmentForce:
         # Test box-box collision
         world = World.create(batch_dim=1)
         world = world.add_agent(box1).add_agent(box2)
+        world = world.reset()
         box1, box2 = world.agents
         box1 = box1.replace(
             state=box1.state.replace(
@@ -2211,32 +2217,17 @@ class TestVectorizedEnvironmentForce:
 
     def test_vectorized_environment_force_with_joints(self):
         """Test vectorized environment force application with joint constraints."""
-        world = World.create(batch_dim=1)
+        world = World.create(batch_dim=1, substeps=2)
 
         # Create two agents to be joined
-        agent1 = Agent.create(
-            batch_dim=1,
-            name="agent1",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
-        agent2 = Agent.create(
-            batch_dim=1,
-            name="agent2",
-            dim_p=2,
-            dim_c=0,
-            shape=Sphere(radius=0.5),
-            movable=True,
-        )
+        agent1 = Agent.create(name="agent1", shape=Sphere(radius=0.5), movable=True)
+        agent2 = Agent.create(name="agent2", shape=Sphere(radius=0.5), movable=True)
 
         # Add joint between agents
         from jaxvmas.simulator.joints import Joint
 
         world = world.add_agent(agent1).add_agent(agent2)
         joint = Joint.create(
-            batch_dim=1,
             entity_a=agent1,
             entity_b=agent2,
             anchor_a=(0.0, 0.0),
@@ -2244,6 +2235,8 @@ class TestVectorizedEnvironmentForce:
             dist=1.0,
         )
         world = world.add_joint(joint)
+        world = world.reset()
+        agent1, agent2 = world.agents
 
         # Position agents at distance > joint distance
         agent1 = agent1.replace(state=agent1.state.replace(pos=jnp.array([[0.0, 0.0]])))
