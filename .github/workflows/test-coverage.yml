@@ -25,12 +25,13 @@ jobs:
       - name: Create badges directory
         run: mkdir -p badges
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pybadges
+
       - name: Generate Coverage Badge
-        uses: jaywcjlove/coverage-badges-cli@main
-        with:
-          style: flat
-          source: coverage.json
-          output: badges/coverage.svg
+        run: python .github/workflows/badge_generation_script.py
 
       - name: Commit Coverage Badge
         uses: stefanzweifel/git-auto-commit-action@v4
