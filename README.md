@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-GPLv3.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![JAX](https://img.shields.io/badge/Powered%20by-JAX%20%F0%9F%9A%80-yellow)](https://github.com/google/jax)
 [![Coverage](./badges/coverage.svg)](https://github.com/jselvaraaj/JaxVMAS/actions)
-[![Tests Passing](https://img.shields.io/github/actions/workflow/status/jselvaraaj/JaxVMAS/pytest.yml?label=Tests)](https://github.com/jselvaraaj/JaxVMAS/actions)
+[![Tests](https://github.com/jselvaraaj/JaxVMAS/actions/workflows/pytest.yml/badge.svg)](https://github.com/jselvaraaj/JaxVMAS/actions/workflows/pytest.yml)
 
 
 Comming soon - JAX implementation of [VMAS](https://github.com/proroklab/VectorizedMultiAgentSimulator) - A vectorized differentiable multi-agent simulator for MARL.

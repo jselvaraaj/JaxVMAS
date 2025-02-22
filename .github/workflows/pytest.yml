@@ -51,3 +51,9 @@ jobs:
           style: flat
           source: coverage.json
           output: badges/coverage.svg
+
+      - name: Commit coverage badge
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Update coverage badge"
+          file_pattern: badges/coverage.svg
