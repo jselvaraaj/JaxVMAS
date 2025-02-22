@@ -4,6 +4,7 @@ flax
 gymnax
 chex
 beartype
+equinox
 
 pyglet<=1.5.27
 opencv-python
