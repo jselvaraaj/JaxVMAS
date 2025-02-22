@@ -1174,11 +1174,11 @@ class FootballWorld(World):
         return World.replace(self, **kwargs)
 
     @property
-    def blue_agents(self):
+    def blue_agents(self) -> list["FootballAgent"]:
         return self.agents[: self.n_blue_agents]
 
     @property
-    def red_agents(self):
+    def red_agents(self) -> list["FootballAgent"]:
         return self.agents[self.n_blue_agents : self.n_blue_agents + self.n_red_agents]
 
     @property
@@ -1476,7 +1476,87 @@ class Scenario(BaseScenario[FootballWorld]):
             _agents_closest_to_ball=_agents_closest_to_ball,
             reset=False,
         )
-        scenario = scenario.init_background()
+
+        def init_background():
+            # Add landmarks
+            background = Landmark.create(
+                name="Background",
+                collide=False,
+                movable=False,
+                shape=Box(length=pitch_length, width=pitch_width),
+                color=Color.GREEN,
+            )
+
+            centre_circle_outer = Landmark.create(
+                name="Centre Circle Outer",
+                collide=False,
+                movable=False,
+                shape=Sphere(radius=goal_size / 2),
+                color=Color.WHITE,
+            )
+
+            centre_circle_inner = Landmark.create(
+                name="Centre Circle Inner",
+                collide=False,
+                movable=False,
+                shape=Sphere(goal_size / 2 - 0.02),
+                color=Color.GREEN,
+            )
+
+            centre_line = Landmark.create(
+                name="Centre Line",
+                collide=False,
+                movable=False,
+                shape=Line(length=pitch_width - 2 * agent_size),
+                color=Color.WHITE,
+            )
+
+            right_line = Landmark.create(
+                name="Right Line",
+                collide=False,
+                movable=False,
+                shape=Line(length=pitch_width - 2 * agent_size),
+                color=Color.WHITE,
+            )
+
+            left_line = Landmark.create(
+                name="Left Line",
+                collide=False,
+                movable=False,
+                shape=Line(length=pitch_width - 2 * agent_size),
+                color=Color.WHITE,
+            )
+
+            top_line = Landmark.create(
+                name="Top Line",
+                collide=False,
+                movable=False,
+                shape=Line(length=pitch_length - 2 * agent_size),
+                color=Color.WHITE,
+            )
+
+            bottom_line = Landmark.create(
+                name="Bottom Line",
+                collide=False,
+                movable=False,
+                shape=Line(length=pitch_length - 2 * agent_size),
+                color=Color.WHITE,
+            )
+
+            background_entities = [
+                background,
+                centre_circle_outer,
+                centre_circle_inner,
+                centre_line,
+                right_line,
+                left_line,
+                top_line,
+                bottom_line,
+            ]
+            return background_entities
+
+        background_entities = init_background()
+        scenario = scenario.replace(background_entities=background_entities)
         return scenario
 
     def replace(self, **kwargs) -> "Scenario":
@@ -1570,25 +1650,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = self.init_traj_pts(world)
         return world
 
-    @eqx.filter_jit
-    def reset_world_at(self, PRNG_key: Array, env_index: int | None = None):
-        print("starting reset_world_at")
-        PRNG_key, subkey = jax.random.split(PRNG_key)
-        self = self.reset_agents(subkey, env_index)
-        self = self.reset_ball(env_index)
-        self = self.reset_walls(env_index)
-        self = self.reset_goals(env_index)
-        self = self.reset_controllers(env_index)
-        _done = jnp.where(
-            env_index is None,
-            jnp.zeros_like(self._done, dtype=jnp.bool_),
-            self._done.at[env_index].set(False),
-        )
-        self = self.replace(_done=_done)
-        self = self.replace(reset=True)
-        print("ending reset_world_at")
-        return self
-
     def init_world(self, batch_dim: int) -> FootballWorld:
         # Add agents
         red_controller = (
@@ -1651,9 +1712,120 @@ class Scenario(BaseScenario[FootballWorld]):
         return world
 
     def init_agents(self, world: FootballWorld) -> FootballWorld:
+        def get_physically_different_agents():
+            assert self.n_blue_agents == 5, "Physical differences only for 5 agents"
+
+            def attacker(i):
+                attacker_shoot_multiplier_decrease = -0.2
+                attacker_multiplier_increase = 0.1
+                attacker_speed_increase = 0.05
+                attacker_radius_decrease = -0.005
+                return FootballAgent.create(
+                    name=f"agent_blue_{i}",
+                    shape=Sphere(radius=self.agent_size + attacker_radius_decrease),
+                    action_script=(
+                        self.blue_controller.run if self.ai_blue_agents else None
+                    ),
+                    u_multiplier=(
+                        [
+                            self.u_multiplier + attacker_multiplier_increase,
+                            self.u_multiplier + attacker_multiplier_increase,
+                        ]
+                        if not self.enable_shooting
+                        else [
+                            self.u_multiplier + attacker_multiplier_increase,
+                            self.u_multiplier + attacker_multiplier_increase,
+                            self.u_rot_multiplier,
+                            self.u_shoot_multiplier
+                            + attacker_shoot_multiplier_decrease,
+                        ]
+                    ),
+                    max_speed=self.max_speed + attacker_speed_increase,
+                    dynamics=(
+                        Holonomic()
+                        if not self.enable_shooting
+                        else HolonomicWithRotation()
+                    ),
+                    action_size=2 if not self.enable_shooting else 4,
+                    color=self.blue_color,
+                    alpha=1,
+                )
+
+            def defender(i):
+
+                return FootballAgent.create(
+                    name=f"agent_blue_{i}",
+                    shape=Sphere(radius=self.agent_size),
+                    action_script=(
+                        self.blue_controller.run if self.ai_blue_agents else None
+                    ),
+                    u_multiplier=(
+                        [self.u_multiplier, self.u_multiplier]
+                        if not self.enable_shooting
+                        else [
+                            self.u_multiplier,
+                            self.u_multiplier,
+                            self.u_rot_multiplier,
+                            self.u_shoot_multiplier,
+                        ]
+                    ),
+                    max_speed=self.max_speed,
+                    dynamics=(
+                        Holonomic()
+                        if not self.enable_shooting
+                        else HolonomicWithRotation()
+                    ),
+                    action_size=2 if not self.enable_shooting else 4,
+                    color=self.blue_color,
+                    alpha=1,
+                )
+
+            def goal_keeper(i):
+                goalie_shoot_multiplier_increase = 0.2
+                goalie_radius_increase = 0.01
+                goalie_speed_decrease = -0.1
+                goalie_multiplier_decrease = -0.05
+                return FootballAgent.create(
+                    name=f"agent_blue_{i}",
+                    shape=Sphere(radius=self.agent_size + goalie_radius_increase),
+                    action_script=(
+                        self.blue_controller.run if self.ai_blue_agents else None
+                    ),
+                    u_multiplier=(
+                        [
+                            self.u_multiplier + goalie_multiplier_decrease,
+                            self.u_multiplier + goalie_multiplier_decrease,
+                        ]
+                        if not self.enable_shooting
+                        else [
+                            self.u_multiplier + goalie_multiplier_decrease,
+                            self.u_multiplier + goalie_multiplier_decrease,
+                            self.u_rot_multiplier + goalie_shoot_multiplier_increase,
+                            self.u_shoot_multiplier,
+                        ]
+                    ),
+                    max_speed=self.max_speed + goalie_speed_decrease,
+                    dynamics=(
+                        Holonomic()
+                        if not self.enable_shooting
+                        else HolonomicWithRotation()
+                    ),
+                    action_size=2 if not self.enable_shooting else 4,
+                    color=self.blue_color,
+                    alpha=1,
+                )
+
+            agents = [
+                attacker(0),
+                attacker(1),
+                defender(2),
+                defender(3),
+                goal_keeper(4),
+            ]
+            return agents
 
         if self.physically_different:
-            blue_agents = self.get_physically_different_agents()
+            blue_agents = get_physically_different_agents()
             for agent in blue_agents:
                 world = world.add_agent(agent)
         else:
@@ -1727,104 +1899,194 @@ class Scenario(BaseScenario[FootballWorld]):
 
         return world
 
-    def get_physically_different_agents(self):
-        assert self.n_blue_agents == 5, "Physical differences only for 5 agents"
+    def init_ball(self, world: FootballWorld):
+        # Add Ball
+        ball = BallAgent.create(
+            name="Ball",
+            shape=Sphere(radius=self.ball_size),
+            action_script=get_ball_action_script(
+                self.agent_size, self.pitch_width, self.pitch_length, self.goal_size
+            ),
+            max_speed=self.ball_max_speed,
+            mass=self.ball_mass,
+            alpha=1,
+            color=Color.BLACK,
+        )
+        world = world.add_agent(ball)
+        return world
 
-        def attacker(i):
-            attacker_shoot_multiplier_decrease = -0.2
-            attacker_multiplier_increase = 0.1
-            attacker_speed_increase = 0.05
-            attacker_radius_decrease = -0.005
-            return FootballAgent.create(
-                name=f"agent_blue_{i}",
-                shape=Sphere(radius=self.agent_size + attacker_radius_decrease),
-                action_script=(
-                    self.blue_controller.run if self.ai_blue_agents else None
-                ),
-                u_multiplier=(
-                    [
-                        self.u_multiplier + attacker_multiplier_increase,
-                        self.u_multiplier + attacker_multiplier_increase,
-                    ]
-                    if not self.enable_shooting
-                    else [
-                        self.u_multiplier + attacker_multiplier_increase,
-                        self.u_multiplier + attacker_multiplier_increase,
-                        self.u_rot_multiplier,
-                        self.u_shoot_multiplier + attacker_shoot_multiplier_decrease,
-                    ]
-                ),
-                max_speed=self.max_speed + attacker_speed_increase,
-                dynamics=(
-                    Holonomic() if not self.enable_shooting else HolonomicWithRotation()
-                ),
-                action_size=2 if not self.enable_shooting else 4,
-                color=self.blue_color,
-                alpha=1,
-            )
+    def init_walls(self, world: FootballWorld):
+        right_top_wall = Landmark.create(
+            name="Right Top Wall",
+            collide=True,
+            movable=False,
+            shape=Line(
+                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
+            ),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(right_top_wall)
 
-        def defender(i):
+        left_top_wall = Landmark.create(
+            name="Left Top Wall",
+            collide=True,
+            movable=False,
+            shape=Line(
+                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
+            ),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(left_top_wall)
 
-            return FootballAgent.create(
-                name=f"agent_blue_{i}",
-                shape=Sphere(radius=self.agent_size),
-                action_script=(
-                    self.blue_controller.run if self.ai_blue_agents else None
-                ),
-                u_multiplier=(
-                    [self.u_multiplier, self.u_multiplier]
-                    if not self.enable_shooting
-                    else [
-                        self.u_multiplier,
-                        self.u_multiplier,
-                        self.u_rot_multiplier,
-                        self.u_shoot_multiplier,
-                    ]
-                ),
-                max_speed=self.max_speed,
-                dynamics=(
-                    Holonomic() if not self.enable_shooting else HolonomicWithRotation()
-                ),
-                action_size=2 if not self.enable_shooting else 4,
-                color=self.blue_color,
-                alpha=1,
-            )
+        right_bottom_wall = Landmark.create(
+            name="Right Bottom Wall",
+            collide=True,
+            movable=False,
+            shape=Line(
+                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
+            ),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(right_bottom_wall)
 
-        def goal_keeper(i):
-            goalie_shoot_multiplier_increase = 0.2
-            goalie_radius_increase = 0.01
-            goalie_speed_decrease = -0.1
-            goalie_multiplier_decrease = -0.05
-            return FootballAgent.create(
-                name=f"agent_blue_{i}",
-                shape=Sphere(radius=self.agent_size + goalie_radius_increase),
-                action_script=(
-                    self.blue_controller.run if self.ai_blue_agents else None
-                ),
-                u_multiplier=(
-                    [
-                        self.u_multiplier + goalie_multiplier_decrease,
-                        self.u_multiplier + goalie_multiplier_decrease,
-                    ]
-                    if not self.enable_shooting
-                    else [
-                        self.u_multiplier + goalie_multiplier_decrease,
-                        self.u_multiplier + goalie_multiplier_decrease,
-                        self.u_rot_multiplier + goalie_shoot_multiplier_increase,
-                        self.u_shoot_multiplier,
-                    ]
-                ),
-                max_speed=self.max_speed + goalie_speed_decrease,
-                dynamics=(
-                    Holonomic() if not self.enable_shooting else HolonomicWithRotation()
-                ),
-                action_size=2 if not self.enable_shooting else 4,
-                color=self.blue_color,
-                alpha=1,
-            )
+        left_bottom_wall = Landmark.create(
+            name="Left Bottom Wall",
+            collide=True,
+            movable=False,
+            shape=Line(
+                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
+            ),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(left_bottom_wall)
 
-        agents = [attacker(0), attacker(1), defender(2), defender(3), goal_keeper(4)]
-        return agents
+        return world
+
+    def init_goals(self, world: FootballWorld):
+        right_goal_back = Landmark.create(
+            name="Right Goal Back",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_size),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(right_goal_back)
+
+        left_goal_back = Landmark.create(
+            name="Left Goal Back",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_size),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(left_goal_back)
+
+        right_goal_top = Landmark.create(
+            name="Right Goal Top",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_depth),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(right_goal_top)
+
+        left_goal_top = Landmark.create(
+            name="Left Goal Top",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_depth),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(left_goal_top)
+
+        right_goal_bottom = Landmark.create(
+            name="Right Goal Bottom",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_depth),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(right_goal_bottom)
+
+        left_goal_bottom = Landmark.create(
+            name="Left Goal Bottom",
+            collide=True,
+            movable=False,
+            shape=Line(length=self.goal_depth),
+            color=Color.WHITE,
+        )
+        world = world.add_landmark(left_goal_bottom)
+
+        blue_net = Landmark.create(
+            name="Blue Net",
+            collide=False,
+            movable=False,
+            shape=Box(length=self.goal_depth, width=self.goal_size),
+            color=FootballColor.GRAY,
+        )
+        world = world.add_landmark(blue_net)
+
+        red_net = Landmark.create(
+            name="Red Net",
+            collide=False,
+            movable=False,
+            shape=Box(length=self.goal_depth, width=self.goal_size),
+            color=FootballColor.GRAY,
+        )
+        world = world.add_landmark(red_net)
+
+        return world
+
+    def init_traj_pts(self, world: FootballWorld):
+        traj_points = {"Red": {}, "Blue": {}}
+        if self.ai_red_agents:
+            for i, agent in enumerate(world.red_agents):
+                traj_points["Red"][agent.name] = []
+                for j in range(self.n_traj_points):
+                    pointj = Landmark.create(
+                        name="Red {agent} Trajectory {pt}".format(agent=i, pt=j),
+                        collide=False,
+                        movable=False,
+                        shape=Sphere(radius=0.01),
+                        color=Color.GRAY,
+                    )
+                    world = world.add_landmark(pointj)
+                    traj_points["Red"][agent.name].append(len(world.landmarks) - 1)
+
+        if self.ai_blue_agents:
+            for i, agent in enumerate(world.blue_agents):
+                traj_points["Blue"][agent.name] = []
+                for j in range(self.n_traj_points):
+                    pointj = Landmark.create(
+                        name="Blue {agent} Trajectory {pt}".format(agent=i, pt=j),
+                        collide=False,
+                        movable=False,
+                        shape=Sphere(radius=0.01),
+                        color=Color.GRAY,
+                    )
+                    world = world.add_landmark(pointj)
+                    traj_points["Blue"][agent.name].append(len(world.landmarks) - 1)
+        world = world.replace(traj_points=traj_points)
+        return world
+
+    @eqx.filter_jit
+    def reset_world_at(self, PRNG_key: Array, env_index: int | None = None):
+        print("starting reset_world_at")
+        PRNG_key, subkey = jax.random.split(PRNG_key)
+        self = self.reset_agents(subkey, env_index)
+        self = self.reset_ball(env_index)
+        self = self.reset_walls(env_index)
+        self = self.reset_goals(env_index)
+        self = self.reset_controllers(env_index)
+        _done = jnp.where(
+            env_index is None,
+            jnp.zeros_like(self._done, dtype=jnp.bool_),
+            self._done.at[env_index].set(False),
+        )
+        self = self.replace(_done=_done)
+        self = self.replace(reset=True)
+        print("ending reset_world_at")
+        return self
 
     @eqx.filter_jit
     def reset_agents(self, PRNG_key: Array, env_index: int | None = None):
@@ -1873,78 +2135,6 @@ class Scenario(BaseScenario[FootballWorld]):
             self = self.replace(red_agents=red_agents)
         return self
 
-    def _spawn_formation(
-        self,
-        PRNG_key: Array,
-        agents: list["FootballAgent"],
-        blue: bool,
-        env_index: int | None,
-    ):
-        PRNG_key, subkey = jax.random.split(PRNG_key)
-        if self.randomise_formation_indices:
-            order = jax.random.permutation(subkey, len(agents)).tolist()
-            agents = [agents[i] for i in order]
-        agent_index = 0
-        endpoint = -(self.pitch_length / 2 + self.goal_depth) * (1 if blue else -1)
-        for x in jnp.linspace(
-            0, endpoint, len(agents) // self.formation_agents_per_column + 3
-        ):
-            if agent_index >= len(agents):
-                break
-            if x == 0 or x == endpoint:
-                continue
-            agents_this_column = agents[
-                agent_index : agent_index + self.formation_agents_per_column
-            ]
-            n_agents_this_column = len(agents_this_column)
-
-            for y in jnp.linspace(
-                self.pitch_width / 2,
-                -self.pitch_width / 2,
-                n_agents_this_column + 2,
-            ):
-                if y == -self.pitch_width / 2 or y == self.pitch_width / 2:
-                    continue
-                pos = jnp.asarray([x, y])
-                if env_index is None:
-                    pos = jnp.broadcast_to(
-                        pos, (self.world.batch_dim, self.world.dim_p)
-                    )
-                PRNG_key, subkey = jax.random.split(PRNG_key)
-                agents[agent_index] = agents[agent_index].set_pos(
-                    pos
-                    + (
-                        jax.random.uniform(
-                            subkey,
-                            (
-                                (self.world.dim_p,)
-                                if env_index is not None
-                                else (self.world.batch_dim, self.world.dim_p)
-                            ),
-                        )
-                        - 0.5
-                    )
-                    * self.formation_noise,
-                    batch_index=env_index,
-                )
-                agent_index += 1
-        return agents
-
-    def _get_random_spawn_position(
-        self, PRNG_key: Array, blue: bool, env_index: int | None
-    ):
-        PRNG_key, subkey = jax.random.split(PRNG_key)
-        return jax.random.uniform(
-            subkey,
-            (
-                (1, self.world.dim_p)
-                if env_index is not None
-                else (self.world.batch_dim, self.world.dim_p)
-            ),
-        ) * self._reset_agent_range + (
-            self._reset_agent_offset_blue if blue else self._reset_agent_offset_red
-        )
-
     def reset_controllers(self, env_index: int | None = None):
         red_controller = self.red_controller
         blue_controller = self.blue_controller
@@ -1960,22 +2150,6 @@ class Scenario(BaseScenario[FootballWorld]):
             red_controller=red_controller, blue_controller=blue_controller
         )
         return self
-
-    def init_ball(self, world: FootballWorld):
-        # Add Ball
-        ball = BallAgent.create(
-            name="Ball",
-            shape=Sphere(radius=self.ball_size),
-            action_script=get_ball_action_script(
-                self.agent_size, self.pitch_width, self.pitch_length, self.goal_size
-            ),
-            max_speed=self.ball_max_speed,
-            mass=self.ball_mass,
-            alpha=1,
-            color=Color.BLACK,
-        )
-        world = world.add_agent(ball)
-        return world
 
     def reset_ball(self, env_index: int | None = None):
         if not self.ai_blue_agents:
@@ -2100,168 +2274,6 @@ class Scenario(BaseScenario[FootballWorld]):
 
         return self
 
-    def get_closest_agent_to_ball(
-        self, team: list[Agent], env_index: int | None = None
-    ):
-        pos = jnp.stack(
-            [a.state.pos for a in team], axis=-2
-        )  # shape == (batch_dim, n_agents, 2)
-        ball_pos = self.ball.state.pos[..., None, :]
-        if env_index is not None:
-            pos = pos[env_index][None]
-            ball_pos = ball_pos[env_index][None]
-        dist = jnp.linalg.norm(
-            pos[:, :, None, :] - ball_pos[:, None, :, :], axis=-1
-        )  # -> (B, n, m)
-        dist = dist.squeeze(axis=-1)
-        min_dist = dist.min(axis=-1)
-        if env_index is not None:
-            min_dist = min_dist.squeeze(0)
-
-        return min_dist
-
-    def init_background(self):
-        # Add landmarks
-        background = Landmark.create(
-            name="Background",
-            collide=False,
-            movable=False,
-            shape=Box(length=self.pitch_length, width=self.pitch_width),
-            color=Color.GREEN,
-        )
-
-        centre_circle_outer = Landmark.create(
-            name="Centre Circle Outer",
-            collide=False,
-            movable=False,
-            shape=Sphere(radius=self.goal_size / 2),
-            color=Color.WHITE,
-        )
-
-        centre_circle_inner = Landmark.create(
-            name="Centre Circle Inner",
-            collide=False,
-            movable=False,
-            shape=Sphere(self.goal_size / 2 - 0.02),
-            color=Color.GREEN,
-        )
-
-        centre_line = Landmark.create(
-            name="Centre Line",
-            collide=False,
-            movable=False,
-            shape=Line(length=self.pitch_width - 2 * self.agent_size),
-            color=Color.WHITE,
-        )
-
-        right_line = Landmark.create(
-            name="Right Line",
-            collide=False,
-            movable=False,
-            shape=Line(length=self.pitch_width - 2 * self.agent_size),
-            color=Color.WHITE,
-        )
-
-        left_line = Landmark.create(
-            name="Left Line",
-            collide=False,
-            movable=False,
-            shape=Line(length=self.pitch_width - 2 * self.agent_size),
-            color=Color.WHITE,
-        )
-
-        top_line = Landmark.create(
-            name="Top Line",
-            collide=False,
-            movable=False,
-            shape=Line(length=self.pitch_length - 2 * self.agent_size),
-            color=Color.WHITE,
-        )
-
-        bottom_line = Landmark.create(
-            name="Bottom Line",
-            collide=False,
-            movable=False,
-            shape=Line(length=self.pitch_length - 2 * self.agent_size),
-            color=Color.WHITE,
-        )
-
-        background_entities = [
-            background,
-            centre_circle_outer,
-            centre_circle_inner,
-            centre_line,
-            right_line,
-            left_line,
-            top_line,
-            bottom_line,
-        ]
-        self = self.replace(background_entities=background_entities)
-        return self
-
-    def render_field(self, render: bool):
-        _render_field = render
-        left_top_wall = self.left_top_wall.is_rendering.at[:].set(render)
-        left_bottom_wall = self.left_bottom_wall.is_rendering.at[:].set(render)
-        right_top_wall = self.right_top_wall.is_rendering.at[:].set(render)
-        right_bottom_wall = self.right_bottom_wall.is_rendering.at[:].set(render)
-
-        self = self.replace(
-            _render_field=_render_field,
-            left_top_wall=left_top_wall,
-            left_bottom_wall=left_bottom_wall,
-            right_top_wall=right_top_wall,
-            right_bottom_wall=right_bottom_wall,
-        )
-        return self
-
-    def init_walls(self, world: FootballWorld):
-        right_top_wall = Landmark.create(
-            name="Right Top Wall",
-            collide=True,
-            movable=False,
-            shape=Line(
-                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
-            ),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(right_top_wall)
-
-        left_top_wall = Landmark.create(
-            name="Left Top Wall",
-            collide=True,
-            movable=False,
-            shape=Line(
-                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
-            ),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(left_top_wall)
-
-        right_bottom_wall = Landmark.create(
-            name="Right Bottom Wall",
-            collide=True,
-            movable=False,
-            shape=Line(
-                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
-            ),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(right_bottom_wall)
-
-        left_bottom_wall = Landmark.create(
-            name="Left Bottom Wall",
-            collide=True,
-            movable=False,
-            shape=Line(
-                length=self.pitch_width / 2 - self.agent_size - self.goal_size / 2,
-            ),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(left_bottom_wall)
-
-        return world
-
     def reset_walls(self, env_index: int | None = None):
         landmarks = []
         for landmark in self.world.landmarks:
@@ -2329,81 +2341,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 landmarks.append(landmark)
         self = self.replace(world=self.world.replace(landmarks=landmarks))
         return self
-
-    def init_goals(self, world: FootballWorld):
-        right_goal_back = Landmark.create(
-            name="Right Goal Back",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_size),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(right_goal_back)
-
-        left_goal_back = Landmark.create(
-            name="Left Goal Back",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_size),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(left_goal_back)
-
-        right_goal_top = Landmark.create(
-            name="Right Goal Top",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_depth),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(right_goal_top)
-
-        left_goal_top = Landmark.create(
-            name="Left Goal Top",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_depth),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(left_goal_top)
-
-        right_goal_bottom = Landmark.create(
-            name="Right Goal Bottom",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_depth),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(right_goal_bottom)
-
-        left_goal_bottom = Landmark.create(
-            name="Left Goal Bottom",
-            collide=True,
-            movable=False,
-            shape=Line(length=self.goal_depth),
-            color=Color.WHITE,
-        )
-        world = world.add_landmark(left_goal_bottom)
-
-        blue_net = Landmark.create(
-            name="Blue Net",
-            collide=False,
-            movable=False,
-            shape=Box(length=self.goal_depth, width=self.goal_size),
-            color=FootballColor.GRAY,
-        )
-        world = world.add_landmark(blue_net)
-
-        red_net = Landmark.create(
-            name="Red Net",
-            collide=False,
-            movable=False,
-            shape=Box(length=self.goal_depth, width=self.goal_size),
-            color=FootballColor.GRAY,
-        )
-        world = world.add_landmark(red_net)
-
-        return world
 
     def reset_goals(self, env_index: int | None = None):
         landmarks = []
@@ -2521,37 +2458,113 @@ class Scenario(BaseScenario[FootballWorld]):
         self = self.replace(world=self.world.replace(landmarks=landmarks))
         return self
 
-    def init_traj_pts(self, world: FootballWorld):
-        traj_points = {"Red": {}, "Blue": {}}
-        if self.ai_red_agents:
-            for i, agent in enumerate(world.red_agents):
-                traj_points["Red"][agent.name] = []
-                for j in range(self.n_traj_points):
-                    pointj = Landmark.create(
-                        name="Red {agent} Trajectory {pt}".format(agent=i, pt=j),
-                        collide=False,
-                        movable=False,
-                        shape=Sphere(radius=0.01),
-                        color=Color.GRAY,
-                    )
-                    world = world.add_landmark(pointj)
-                    traj_points["Red"][agent.name].append(len(world.landmarks) - 1)
+    def _spawn_formation(
+        self,
+        PRNG_key: Array,
+        agents: list["FootballAgent"],
+        blue: bool,
+        env_index: int | None,
+    ):
+        PRNG_key, subkey = jax.random.split(PRNG_key)
+        if self.randomise_formation_indices:
+            order = jax.random.permutation(subkey, len(agents)).tolist()
+            agents = [agents[i] for i in order]
+        agent_index = 0
+        endpoint = -(self.pitch_length / 2 + self.goal_depth) * (1 if blue else -1)
+        for x in jnp.linspace(
+            0, endpoint, len(agents) // self.formation_agents_per_column + 3
+        ):
+            if agent_index >= len(agents):
+                break
+            if x == 0 or x == endpoint:
+                continue
+            agents_this_column = agents[
+                agent_index : agent_index + self.formation_agents_per_column
+            ]
+            n_agents_this_column = len(agents_this_column)
 
-        if self.ai_blue_agents:
-            for i, agent in enumerate(world.blue_agents):
-                traj_points["Blue"][agent.name] = []
-                for j in range(self.n_traj_points):
-                    pointj = Landmark.create(
-                        name="Blue {agent} Trajectory {pt}".format(agent=i, pt=j),
-                        collide=False,
-                        movable=False,
-                        shape=Sphere(radius=0.01),
-                        color=Color.GRAY,
+            for y in jnp.linspace(
+                self.pitch_width / 2,
+                -self.pitch_width / 2,
+                n_agents_this_column + 2,
+            ):
+                if y == -self.pitch_width / 2 or y == self.pitch_width / 2:
+                    continue
+                pos = jnp.asarray([x, y])
+                if env_index is None:
+                    pos = jnp.broadcast_to(
+                        pos, (self.world.batch_dim, self.world.dim_p)
                     )
-                    world = world.add_landmark(pointj)
-                    traj_points["Blue"][agent.name].append(len(world.landmarks) - 1)
-        world = world.replace(traj_points=traj_points)
-        return world
+                PRNG_key, subkey = jax.random.split(PRNG_key)
+                agents[agent_index] = agents[agent_index].set_pos(
+                    pos
+                    + (
+                        jax.random.uniform(
+                            subkey,
+                            (
+                                (self.world.dim_p,)
+                                if env_index is not None
+                                else (self.world.batch_dim, self.world.dim_p)
+                            ),
+                        )
+                        - 0.5
+                    )
+                    * self.formation_noise,
+                    batch_index=env_index,
+                )
+                agent_index += 1
+        return agents
+
+    def _get_random_spawn_position(
+        self, PRNG_key: Array, blue: bool, env_index: int | None
+    ):
+        PRNG_key, subkey = jax.random.split(PRNG_key)
+        return jax.random.uniform(
+            subkey,
+            (
+                (1, self.world.dim_p)
+                if env_index is not None
+                else (self.world.batch_dim, self.world.dim_p)
+            ),
+        ) * self._reset_agent_range + (
+            self._reset_agent_offset_blue if blue else self._reset_agent_offset_red
+        )
+
+    def get_closest_agent_to_ball(
+        self, team: list[Agent], env_index: int | None = None
+    ):
+        pos = jnp.stack(
+            [a.state.pos for a in team], axis=-2
+        )  # shape == (batch_dim, n_agents, 2)
+        ball_pos = self.ball.state.pos[..., None, :]
+        if env_index is not None:
+            pos = pos[env_index][None]
+            ball_pos = ball_pos[env_index][None]
+        dist = jnp.linalg.norm(
+            pos[:, :, None, :] - ball_pos[:, None, :, :], axis=-1
+        )  # -> (B, n, m)
+        dist = dist.squeeze(axis=-1)
+        min_dist = dist.min(axis=-1)
+        if env_index is not None:
+            min_dist = min_dist.squeeze(0)
+
+        return min_dist
+
+    def render_field(self, render: bool):
+        _render_field = render
+        left_top_wall = self.left_top_wall.is_rendering.at[:].set(render)
+        left_bottom_wall = self.left_bottom_wall.is_rendering.at[:].set(render)
+        right_top_wall = self.right_top_wall.is_rendering.at[:].set(render)
+        right_bottom_wall = self.right_bottom_wall.is_rendering.at[:].set(render)
+
+        self = self.replace(
+            _render_field=_render_field,
+            left_top_wall=left_top_wall,
+            left_bottom_wall=left_bottom_wall,
+            right_top_wall=right_top_wall,
+            right_bottom_wall=right_bottom_wall,
+        )
+        return self
 
     @eqx.filter_jit
     def process_action(self, agent: "FootballAgent"):

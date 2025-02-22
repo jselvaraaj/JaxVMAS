@@ -1,6 +1,8 @@
 import pytest
 
-from jaxvmas.scenario.football import BallAgent, FootballWorld, Scenario
+from jaxvmas.scenario.football import BallAgent, FootballAgent, FootballWorld, Scenario
+from jaxvmas.simulator.dynamics.holonomic import Holonomic
+from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 
 
 @pytest.fixture
@@ -61,3 +63,86 @@ def test_make_world(scenario: Scenario):
         for agent in world.blue_agents:
             assert agent.name in world.traj_points["Blue"]
             assert len(world.traj_points["Blue"][agent.name]) == scenario.n_traj_points
+
+
+def test_init_agents_default(scenario: Scenario):
+    """Test default agent initialization without special configurations"""
+    world = scenario.make_world()
+
+    # Test basic properties for blue agents
+    for i, agent in enumerate(world.blue_agents):
+        assert agent.name == f"agent_blue_{i}"
+        assert agent.shape.radius == scenario.agent_size
+        assert agent.color == scenario.blue_color
+        assert agent.max_speed == scenario.max_speed
+        assert agent.alpha == 1
+        assert agent.is_scripted_agent is False  # No AI by default
+
+    # Test basic properties for red agents
+    for i, agent in enumerate(world.red_agents):
+        assert agent.name == f"agent_red_{i}"
+        assert agent.shape.radius == scenario.agent_size
+        assert agent.color == scenario.red_color
+        assert agent.max_speed == scenario.max_speed
+        assert agent.alpha == 1
+        assert agent.is_scripted_agent is True  # No AI by default
+
+
+def test_init_agents_physically_different(scenario: Scenario):
+    """Test initialization with physically different agents"""
+    scenario = scenario.replace(physically_different=True, n_blue_agents=5)
+    world = scenario.make_world()
+
+    # Test attackers (agents 0 and 1)
+    for i in range(2):
+        agent = world.blue_agents[i]
+        assert agent.shape.radius == pytest.approx(scenario.agent_size - 0.005)
+        assert agent.max_speed == pytest.approx(scenario.max_speed + 0.05)
+
+    # Test defenders (agents 2 and 3)
+    for i in range(2, 4):
+        agent = world.blue_agents[i]
+        assert agent.shape.radius == scenario.agent_size
+        assert agent.max_speed == scenario.max_speed
+
+    # Test goalkeeper (agent 4)
+    goalkeeper = world.blue_agents[4]
+    assert goalkeeper.shape.radius == pytest.approx(scenario.agent_size + 0.01)
+    assert goalkeeper.max_speed == pytest.approx(scenario.max_speed - 0.1)
+
+
+def test_init_agents_with_shooting(scenario: Scenario):
+    """Test agent initialization with shooting enabled"""
+    scenario = scenario.replace(enable_shooting=True)
+    world = scenario.make_world()
+
+    for agent in world.red_agents:
+        if isinstance(agent, FootballAgent):  # Exclude ball
+            assert agent.action_size == 2  # 2 movement + 1 rotation + 1 shooting
+            assert isinstance(agent.dynamics, Holonomic)
+            assert len(agent.action.u_multiplier) == 2
+
+    for agent in world.blue_agents:
+        if isinstance(agent, FootballAgent):  # Exclude ball
+            assert agent.action_size == 4  # 2 movement + 1 rotation + 1 shooting
+            assert isinstance(agent.dynamics, HolonomicWithRotation)
+            assert len(agent.action.u_multiplier) == 4
+
+
+def test_init_agents_with_ai(scenario: Scenario):
+    """Test agent initialization with AI enabled"""
+    scenario = scenario.replace(ai_blue_agents=True, ai_red_agents=True)
+    world = scenario.make_world()
+
+    for agent in world.agents:
+        if isinstance(agent, FootballAgent):
+            assert agent.is_scripted_agent is True
+
+
+def test_init_agents_invalid_config():
+    """Test invalid configuration handling"""
+    scenario = Scenario.create(batch_dim=2)
+    scenario = scenario.replace(physically_different=True, n_blue_agents=4)
+
+    with pytest.raises(AssertionError, match="Physical differences only for 5 agents"):
+        scenario.make_world()
