@@ -11,15 +11,13 @@ from jaxtyping import Array
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
-from jaxvmas.simulator.core.core import (
+from jaxvmas.simulator.core import (
     Agent,
-    Box,
     Entity,
     Landmark,
-    Line,
-    Sphere,
     World,
 )
+from jaxvmas.simulator.core.shapes import Box, Line, Sphere
 from jaxvmas.simulator.dynamics.holonomic import Holonomic
 from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 from jaxvmas.simulator.rendering import Geom
@@ -1562,7 +1560,8 @@ class Scenario(BaseScenario[FootballWorld]):
     def traj_points(self):
         return self.world.traj_points
 
-    def make_world(self, batch_dim: int, **kwargs) -> "FootballWorld":
+    def make_world(self, **kwargs) -> "FootballWorld":
+        batch_dim = self.batch_dim
         world = self.init_world(batch_dim)
         world = self.init_agents(world)
         world = self.init_ball(world)
@@ -1668,7 +1667,6 @@ class Scenario(BaseScenario[FootballWorld]):
                     )
 
                 agent = FootballAgent.create(
-                    batch_dim=self.batch_dim,
                     name=f"agent_blue_{i}",
                     shape=Sphere(radius=self.agent_size),
                     action_script=(action_script if self.ai_blue_agents else None),
@@ -1691,8 +1689,6 @@ class Scenario(BaseScenario[FootballWorld]):
                     action_size=2 if not self.enable_shooting else 4,
                     color=self.blue_color,
                     alpha=1,
-                    dim_p=world.dim_p,
-                    dim_c=world.dim_c,
                 )
                 world = world.add_agent(agent)
 
@@ -1704,7 +1700,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 return AgentPolicy.run(world.red_controller, PRNG_key, agent, world)
 
             agent = FootballAgent.create(
-                batch_dim=self.batch_dim,
                 name=f"agent_red_{i}",
                 shape=Sphere(radius=self.agent_size),
                 action_script=(action_script if self.ai_red_agents else None),
@@ -1727,8 +1722,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 action_size=2 if not self.enable_shooting or self.ai_red_agents else 4,
                 color=self.red_color,
                 alpha=1,
-                dim_p=world.dim_p,
-                dim_c=world.dim_c,
             )
             world = world.add_agent(agent)
 
@@ -1743,7 +1736,6 @@ class Scenario(BaseScenario[FootballWorld]):
             attacker_speed_increase = 0.05
             attacker_radius_decrease = -0.005
             return FootballAgent.create(
-                batch_dim=self.batch_dim,
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size + attacker_radius_decrease),
                 action_script=(
@@ -1769,14 +1761,11 @@ class Scenario(BaseScenario[FootballWorld]):
                 action_size=2 if not self.enable_shooting else 4,
                 color=self.blue_color,
                 alpha=1,
-                dim_p=self.world.dim_p,
-                dim_c=self.world.dim_c,
             )
 
         def defender(i):
 
             return FootballAgent.create(
-                batch_dim=self.batch_dim,
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size),
                 action_script=(
@@ -1799,8 +1788,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 action_size=2 if not self.enable_shooting else 4,
                 color=self.blue_color,
                 alpha=1,
-                dim_p=self.world.dim_p,
-                dim_c=self.world.dim_c,
             )
 
         def goal_keeper(i):
@@ -1809,7 +1796,6 @@ class Scenario(BaseScenario[FootballWorld]):
             goalie_speed_decrease = -0.1
             goalie_multiplier_decrease = -0.05
             return FootballAgent.create(
-                batch_dim=self.batch_dim,
                 name=f"agent_blue_{i}",
                 shape=Sphere(radius=self.agent_size + goalie_radius_increase),
                 action_script=(
@@ -1835,8 +1821,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 action_size=2 if not self.enable_shooting else 4,
                 color=self.blue_color,
                 alpha=1,
-                dim_p=self.world.dim_p,
-                dim_c=self.world.dim_c,
             )
 
         agents = [attacker(0), attacker(1), defender(2), defender(3), goal_keeper(4)]
@@ -1980,7 +1964,6 @@ class Scenario(BaseScenario[FootballWorld]):
     def init_ball(self, world: FootballWorld):
         # Add Ball
         ball = BallAgent.create(
-            batch_dim=self.batch_dim,
             name="Ball",
             shape=Sphere(radius=self.ball_size),
             action_script=get_ball_action_script(
@@ -1990,8 +1973,6 @@ class Scenario(BaseScenario[FootballWorld]):
             mass=self.ball_mass,
             alpha=1,
             color=Color.BLACK,
-            dim_p=world.dim_p,
-            dim_c=world.dim_c,
         )
         world = world.add_agent(ball)
         return world
@@ -2142,7 +2123,6 @@ class Scenario(BaseScenario[FootballWorld]):
     def init_background(self):
         # Add landmarks
         background = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Background",
             collide=False,
             movable=False,
@@ -2151,7 +2131,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         centre_circle_outer = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Centre Circle Outer",
             collide=False,
             movable=False,
@@ -2160,7 +2139,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         centre_circle_inner = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Centre Circle Inner",
             collide=False,
             movable=False,
@@ -2169,7 +2147,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         centre_line = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Centre Line",
             collide=False,
             movable=False,
@@ -2178,7 +2155,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         right_line = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Line",
             collide=False,
             movable=False,
@@ -2187,7 +2163,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         left_line = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Line",
             collide=False,
             movable=False,
@@ -2196,7 +2171,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         top_line = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Top Line",
             collide=False,
             movable=False,
@@ -2205,7 +2179,6 @@ class Scenario(BaseScenario[FootballWorld]):
         )
 
         bottom_line = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Bottom Line",
             collide=False,
             movable=False,
@@ -2244,7 +2217,6 @@ class Scenario(BaseScenario[FootballWorld]):
 
     def init_walls(self, world: FootballWorld):
         right_top_wall = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Top Wall",
             collide=True,
             movable=False,
@@ -2256,7 +2228,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(right_top_wall)
 
         left_top_wall = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Top Wall",
             collide=True,
             movable=False,
@@ -2268,7 +2239,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(left_top_wall)
 
         right_bottom_wall = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Bottom Wall",
             collide=True,
             movable=False,
@@ -2280,7 +2250,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(right_bottom_wall)
 
         left_bottom_wall = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Bottom Wall",
             collide=True,
             movable=False,
@@ -2363,7 +2332,6 @@ class Scenario(BaseScenario[FootballWorld]):
 
     def init_goals(self, world: FootballWorld):
         right_goal_back = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Goal Back",
             collide=True,
             movable=False,
@@ -2373,7 +2341,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(right_goal_back)
 
         left_goal_back = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Goal Back",
             collide=True,
             movable=False,
@@ -2383,7 +2350,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(left_goal_back)
 
         right_goal_top = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Goal Top",
             collide=True,
             movable=False,
@@ -2393,7 +2359,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(right_goal_top)
 
         left_goal_top = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Goal Top",
             collide=True,
             movable=False,
@@ -2403,7 +2368,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(left_goal_top)
 
         right_goal_bottom = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Right Goal Bottom",
             collide=True,
             movable=False,
@@ -2413,7 +2377,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(right_goal_bottom)
 
         left_goal_bottom = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Left Goal Bottom",
             collide=True,
             movable=False,
@@ -2423,7 +2386,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(left_goal_bottom)
 
         blue_net = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Blue Net",
             collide=False,
             movable=False,
@@ -2433,7 +2395,6 @@ class Scenario(BaseScenario[FootballWorld]):
         world = world.add_landmark(blue_net)
 
         red_net = Landmark.create(
-            batch_dim=self.batch_dim,
             name="Red Net",
             collide=False,
             movable=False,
@@ -2567,7 +2528,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 traj_points["Red"][agent.name] = []
                 for j in range(self.n_traj_points):
                     pointj = Landmark.create(
-                        batch_dim=self.batch_dim,
                         name="Red {agent} Trajectory {pt}".format(agent=i, pt=j),
                         collide=False,
                         movable=False,
@@ -2582,7 +2542,6 @@ class Scenario(BaseScenario[FootballWorld]):
                 traj_points["Blue"][agent.name] = []
                 for j in range(self.n_traj_points):
                     pointj = Landmark.create(
-                        batch_dim=self.batch_dim,
                         name="Blue {agent} Trajectory {pt}".format(agent=i, pt=j),
                         collide=False,
                         movable=False,
@@ -3325,40 +3284,64 @@ def get_ball_action_script(
 
 
 class FootballAgent(Agent):
-    ball_within_angle: Array
-    ball_within_range: Array
-    shoot_force: Array
+    ball_within_angle: Array | None
+    ball_within_range: Array | None
+    shoot_force: Array | None
 
     @classmethod
-    def create(cls, batch_dim: int, **kwargs):
-        base_agent = Agent.create(batch_dim=batch_dim, **kwargs)
+    def create(cls, **kwargs):
+        base_agent = Agent.create(**kwargs)
         return cls(
             **dataclass_to_dict_first_layer(base_agent),
+            ball_within_angle=None,
+            ball_within_range=None,
+            shoot_force=None,
+        )
+
+    def _spawn(self, id: int, batch_dim: int, dim_c: int, dim_p: int):
+        self = self.replace(
             ball_within_angle=jnp.zeros(batch_dim, dtype=jnp.bool_),
             ball_within_range=jnp.zeros(batch_dim, dtype=jnp.bool_),
             shoot_force=jnp.zeros((batch_dim, 2), dtype=jnp.float32),
         )
+        return super(FootballAgent, self)._spawn(
+            id=id, batch_dim=batch_dim, dim_c=dim_c, dim_p=dim_p
+        )
 
 
 class BallAgent(Agent):
-    pos_rew_blue: Array
-    pos_rew_red: Array
-    pos_rew_agent_blue: Array
-    pos_rew_agent_red: Array
-    kicking_action: Array
-    pos_shaping_blue: Array
-    pos_shaping_red: Array
-    pos_shaping_agent_blue: Array
-    pos_shaping_agent_red: Array
-    # distance_to_goal_blue: Array
-    # distance_to_goal_red: Array
+    pos_rew_blue: Array | None
+    pos_rew_red: Array | None
+    pos_rew_agent_blue: Array | None
+    pos_rew_agent_red: Array | None
+    kicking_action: Array | None
+    pos_shaping_blue: Array | None
+    pos_shaping_red: Array | None
+    pos_shaping_agent_blue: Array | None
+    pos_shaping_agent_red: Array | None
+    # distance_to_goal_blue: Array | None
+    # distance_to_goal_red: Array | None
 
     @classmethod
-    def create(cls, batch_dim: int, **kwargs):
-        dim_p = kwargs.pop("dim_p")
-        base_agent = Agent.create(batch_dim=batch_dim, dim_p=dim_p, **kwargs)
+    def create(cls, **kwargs):
+        base_agent = Agent.create(**kwargs)
         return cls(
             **dataclass_to_dict_first_layer(base_agent),
+            pos_rew_blue=None,
+            pos_rew_red=None,
+            pos_rew_agent_blue=None,
+            pos_rew_agent_red=None,
+            kicking_action=None,
+            pos_shaping_blue=None,
+            pos_shaping_red=None,
+            pos_shaping_agent_blue=None,
+            pos_shaping_agent_red=None,
+            # distance_to_goal_blue=None,
+            # distance_to_goal_red=None,
+        )
+
+    def _spawn(self, id: int, batch_dim: int, dim_c: int, dim_p: int):
+        self = self.replace(
             pos_rew_blue=jnp.zeros(batch_dim),
             pos_rew_red=jnp.zeros(batch_dim),
             pos_rew_agent_blue=jnp.zeros(batch_dim),
@@ -3370,6 +3353,9 @@ class BallAgent(Agent):
             pos_shaping_agent_red=jnp.zeros(batch_dim),
             # distance_to_goal_blue=jnp.zeros(batch_dim),
             # distance_to_goal_red=jnp.zeros(batch_dim),
+        )
+        return super(BallAgent, self)._spawn(
+            id=id, batch_dim=batch_dim, dim_c=dim_c, dim_p=dim_p
         )
 
 

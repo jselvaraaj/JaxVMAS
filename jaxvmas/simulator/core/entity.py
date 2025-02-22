@@ -40,7 +40,7 @@ class Entity(JaxVectorizedObject):
     shape: Shape
     v_range: float
     max_speed: float
-    color: Color
+    color: Enum
     is_joint: bool
     drag: float
     linear_friction: float
