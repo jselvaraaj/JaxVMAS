@@ -1,0 +1,36 @@
+name: Coverage Badge
+
+on:
+  workflow_run:
+    workflows: ["PyTest Ubuntu", "PyTest MacOS"]
+    types:
+      - completed
+
+jobs:
+  generate-badge:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Coverage Report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+
+      - name: Create badges directory
+        run: mkdir -p badges
+
+      - name: Generate Coverage Badge
+        uses: jaywcjlove/coverage-badges-cli@main
+        with:
+          style: flat
+          source: coverage.json
+          output: badges/coverage.svg
+
+      - name: Commit Coverage Badge
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Update coverage badge"
+          file_pattern: badges/coverage.svg
