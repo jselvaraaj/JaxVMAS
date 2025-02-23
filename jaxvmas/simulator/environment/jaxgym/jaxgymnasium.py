@@ -20,12 +20,6 @@ from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.environment.jaxgym.base import BaseJaxGymWrapper, EnvData
 from jaxvmas.simulator.utils import INFO_TYPE, OBS_TYPE
 
-# Type definitions for dimensions
-batch = "batch"  # Batch dimension for vectorized environments
-agents = "agents"  # Number of agents dimension
-action = "action"  # Action dimension
-obs = "obs"  # Observation dimension
-
 
 @jaxtyped(typechecker=beartype)
 class JaxGymnasiumWrapper(BaseJaxGymWrapper):

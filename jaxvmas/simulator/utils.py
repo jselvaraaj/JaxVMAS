@@ -36,13 +36,19 @@ TORQUE_CONSTRAINT_FORCE = 1.0
 DRAG = 0.25
 LINEAR_FRICTION = 0.0
 ANGULAR_FRICTION = 0.0
-batch_dim = "batch_dim"
+batch_axis_dim = "batch_axis_dim"
 
-AGENT_ARRAY_TYPE = (
-    Float[Array, f"{batch_dim} ..."]
-    | Int[Array, f"{batch_dim} ..."]
-    | Bool[Array, f"{batch_dim} ..."]
+
+AGENT_UNBATCHED_ARRAY_TYPE = (
+    Float[Array, "..."] | Int[Array, "..."] | Bool[Array, "..."]
 )
+AGENT_BATCHED_ARRAY_TYPE = (
+    Float[Array, f"{batch_axis_dim} ..."]
+    | Int[Array, f"{batch_axis_dim} ..."]
+    | Bool[Array, f"{batch_axis_dim} ..."]
+)
+
+AGENT_ARRAY_TYPE = AGENT_UNBATCHED_ARRAY_TYPE
 
 AGENT_OBS_TYPE = AGENT_ARRAY_TYPE | dict[str, AGENT_ARRAY_TYPE]
 AGENT_INFO_TYPE = dict[str, AGENT_ARRAY_TYPE]
@@ -55,7 +61,10 @@ INFO_TYPE = list[AGENT_INFO_TYPE] | dict[str, AGENT_INFO_TYPE]
 REWARD_TYPE = list[AGENT_REWARD_TYPE] | dict[str, AGENT_REWARD_TYPE]
 DONE_TYPE = AGENT_ARRAY_TYPE
 
-SCENARIO_PYTREE_TYPE = OBS_TYPE | REWARD_TYPE | DONE_TYPE | INFO_TYPE
+SCENARIO_PYTREE_TYPE = (
+    list[OBS_TYPE | REWARD_TYPE | DONE_TYPE | INFO_TYPE]
+    | dict[str, OBS_TYPE | REWARD_TYPE | DONE_TYPE | INFO_TYPE]
+)
 
 
 class Color(Enum):
@@ -144,18 +153,15 @@ def extract_nested_with_index(data: Array | dict[str, Array], index: Int[Scalar,
 
 
 # Define dimension variables for type annotations
-batch = "batch"
 dim_p = "dim_p"
-vector = "vector"
-angle = "angle"
 
 
 class JaxUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def clamp_with_norm(
-        tensor: Float[Array, f"{batch} {vector}"], max_norm: Float[Scalar, ""]
-    ) -> Float[Array, f"{batch} {vector}"]:
+        tensor: Float[Array, f"{batch_axis_dim} ..."], max_norm: Float[Scalar, ""]
+    ) -> Float[Array, f"{batch_axis_dim} ..."]:
         norm = jnp.linalg.norm(tensor, axis=-1, keepdims=True)
         normalized = (tensor / norm) * max_norm
         return jnp.where(norm > max_norm, normalized, tensor)
@@ -163,8 +169,9 @@ class JaxUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def rotate_vector(
-        vector: Float[Array, f"{batch} {vector}"], angle: Float[Array, f"{batch}"]
-    ) -> Float[Array, f"{batch} {vector}"]:
+        vector: Float[Array, f"{batch_axis_dim} ..."],
+        angle: Float[Array, f"{batch_axis_dim} ..."],
+    ) -> Float[Array, f"{batch_axis_dim} ..."]:
         if len(angle.shape) == len(vector.shape):
             angle = angle.squeeze(-1)
 
@@ -184,9 +191,9 @@ class JaxUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def cross(
-        vector_a: Float[Array, f"{batch} {vector}"],
-        vector_b: Float[Array, f"{batch} {vector}"],
-    ) -> Float[Array, f"{batch} 1"]:
+        vector_a: Float[Array, f"{batch_axis_dim} ..."],
+        vector_b: Float[Array, f"{batch_axis_dim} ..."],
+    ) -> Float[Array, f"{batch_axis_dim} ..."]:
         return (
             vector_a[..., X] * vector_b[..., Y] - vector_a[..., Y] * vector_b[..., X]
         )[..., None]
@@ -194,14 +201,15 @@ class JaxUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def compute_torque(
-        f: Float[Array, f"{batch} {vector}"], r: Float[Array, f"{batch} {vector}"]
-    ) -> Float[Array, f"{batch} 1"]:
+        f: Float[Array, f"{batch_axis_dim} ..."],
+        r: Float[Array, f"{batch_axis_dim} ..."],
+    ) -> Float[Array, f"{batch_axis_dim} ..."]:
         return JaxUtils.cross(r, f)
 
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def where_from_index(
-        env_index: Int[Array, f"{batch_dim}"] | Int[Array, ""],
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
         new_value: Array,
         old_value: Array,
     ):
@@ -292,7 +300,7 @@ class ScenarioUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def find_random_pos_for_entity(
-        occupied_positions: Float[Array, f"{batch} n {dim_p}"],
+        occupied_positions: Float[Array, f"{batch_axis_dim} n {dim_p}"],
         env_index: Int[Scalar, ""] | None,
         world,
         min_dist_between_entities: float,
@@ -300,7 +308,7 @@ class ScenarioUtils:
         y_bounds: tuple[int, int],
         disable_warn: bool = False,
         key: jax.Array = jax.random.PRNGKey(0),
-    ) -> Float[Array, f"{batch} 1 {dim_p}"]:
+    ) -> Float[Array, f"{batch_axis_dim} 1 {dim_p}"]:
         batch_size = world.batch_dim if env_index is None else 1
         key, subkey = jax.random.split(key)
 

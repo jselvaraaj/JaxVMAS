@@ -67,7 +67,7 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
 
     @jaxtyped(typechecker=beartype)
     def step(
-        self, PRNG_key: PRNGKeyArray, action: BATCHED_ARRAY_TYPE
+        self, PRNG_key: PRNGKeyArray, action: list[Array]
     ) -> tuple["JaxGymnasiumVecWrapper", EnvData]:
         """Take a step in the environment.
 

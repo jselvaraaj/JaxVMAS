@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable
-from jaxtyping import Array, Float, Int, PRNGKeyArray, jaxtyped
+from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, jaxtyped
 
 import jaxvmas
 from jaxvmas.simulator.core.agent import Agent
@@ -34,10 +34,21 @@ from jaxvmas.simulator.environment.jaxgym.spaces import (
 )
 from jaxvmas.simulator.rendering import Image, TextLine, Viewer
 from jaxvmas.simulator.scenario import BaseScenario
-from jaxvmas.simulator.utils import AGENT_OBS_TYPE, ALPHABET, SCENARIO_PYTREE_TYPE, X, Y
+from jaxvmas.simulator.utils import (
+    AGENT_OBS_TYPE,
+    ALPHABET,
+    OBS_TYPE,
+    SCENARIO_PYTREE_TYPE,
+    X,
+    Y,
+)
 
 batch_axis_dim = "batch_axis_dim"
-BATCHED_ARRAY_TYPE = Float[Array, f"{batch_axis_dim} ..."]
+BATCHED_ARRAY_TYPE = (
+    Float[Array, f"{batch_axis_dim} ..."]
+    | Int[Array, f"{batch_axis_dim} ..."]
+    | Bool[Array, f"{batch_axis_dim} ..."]
+)
 
 
 class RenderObject:
@@ -287,7 +298,7 @@ class Environment(JaxVectorizedObject):
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
-    ) -> tuple["Environment", list[SCENARIO_PYTREE_TYPE]]:
+    ) -> tuple["Environment", SCENARIO_PYTREE_TYPE]:
         """
         Resets the environment in a vectorized way
         Returns observations for all envs and agents
@@ -304,7 +315,7 @@ class Environment(JaxVectorizedObject):
             get_rewards=False,
             get_dones=return_dones,
         )
-        return self, result
+        return self, result[0] if result and len(result) == 1 else result
 
     @jaxtyped(typechecker=beartype)
     def reset_at(
@@ -314,7 +325,7 @@ class Environment(JaxVectorizedObject):
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
-    ) -> tuple["Environment", list[SCENARIO_PYTREE_TYPE]]:
+    ) -> tuple["Environment", SCENARIO_PYTREE_TYPE]:
         """
         Resets the environment at index
         Returns observations for all agents in that environment
@@ -330,7 +341,7 @@ class Environment(JaxVectorizedObject):
             get_dones=return_dones,
         )
 
-        return self, result
+        return self, result[0] if result and len(result) == 1 else result
 
     @jaxtyped(typechecker=beartype)
     def get_from_scenario(
@@ -340,7 +351,7 @@ class Environment(JaxVectorizedObject):
         get_infos: bool,
         get_dones: bool,
         dict_agent_names: bool | None = None,
-    ) -> list[SCENARIO_PYTREE_TYPE]:
+    ) -> SCENARIO_PYTREE_TYPE:
         if not get_infos and not get_dones and not get_rewards and not get_observations:
             return
         if dict_agent_names is None:
@@ -394,7 +405,7 @@ class Environment(JaxVectorizedObject):
         self,
         PRNG_key: PRNGKeyArray,
         actions: list[BATCHED_ARRAY_TYPE] | dict[str, BATCHED_ARRAY_TYPE],
-    ) -> tuple["Environment", list[SCENARIO_PYTREE_TYPE]]:
+    ) -> tuple["Environment", SCENARIO_PYTREE_TYPE]:
         """Performs a vectorized step on all sub environments using `actions`.
         Args:
             actions: Is a list on len 'self.n_agents' of which each element is a torch.Tensor of shape
@@ -437,14 +448,13 @@ class Environment(JaxVectorizedObject):
             ), f"Expecting actions for {self.n_agents}, got {len(actions_dict)} actions"
             actions = _actions
 
-        assert isinstance(
-            actions, list[Float[Array, "..."]]
-        ), "Actions must be a list of jax arrays"
         assert (
             len(actions) == self.n_agents
         ), f"Expecting actions for {self.n_agents}, got {len(actions)} actions"
         for i in range(len(actions)):
             action = actions[i]
+            if not isinstance(action, Array):
+                action = jnp.asarray(action, dtype=jnp.float32)
             if len(action.shape) == 1:
                 action = action[..., None]
             assert (
@@ -505,7 +515,7 @@ class Environment(JaxVectorizedObject):
             return terminated + truncated
 
     @jaxtyped(typechecker=beartype)
-    def get_action_space(self) -> tuple[Space, ...] | dict[str, Space]:
+    def get_action_space(self) -> Tuple | Dict:
         if not self.dict_spaces:
             return Tuple([self.get_agent_action_space(agent) for agent in self.agents])
         else:
@@ -518,8 +528,8 @@ class Environment(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def get_observation_space(
-        self, observations: list[AGENT_OBS_TYPE] | dict[str, AGENT_OBS_TYPE]
-    ) -> tuple[Space] | dict[str, Space]:
+        self, observations: OBS_TYPE | list[OBS_TYPE] | dict[str, OBS_TYPE]
+    ) -> Tuple | Dict:
         if not self.dict_spaces:
             return Tuple(
                 [
@@ -582,7 +592,9 @@ class Environment(JaxVectorizedObject):
             )
 
     @jaxtyped(typechecker=beartype)
-    def get_agent_observation_space(self, agent: Agent, obs: AGENT_OBS_TYPE) -> Space:
+    def get_agent_observation_space(
+        self, agent: Agent, obs: AGENT_OBS_TYPE | OBS_TYPE
+    ) -> Space:
         if isinstance(obs, Array):
             return Box(
                 low=-jnp.float32("inf"),

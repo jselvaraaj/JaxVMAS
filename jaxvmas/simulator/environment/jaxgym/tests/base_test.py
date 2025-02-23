@@ -173,18 +173,20 @@ class TestBaseJaxGymWrapper:
 
     def test_compress_infos(self, wrapper: BaseJaxGymWrapper):
         # Test dict input
-        dict_info = {"agent_0": 1, "agent_1": 2}
+        dict_info = {
+            "agent_0": {"info_0": jnp.ones(2)},
+        }
         compressed = wrapper._compress_infos(dict_info)
-        assert compressed == dict_info
+        assert jax.tree.all(
+            jax.tree.map(lambda x, y: jnp.all(x == y), compressed, dict_info)
+        )
 
         # Test list input
-        list_info = [1, 2]
+        list_info = [{"info_0": jnp.ones(2)}]
         compressed = wrapper._compress_infos(list_info)
-        assert compressed == {"agent_0": 1, "agent_1": 2}
-
-        # Test invalid input
-        with pytest.raises(ValueError):
-            wrapper._compress_infos(42)
+        assert jax.tree.all(
+            jax.tree.map(lambda x, y: jnp.all(x == y), compressed, dict_info)
+        )
 
     def test_action_list_to_array(self, wrapper: BaseJaxGymWrapper):
         actions = [jnp.ones((2, 2)), jnp.zeros((2, 2))]

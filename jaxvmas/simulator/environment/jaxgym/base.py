@@ -24,6 +24,8 @@ from jaxvmas.simulator.utils import (
 
 batch_axis_dim = "batch_axis_dim"
 BATCHED_ARRAY_TYPE = Float[Array, f"{batch_axis_dim} ..."]
+UNBATCHED_ARRAY_TYPE = Float[Array, "..."]
+
 
 agents_dim = "agents"  # Number of agents dimension
 action_dim = "action"  # Action dimension
@@ -74,7 +76,13 @@ class BaseJaxGymWrapper(PyTreeNode):
     def _convert_output(
         self,
         data: AGENT_OBS_TYPE | AGENT_INFO_TYPE | AGENT_REWARD_TYPE | BATCHED_ARRAY_TYPE,
-    ) -> AGENT_OBS_TYPE | AGENT_INFO_TYPE | AGENT_REWARD_TYPE | BATCHED_ARRAY_TYPE:
+    ) -> (
+        AGENT_OBS_TYPE
+        | AGENT_INFO_TYPE
+        | AGENT_REWARD_TYPE
+        | BATCHED_ARRAY_TYPE
+        | UNBATCHED_ARRAY_TYPE
+    ):
         """Convert output data based on vectorization settings.
 
         Args:
@@ -83,15 +91,13 @@ class BaseJaxGymWrapper(PyTreeNode):
         """
         if not self.vectorized:
             # Take first item if not vectorized
-            data = extract_nested_with_index(data, index=0)
+            data = extract_nested_with_index(data, index=jnp.asarray(0))
         return data
 
     @jaxtyped(typechecker=beartype)
     def _compress_infos(
         self,
-        infos: (
-            list[AGENT_INFO_TYPE] | dict[str, AGENT_INFO_TYPE] | tuple[AGENT_INFO_TYPE]
-        ),
+        infos: INFO_TYPE,
     ) -> dict[str, AGENT_INFO_TYPE]:
         """Compress info data into a dictionary format.
 

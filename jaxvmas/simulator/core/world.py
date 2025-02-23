@@ -762,7 +762,7 @@ class World(JaxVectorizedObject):
             force = agent.state.force
             force = jnp.where(
                 ~jnp.isnan(agent.max_f),
-                JaxUtils.clamp_with_norm(force, agent.max_f),
+                JaxUtils.clamp_with_norm(force, jnp.asarray(agent.max_f)),
                 force,
             )
             force = jnp.where(
@@ -781,7 +781,7 @@ class World(JaxVectorizedObject):
             torque = agent.state.torque
             torque = jnp.where(
                 ~jnp.isnan(agent.max_t),
-                JaxUtils.clamp_with_norm(torque, agent.max_t),
+                JaxUtils.clamp_with_norm(torque, jnp.asarray(agent.max_t)),
                 torque,
             )
             torque = jnp.where(
@@ -1759,7 +1759,7 @@ class World(JaxVectorizedObject):
             vel = vel + accel * self.sub_dt
             vel = jnp.where(
                 ~jnp.isnan(entity.max_speed),
-                JaxUtils.clamp_with_norm(vel, entity.max_speed),
+                JaxUtils.clamp_with_norm(vel, jnp.asarray(entity.max_speed)),
                 vel,
             )
             vel = jnp.where(

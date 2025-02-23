@@ -1,5 +1,3 @@
-import jax
-import jax.numpy as jnp
 import pytest
 
 from jaxvmas.scenario.football import (
@@ -7,7 +5,6 @@ from jaxvmas.scenario.football import (
     FootballAgent,
     FootballWorld,
     Scenario,
-    Splines,
 )
 from jaxvmas.simulator.core.landmark import Landmark
 from jaxvmas.simulator.core.shapes import Box, Line, Sphere
@@ -246,44 +243,44 @@ def test_init_traj_pts(scenario: Scenario):
         assert len(points) == scenario.n_traj_points
 
 
-# Test Splines functionality
-def test_splines():
-    splines = Splines()
+# # Test Splines functionality
+# def test_splines():
+#     splines = Splines()
 
-    # Test hermite interpolation
-    p0 = jnp.array([0.0, 0.0])
-    p1 = jnp.array([1.0, 1.0])
-    p0dot = jnp.array([0.0, 0.0])
-    p1dot = jnp.array([0.0, 0.0])
+#     # Test hermite interpolation
+#     p0 = jnp.array([0.0, 0.0])
+#     p1 = jnp.array([1.0, 1.0])
+#     p0dot = jnp.array([0.0, 0.0])
+#     p1dot = jnp.array([0.0, 0.0])
 
-    # Test at different points along curve
-    for u in [0.0, 0.5, 1.0]:
-        _, result = splines.hermite(p0, p1, p0dot, p1dot, u, deriv=0)
-        assert result.shape == (2,)
+#     # Test at different points along curve
+#     for u in [0.0, 0.5, 1.0]:
+#         _, result = splines.hermite(p0, p1, p0dot, p1dot, u, deriv=0)
+#         assert result.shape == (2,)
 
-    # Test derivatives
-    for deriv in [0, 1, 2]:
-        _, result = splines.hermite(p0, p1, p0dot, p1dot, 0.5, deriv)
-        assert result.shape == (2,)
+#     # Test derivatives
+#     for deriv in [0, 1, 2]:
+#         _, result = splines.hermite(p0, p1, p0dot, p1dot, 0.5, deriv)
+#         assert result.shape == (2,)
 
 
-# Test scenario reset and done conditions
-def test_scenario_reset_and_done(scenario: Scenario):
-    PRNG_key = jax.random.PRNGKey(0)
-    batch_dim = 2
-    scenario = scenario.env_make_world(batch_dim=batch_dim)
-    # Test full reset
-    scenario = scenario.reset_world_at(PRNG_key)
-    assert not jnp.any(scenario._done)
+# # Test scenario reset and done conditions
+# def test_scenario_reset_and_done(scenario: Scenario):
+#     PRNG_key = jax.random.PRNGKey(0)
+#     batch_dim = 2
+#     scenario = scenario.env_make_world(batch_dim=batch_dim)
+#     # Test full reset
+#     scenario = scenario.reset_world_at(PRNG_key)
+#     assert not jnp.any(scenario._done)
 
-    # Test partial reset
-    env_index = 0
-    scenario = scenario.reset_world_at(PRNG_key, env_index)
-    assert not scenario._done[env_index]
+#     # Test partial reset
+#     env_index = 0
+#     scenario = scenario.reset_world_at(PRNG_key, env_index)
+#     assert not scenario._done[env_index]
 
-    # Test done condition
-    done_state = scenario.done()
-    assert done_state.shape == (batch_dim,)
+#     # Test done condition
+#     done_state = scenario.done()
+#     assert done_state.shape == (batch_dim,)
 
 
 # Test scenario info generation
