@@ -2,7 +2,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.scenario.football import (
+    AgentPolicy,
     BallAgent,
     FootballAgent,
     FootballWorld,
@@ -524,3 +526,201 @@ def test_spawn_formation_pitch_boundaries():
     assert jnp.all(
         positions[:, 0] >= -(scenario.pitch_length / 2 + scenario.goal_depth)
     ), "Agents beyond goal line"
+
+
+def test_reset_ball():
+    """Test ball reset functionality including position shaping and distances."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+        ai_blue_agents=False,
+        ai_red_agents=False,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=2,
+    )
+
+    # Test full batch reset
+    PRNG_key = jax.random.PRNGKey(0)
+    scenario = scenario.reset_world_at(
+        PRNG_key
+    )  # This will properly initialize everything including min_agent_dist_to_ball
+
+    # Verify ball state and shaping values are properly initialized
+    assert hasattr(scenario.ball, "pos_shaping_blue"), "Ball missing pos_shaping_blue"
+    assert hasattr(scenario.ball, "pos_shaping_red"), "Ball missing pos_shaping_red"
+    assert (
+        scenario.ball.pos_shaping_blue.shape[0] == 2
+    ), "Incorrect batch shape for pos_shaping_blue"
+    assert (
+        scenario.ball.pos_shaping_red.shape[0] == 2
+    ), "Incorrect batch shape for pos_shaping_red"
+
+    # Test single environment reset
+    env_index = jnp.array([1])
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    scenario = scenario.reset_world_at(subkey, env_index)
+
+    # Verify ball state is properly set for the specific environment
+    assert not jnp.any(
+        jnp.isnan(scenario.ball.pos_shaping_blue[env_index])
+    ), "Invalid shaping value for blue"
+    assert not jnp.any(
+        jnp.isnan(scenario.ball.pos_shaping_red[env_index])
+    ), "Invalid shaping value for red"
+    assert not jnp.any(
+        jnp.isnan(scenario.ball.state.pos[env_index])
+    ), "Invalid ball position"
+    assert not jnp.any(
+        jnp.isnan(scenario.ball.state.vel[env_index])
+    ), "Invalid ball velocity"
+
+
+def test_reset_walls():
+    """Test wall reset positioning and rotation."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=1,
+    )
+
+    scenario = scenario.reset_walls()
+
+    # Verify wall positions
+    for landmark in scenario.world.landmarks:
+        if "Wall" in landmark.name:
+            assert not jnp.any(jnp.isnan(landmark.state.pos)), "Invalid wall position"
+            # Check walls are perpendicular
+            assert jnp.allclose(
+                landmark.state.rot % jnp.pi,
+                jnp.array([jnp.pi / 2]),
+            ), "Incorrect wall rotation"
+
+
+def test_reset_goals():
+    """Test goal reset positioning and geometry."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=1,
+    )
+
+    scenario = scenario.reset_goals()
+
+    # Verify goal symmetry
+    left_goal = None
+    right_goal = None
+    for landmark in scenario.world.landmarks:
+        if landmark.name == "Left Goal Back":
+            left_goal = landmark
+        elif landmark.name == "Right Goal Back":
+            right_goal = landmark
+
+    assert jnp.allclose(
+        jnp.abs(left_goal.state.pos[0, 0]), jnp.abs(right_goal.state.pos[0, 0])
+    ), "Goals not symmetrically placed"
+
+
+def test_get_random_spawn_position():
+    """Test random spawn position generation."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=3,
+    )
+
+    # Test batched spawn
+    PRNG_key = jax.random.PRNGKey(0)
+    pos_blue = scenario._get_random_spawn_position(
+        blue=True, env_index=None, PRNG_key=PRNG_key
+    )
+    assert pos_blue.shape == (3, 2), "Incorrect batch shape"
+    assert jnp.all(pos_blue[:, 0] < 0), "Blue team spawned on wrong side"
+
+    # Test single env spawn
+    env_index = jnp.array([1])
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    pos_red = scenario._get_random_spawn_position(
+        blue=False, env_index=env_index, PRNG_key=subkey
+    )
+    assert pos_red.shape == (1, 2), "Incorrect single env shape"
+    assert jnp.all(pos_red[:, 0] > 0), "Red team spawned on wrong side"
+
+
+def test_reset_agents():
+    """Test agent reset with both formation and random spawning."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+        spawn_in_formation=True,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=2,
+    )
+
+    # Test formation spawn
+    PRNG_key = jax.random.PRNGKey(0)
+    scenario = scenario.reset_agents(PRNG_key)
+    blue_positions = jnp.stack([a.state.pos[0] for a in scenario.blue_agents])
+    assert jnp.all(blue_positions[:, 0] < 0), "Blue agents on wrong side"
+
+    # Test random spawn
+    scenario = scenario.replace(spawn_in_formation=False)
+    env_index = jnp.array([1])
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    scenario = scenario.reset_agents(subkey, env_index)
+    for agent in scenario.red_agents:
+        assert not jnp.any(jnp.isnan(agent.state.pos[1])), "Invalid agent position"
+        assert jnp.allclose(
+            agent.state.rot[1], jnp.array([jnp.pi])
+        ), "Incorrect red agent rotation"
+
+
+def test_reset_controllers():
+    """Test controller reset and initialization."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+        ai_red_agents=False,
+        ai_blue_agents=False,
+    )
+    scenario = scenario.env_make_world(
+        batch_dim=1,
+    )
+
+    # Test with no controllers
+    scenario = scenario.reset_controllers()
+    assert scenario.red_controller is None, "Controller should be None"
+
+    # Test with mock controller
+    class MockController(AgentPolicy):
+        _initialised: bool
+        _reset_called: bool
+
+        @classmethod
+        def create(cls, temp_name: str):
+            agent_policy = AgentPolicy.create(temp_name)
+            return cls(
+                **dataclass_to_dict_first_layer(agent_policy),
+                _initialised=False,
+                _reset_called=False,
+            )
+
+        def init(self, world):
+            self = self.replace(_initialised=True)
+            return self
+
+        def reset(self, env_index, *args, **kwargs):
+            self = self.replace(_reset_called=True)
+            return self
+
+    scenario = scenario.replace(red_controller=MockController.create("red_controller"))
+    scenario = scenario.reset_controllers()
+    assert scenario.red_controller._initialised, "Controller not initialized"
+    assert scenario.red_controller._reset_called, "Controller reset not called"

@@ -2242,11 +2242,9 @@ class Scenario(BaseScenario[FootballWorld]):
                     min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
                 )
             else:
-                min_agent_dist_to_ball_blue = jnp.where(
-                    env_index[:, None],
-                    min_agent_dist_to_ball_blue,
-                    min_agent_dist_to_ball_blue,
-                )
+                min_agent_dist_to_ball_blue = self.min_agent_dist_to_ball_blue.at[
+                    env_index
+                ].set(min_agent_dist_to_ball_blue)
                 self = self.replace(
                     min_agent_dist_to_ball_blue=min_agent_dist_to_ball_blue
                 )
@@ -2259,11 +2257,9 @@ class Scenario(BaseScenario[FootballWorld]):
                     min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
                 )
             else:
-                min_agent_dist_to_ball_red = jnp.where(
-                    env_index[:, None],
-                    min_agent_dist_to_ball_red,
-                    min_agent_dist_to_ball_red,
-                )
+                min_agent_dist_to_ball_red = self.min_agent_dist_to_ball_red.at[
+                    env_index
+                ].set(min_agent_dist_to_ball_red)
                 self = self.replace(
                     min_agent_dist_to_ball_red=min_agent_dist_to_ball_red
                 )
@@ -2325,8 +2321,12 @@ class Scenario(BaseScenario[FootballWorld]):
                     * self.pos_shaping_factor_agent_ball
                 )
                 ball = ball.replace(
-                    pos_shaping_blue=pos_shaping_blue,
-                    pos_shaping_agent_blue=pos_shaping_agent_blue,
+                    pos_shaping_blue=self.ball.pos_shaping_blue.at[env_index].set(
+                        pos_shaping_blue
+                    ),
+                    pos_shaping_agent_blue=self.ball.pos_shaping_agent_blue.at[
+                        env_index
+                    ].set(pos_shaping_agent_blue),
                 )
                 self = self.replace(ball=ball)
             if not self.ai_red_agents:
@@ -2343,8 +2343,12 @@ class Scenario(BaseScenario[FootballWorld]):
                     * self.pos_shaping_factor_agent_ball
                 )
                 ball = ball.replace(
-                    pos_shaping_red=pos_shaping_red,
-                    pos_shaping_agent_red=pos_shaping_agent_red,
+                    pos_shaping_red=self.ball.pos_shaping_red.at[env_index].set(
+                        pos_shaping_red
+                    ),
+                    pos_shaping_agent_red=self.ball.pos_shaping_agent_red.at[
+                        env_index
+                    ].set(pos_shaping_agent_red),
                 )
                 self = self.replace(ball=ball)
             if self.enable_shooting:
@@ -2637,7 +2641,7 @@ class Scenario(BaseScenario[FootballWorld]):
             subkey,
             (
                 (1, self.world.dim_p)
-                if env_index is None
+                if env_index is not None
                 else (self.world.batch_dim, self.world.dim_p)
             ),
         ) * self._reset_agent_range + (
