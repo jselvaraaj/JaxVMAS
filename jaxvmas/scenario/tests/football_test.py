@@ -1194,7 +1194,7 @@ def test_agent_policy_run():
 
     # Test normal operation
     PRNG_key, subkey = jax.random.split(PRNG_key)
-    policy, agent, world = policy.run(subkey, agent, scenario.world)
+    agent, world = policy.run(subkey, agent, scenario.world)
     scenario = scenario.replace(world=world)
     assert agent.action.u is not None, "Action should be set"
     assert agent.action.u.shape == (1, agent.action_size), "Incorrect action shape"
@@ -1202,7 +1202,7 @@ def test_agent_policy_run():
     # Test disabled policy
     policy = policy.disable()
     PRNG_key, subkey = jax.random.split(PRNG_key)
-    policy, agent, world = policy.run(subkey, agent, scenario.world)
+    agent, world = policy.run(subkey, agent, scenario.world)
     scenario = scenario.replace(world=world)
     assert jnp.allclose(
         agent.action.u, jnp.zeros_like(agent.action.u)

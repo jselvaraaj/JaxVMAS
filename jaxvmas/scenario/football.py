@@ -396,7 +396,7 @@ class AgentPolicy(PyTreeNode):
         PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
-    ) -> tuple["AgentPolicy", "FootballAgent", "FootballWorld"]:
+    ) -> tuple["FootballAgent", "FootballWorld"]:
         print("Compiling for agent", agent.name)
         if not self.disabled:
             if "0" in agent.name:
@@ -423,7 +423,7 @@ class AgentPolicy(PyTreeNode):
             blue_controller=self if self.team_name == "Blue" else world.blue_controller,
         )
 
-        return self, agent, world
+        return agent, world
 
     @jaxtyped(typechecker=beartype)
     def dribble_to_goal(
