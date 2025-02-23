@@ -170,7 +170,7 @@ class TestAgent:
             state=agent.state.replace(force=jnp.array([[1.0, 1.0], [1.0, 1.0]]))
         )
 
-        geoms = agent.render(env_index=jnp.asarray(0))
+        geoms = agent.render(env_index=0)
         assert len(geoms) > 1  # Should have shape + force line
 
     def test_invalid_discrete_actions(self):

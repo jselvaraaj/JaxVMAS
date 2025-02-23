@@ -1,3 +1,5 @@
+import jax
+import jax.numpy as jnp
 import pytest
 
 from jaxvmas.scenario.football import (
@@ -5,6 +7,7 @@ from jaxvmas.scenario.football import (
     FootballAgent,
     FootballWorld,
     Scenario,
+    Splines,
 )
 from jaxvmas.simulator.core.landmark import Landmark
 from jaxvmas.simulator.core.shapes import Box, Line, Sphere
@@ -243,44 +246,44 @@ def test_init_traj_pts(scenario: Scenario):
         assert len(points) == scenario.n_traj_points
 
 
-# # Test Splines functionality
-# def test_splines():
-#     splines = Splines()
+# Test Splines functionality
+def test_splines():
+    splines = Splines()
 
-#     # Test hermite interpolation
-#     p0 = jnp.array([0.0, 0.0])
-#     p1 = jnp.array([1.0, 1.0])
-#     p0dot = jnp.array([0.0, 0.0])
-#     p1dot = jnp.array([0.0, 0.0])
+    # Test hermite interpolation
+    p0 = jnp.array([[0.0, 0.0]])  # Shape: [1, 2]
+    p1 = jnp.array([[1.0, 1.0]])  # Shape: [1, 2]
+    p0dot = jnp.array([[0.0, 0.0]])  # Shape: [1, 2]
+    p1dot = jnp.array([[0.0, 0.0]])  # Shape: [1, 2]
 
-#     # Test at different points along curve
-#     for u in [0.0, 0.5, 1.0]:
-#         _, result = splines.hermite(p0, p1, p0dot, p1dot, u, deriv=0)
-#         assert result.shape == (2,)
+    # Test at different points along curve
+    for u in [0.0, 0.5, 1.0]:
+        _, result = splines.hermite(p0, p1, p0dot, p1dot, u, deriv=0)
+        assert result.shape == (1, 2)
 
-#     # Test derivatives
-#     for deriv in [0, 1, 2]:
-#         _, result = splines.hermite(p0, p1, p0dot, p1dot, 0.5, deriv)
-#         assert result.shape == (2,)
+    # Test derivatives
+    for deriv in [0, 1, 2]:
+        _, result = splines.hermite(p0, p1, p0dot, p1dot, 0.5, deriv)
+        assert result.shape == (1, 2)
 
 
-# # Test scenario reset and done conditions
-# def test_scenario_reset_and_done(scenario: Scenario):
-#     PRNG_key = jax.random.PRNGKey(0)
-#     batch_dim = 2
-#     scenario = scenario.env_make_world(batch_dim=batch_dim)
-#     # Test full reset
-#     scenario = scenario.reset_world_at(PRNG_key)
-#     assert not jnp.any(scenario._done)
+# Test scenario reset and done conditions
+def test_scenario_reset_and_done(scenario: Scenario):
+    PRNG_key = jax.random.PRNGKey(0)
+    batch_dim = 2
+    scenario = scenario.env_make_world(batch_dim=batch_dim)
+    # Test full reset
+    scenario = scenario.reset_world_at(PRNG_key)
+    assert not jnp.any(scenario._done)
 
-#     # Test partial reset
-#     env_index = jnp.asarray(0)
-#     scenario = scenario.reset_world_at(PRNG_key, env_index)
-#     assert not scenario._done[env_index]
+    # Test partial reset
+    env_index = jnp.asarray([0])
+    scenario = scenario.reset_world_at(PRNG_key, env_index)
+    assert not scenario._done[env_index]
 
-#     # Test done condition
-#     done_state = scenario.done()
-#     assert done_state.shape == (batch_dim,)
+    # Test done condition
+    done_state = scenario.done()
+    assert done_state.shape == (batch_dim,)
 
 
 # Test scenario info generation
@@ -300,3 +303,224 @@ def test_scenario_info(
     # Test ball touching detection
     if "touching_ball" in info:
         assert isinstance(info["touching_ball"], bool)
+
+
+def test_spawn_formation_basic_positioning():
+    """
+    Test basic formation spawning with fixed positions (no randomization).
+    Verifies that agents are placed in correct columns and rows.
+    """
+
+    scenario = Scenario.create(
+        n_blue_agents=6,
+        n_red_agents=6,
+        formation_agents_per_column=2,
+        randomise_formation_indices=False,
+        formation_noise=0.0,
+    )
+    scenario = scenario.make_world(batch_dim=1)
+    agents = [
+        FootballAgent.create(
+            name=f"agent_{i}",
+            shape=Sphere(radius=0.05),
+            movable=True,
+            rotatable=True,
+            collide=True,
+            max_speed=1.0,
+        )
+        for i in range(6)
+    ]
+    for agent in agents:
+        world = scenario.world.add_agent(agent)
+        scenario = scenario.replace(world=world)
+    agents = scenario.world.agents[-6:]
+    # Test blue team formation (left side)
+    PRNG_key = jax.random.PRNGKey(0)
+    agents = scenario._spawn_formation(
+        agents=agents, blue=True, env_index=None, PRNG_key=PRNG_key
+    )
+
+    # Check if agents are in correct columns
+    positions = jnp.stack([a.state.pos[0] for a in agents])
+    unique_x = jnp.unique(positions[:, 0])
+    assert len(unique_x) == 3, "Should have 3 columns of agents"
+
+    # Check if all positions are on the left side (blue team)
+    assert jnp.all(positions[:, 0] < 0), "Blue team should be on left side"
+
+
+def test_spawn_formation_with_randomization():
+    """
+    Test that formation spawning with randomization produces different
+    but valid formations.
+    """
+    scenario = Scenario.create(
+        n_blue_agents=6,
+        n_red_agents=6,
+        formation_agents_per_column=2,
+        randomise_formation_indices=True,
+        formation_noise=0.0,
+    )
+    scenario = scenario.make_world(batch_dim=1)
+    new_agents = [
+        FootballAgent.create(
+            name=f"agent_{i}",
+            shape=Sphere(radius=0.05),
+            movable=True,
+            rotatable=True,
+            collide=True,
+            max_speed=1.0,
+        )
+        for i in range(6)
+    ]
+    for agent in new_agents:
+        world = scenario.world.add_agent(agent)
+        scenario = scenario.replace(world=world)
+    world_agents = scenario.world.agents[-6:]
+    # Spawn formation twice
+    PRNG_key = jax.random.PRNGKey(0)
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    agents = scenario._spawn_formation(
+        agents=world_agents, blue=True, env_index=None, PRNG_key=subkey
+    )
+    positions1 = jnp.stack([a.state.pos[0] for a in agents])
+
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    agents = scenario._spawn_formation(
+        agents=world_agents, blue=True, env_index=None, PRNG_key=subkey
+    )
+    positions2 = jnp.stack([a.state.pos[0] for a in agents])
+
+    # Positions should be different due to randomization
+    assert not jnp.allclose(positions1, positions2)
+
+
+def test_spawn_formation_noise():
+    """
+    Test that formation noise creates variation in positions while
+    maintaining overall formation structure.
+    """
+    noise = 0.5
+    scenario = Scenario.create(
+        n_blue_agents=6,
+        n_red_agents=6,
+        formation_agents_per_column=2,
+        randomise_formation_indices=False,
+        formation_noise=noise,
+    )
+    scenario = scenario.make_world(batch_dim=1)
+    new_agents = [
+        FootballAgent.create(
+            name=f"agent_{i}",
+            shape=Sphere(radius=0.05),
+            movable=True,
+            rotatable=True,
+            collide=True,
+            max_speed=1.0,
+        )
+        for i in range(6)
+    ]
+    for agent in new_agents:
+        world = scenario.world.add_agent(agent)
+        scenario = scenario.replace(world=world)
+    world_agents = scenario.world.agents[-6:]
+    # Spawn formation twice with same configuration
+    PRNG_key = jax.random.PRNGKey(0)
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    agents = scenario._spawn_formation(
+        agents=world_agents, blue=True, env_index=None, PRNG_key=subkey
+    )
+    positions1 = jnp.stack([a.state.pos[0] for a in agents])
+
+    # second formation
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    agents = scenario._spawn_formation(
+        agents=world_agents, blue=True, env_index=None, PRNG_key=subkey
+    )
+    positions2 = jnp.stack([a.state.pos[0] for a in agents])
+
+    # Positions should be different but within noise bounds
+    diff = jnp.abs(positions1 - positions2)
+    assert jnp.all(diff <= noise), "Position differences exceed noise bound"
+
+
+def test_spawn_formation_single_env():
+    """
+    Test formation spawning for a single environment index in a batched world.
+    """
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+        formation_agents_per_column=2,
+        randomise_formation_indices=False,
+        formation_noise=0.0,
+    )
+    scenario = scenario.make_world(batch_dim=3)
+    agents = [
+        FootballAgent.create(
+            name=f"agent_{i}",
+            shape=Sphere(radius=0.05),
+            movable=True,
+            rotatable=True,
+            collide=True,
+            max_speed=1.0,
+        )
+        for i in range(4)
+    ]
+    for agent in agents:
+        world = scenario.world.add_agent(agent)
+        scenario = scenario.replace(world=world)
+    agents = scenario.world.agents[-4:]
+    env_index = jnp.asarray([1])
+    PRNG_key = jax.random.PRNGKey(0)
+    agents = scenario._spawn_formation(
+        agents=agents, blue=False, env_index=env_index, PRNG_key=PRNG_key
+    )
+
+    # Check if positions are set only for specified environment
+    for agent in agents:
+        assert not jnp.any(
+            jnp.isnan(agent.state.pos[env_index])
+        ), "Position not set for env_index"
+
+
+def test_spawn_formation_pitch_boundaries():
+    """
+    Test that spawned formations respect pitch boundaries.
+    """
+    scenario = Scenario.create(
+        n_blue_agents=6,
+        n_red_agents=6,
+        formation_agents_per_column=2,
+        randomise_formation_indices=False,
+        formation_noise=0.0,
+    )
+    scenario = scenario.make_world(batch_dim=1)
+    agents = [
+        FootballAgent.create(
+            name=f"agent_{i}",
+            shape=Sphere(radius=0.05),
+            movable=True,
+            rotatable=True,
+            collide=True,
+            max_speed=1.0,
+        )
+        for i in range(6)
+    ]
+    for agent in agents:
+        world = scenario.world.add_agent(agent)
+        scenario = scenario.replace(world=world)
+    agents = scenario.world.agents[-6:]
+    PRNG_key = jax.random.PRNGKey(0)
+    agents = scenario._spawn_formation(
+        agents=agents, blue=True, env_index=None, PRNG_key=PRNG_key
+    )
+    positions = jnp.stack([a.state.pos[0] for a in agents])
+
+    # Check if all positions are within pitch boundaries
+    assert jnp.all(
+        jnp.abs(positions[:, 1]) <= scenario.pitch_width / 2
+    ), "Agents outside pitch width"
+    assert jnp.all(
+        positions[:, 0] >= -(scenario.pitch_length / 2 + scenario.goal_depth)
+    ), "Agents beyond goal line"
