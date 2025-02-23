@@ -9,7 +9,8 @@ from jaxvmas.equinox_utils import (
 )
 
 # Dimension type variables (add near top of file)
-batch_axis_dim = "batch"
+batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 pos_dim = "dim_p"
 comm_dim = "dim_c"
 action_size_dim = "action_size"
@@ -35,7 +36,7 @@ class JaxVectorizedObject(PyTreeNode):
         assert self.batch_dim is not None, msg
 
     @jaxtyped(typechecker=beartype)
-    def _check_batch_index(self, batch_index: Int[Array, ""]):
+    def _check_batch_index(self, batch_index: Int[Array, f"{env_index_dim}"] | None):
         # cannot check dynamic batch index
         pass
         # if isinstance(batch_index, float):

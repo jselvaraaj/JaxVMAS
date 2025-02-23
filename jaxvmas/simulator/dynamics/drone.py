@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from jaxvmas.simulator.dynamics.common import Dynamics
 from jaxvmas.simulator.utils import JaxUtils, X, Y
 
-batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 @jaxtyped(typechecker=beartype)
@@ -60,7 +60,7 @@ class Drone(Dynamics):
     @jaxtyped(typechecker=beartype)
     def reset(
         self,
-        index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "Drone":
         # Drone state: phi(roll), theta (pitch), psi (yaw),
         #              p (roll_rate), q (pitch_rate), r (yaw_rate),

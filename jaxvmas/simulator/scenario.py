@@ -7,7 +7,7 @@ import chex
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Int, PRNGKeyArray, Scalar, jaxtyped
+from jaxtyping import Array, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.core.agent import Agent
@@ -23,6 +23,7 @@ from jaxvmas.simulator.utils import (
 
 # Type dimensions
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 pos = "pos"
 comm = "comm"
 action = "action"
@@ -101,7 +102,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     def env_reset_world_at(
         self,
         PRNG_key: PRNGKeyArray,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Scalar, ""],
+        env_index: Int[Array, f"{env_index_dim}"] | None,
     ) -> "BaseScenario":
         # Do not override
         self = self.replace(world=self.world.reset(env_index))
@@ -145,7 +146,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     def reset_world_at(
         self,
         PRNG_key: PRNGKeyArray,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+        env_index: Int[Array, f"{env_index_dim}"] | None,
     ) -> "BaseScenario":
         """Resets the world at the specified env_index.
 
@@ -227,7 +228,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     @jaxtyped(typechecker=beartype)
     def extra_render(
         self,
-        env_index: Int[Scalar, ""],
+        env_index: int,
     ) -> list[Geom]:
         """
         This function facilitates additional user/scenario-level rendering for a specific environment index.

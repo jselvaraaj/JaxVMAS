@@ -156,7 +156,7 @@ def test_init_agents_with_ai(scenario: Scenario):
 
 def test_init_agents_invalid_config():
     """Test invalid configuration handling"""
-    scenario = Scenario.create(batch_dim=2)
+    scenario = Scenario.create()
     scenario = scenario.replace(physically_different=True, n_blue_agents=4)
 
     with pytest.raises(AssertionError, match="Physical differences only for 5 agents"):
@@ -274,7 +274,7 @@ def test_init_traj_pts(scenario: Scenario):
 #     assert not jnp.any(scenario._done)
 
 #     # Test partial reset
-#     env_index = 0
+#     env_index = jnp.asarray(0)
 #     scenario = scenario.reset_world_at(PRNG_key, env_index)
 #     assert not scenario._done[env_index]
 

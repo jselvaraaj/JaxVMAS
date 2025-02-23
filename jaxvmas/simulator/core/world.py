@@ -41,6 +41,7 @@ from jaxvmas.simulator.utils import (
     Y,
 )
 
+env_index_dim = "env_index_dim"
 batch_axis_dim = "batch_axis_dim"
 
 
@@ -217,7 +218,7 @@ class World(JaxVectorizedObject):
     @jaxtyped(typechecker=beartype)
     def reset(
         self,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         entities: list[Entity] = []
         for e in self.entities:
@@ -421,7 +422,7 @@ class World(JaxVectorizedObject):
         self,
         entity: Entity,
         test_point_pos: Array,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         self._check_batch_index(env_index)
 
@@ -450,7 +451,7 @@ class World(JaxVectorizedObject):
             return_value = distance - LINE_MIN_DIST
         else:
             raise RuntimeError("Distance not computable for given entity")
-        if env_index != -1:
+        if env_index is not None:
             return_value = return_value[env_index]
         return return_value
 
@@ -459,7 +460,7 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
@@ -550,7 +551,7 @@ class World(JaxVectorizedObject):
         self,
         entity_a: Entity,
         entity_b: Entity,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         a_shape = entity_a.shape
         b_shape = entity_b.shape
@@ -611,7 +612,7 @@ class World(JaxVectorizedObject):
             )
         else:
             raise RuntimeError("Overlap not computable for give entities")
-        if env_index != -1:
+        if env_index is not None:
             return_value = return_value[env_index]
         return return_value
 

@@ -60,7 +60,7 @@ class TestDroneDynamics:
         assert jnp.all(reset_dynamics.drone_state == 0)
 
         # Test reset with index
-        reset_dynamics_index = basic_dynamics.reset(index=jnp.asarray(0))
+        reset_dynamics_index = basic_dynamics.reset(index=jnp.asarray([0]))
         assert isinstance(reset_dynamics_index, Drone)
 
         # Test reset with array index

@@ -37,6 +37,7 @@ DRAG = 0.25
 LINEAR_FRICTION = 0.0
 ANGULAR_FRICTION = 0.0
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 AGENT_UNBATCHED_ARRAY_TYPE = (
@@ -209,7 +210,7 @@ class JaxUtils:
     @staticmethod
     @jaxtyped(typechecker=beartype)
     def where_from_index(
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+        env_index: Int[Array, f"{env_index_dim}"] | None,
         new_value: Array,
         old_value: Array,
     ):
@@ -241,15 +242,19 @@ class JaxUtils:
         batch_size = old_value.shape[0]
         assert new_value.shape[0] == batch_size
 
-        reset_index = jnp.where(
-            jnp.isscalar(env_index),
-            jnp.where(
-                env_index == -1,
-                jnp.full((batch_size,), True, dtype=jnp.bool),
-                jnp.full((batch_size,), False, dtype=jnp.bool).at[env_index].set(True),
-            ),
-            env_index,
-        )
+        if env_index is None:
+            reset_index = jnp.full((batch_size,), True, dtype=jnp.bool)
+        else:
+            if env_index.ndim == 0:
+                reset_index = jnp.full((batch_size,), False, dtype=jnp.bool)
+                reset_index = reset_index.at[env_index].set(True)
+            elif env_index.ndim <= batch_size:
+                reset_index = jnp.full((batch_size,), False, dtype=jnp.bool)
+                reset_index = reset_index.at[env_index].set(True)
+            else:
+                raise ValueError(
+                    f"env_index has shape {env_index.shape} but must be a scalar or have shape {batch_size}"
+                )
 
         return jnp.where(
             jnp.broadcast_to(

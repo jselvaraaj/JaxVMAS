@@ -9,6 +9,7 @@ from jaxvmas.simulator.core.jax_vectorized_object import (
     action_size_dim,
     batch_axis_dim,
     comm_dim,
+    env_index_dim,
 )
 from jaxvmas.simulator.utils import (
     JaxUtils,
@@ -118,19 +119,19 @@ class Action(JaxVectorizedObject):
     @jaxtyped(typechecker=beartype)
     def _reset(
         self,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "Action":
         self.assert_is_spwaned()
         u = self.u
         u_reset = jnp.where(
-            env_index == -1,
+            env_index is None,
             jnp.zeros_like(u),
             JaxUtils.where_from_index(env_index, jnp.zeros_like(u), u),
         )
 
         c = self.c
         c_reset = jnp.where(
-            env_index == -1,
+            env_index is None,
             jnp.zeros_like(c),
             JaxUtils.where_from_index(env_index, jnp.zeros_like(c), c),
         )

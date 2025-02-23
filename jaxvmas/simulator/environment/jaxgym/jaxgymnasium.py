@@ -105,7 +105,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         # Reset environment state
         env, (obs, info) = self.env.reset_at(
             PRNG_key=PRNG_key,
-            index=jnp.asarray(0),
+            index=jnp.asarray([0]),
             return_observations=True,
             return_info=True,
         )

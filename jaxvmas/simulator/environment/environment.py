@@ -44,6 +44,7 @@ from jaxvmas.simulator.utils import (
 )
 
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 BATCHED_ARRAY_TYPE = (
     Float[Array, f"{batch_axis_dim} ..."]
     | Int[Array, f"{batch_axis_dim} ..."]
@@ -304,9 +305,7 @@ class Environment(JaxVectorizedObject):
         Returns observations for all envs and agents
         """
         # reset world
-        scenario = self.scenario.env_reset_world_at(
-            PRNG_key=PRNG_key, env_index=jnp.asarray(-1)
-        )
+        scenario = self.scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
         self = self.replace(scenario=scenario, steps=jnp.zeros(self.num_envs))
 
         result = self.get_from_scenario(
@@ -321,7 +320,7 @@ class Environment(JaxVectorizedObject):
     def reset_at(
         self,
         PRNG_key: PRNGKeyArray,
-        index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+        index: Int[Array, f"{env_index_dim}"] | None,
         return_observations: bool = True,
         return_info: bool = False,
         return_dones: bool = False,
@@ -867,7 +866,7 @@ class Environment(JaxVectorizedObject):
         self,
         render_object: RenderObject,
         mode="human",
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(0),
+        env_index: int = 0,
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         plot_position_function: Callable = None,
@@ -909,7 +908,6 @@ class Environment(JaxVectorizedObject):
         :param plot_position_function_cmap_alpha: The alpha of the cmap in case plot_position_function outputs a single value
         :return: Rgb array or None, depending on the mode
         """
-        self._check_batch_index(env_index)
         assert (
             mode in render_object.metadata["render.modes"]
         ), f"Invalid mode {mode} received, allowed modes: {render_object.metadata['render.modes']}"

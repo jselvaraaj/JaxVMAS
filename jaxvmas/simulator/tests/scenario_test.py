@@ -15,6 +15,7 @@ from jaxvmas.simulator.utils import INITIAL_VIEWER_SIZE, VIEWER_DEFAULT_ZOOM
 dim1 = "dim1"
 dim2 = "dim2"
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 class MockScenario(BaseScenario):
@@ -29,7 +30,9 @@ class MockScenario(BaseScenario):
         self = self.replace(world=world)
         return self
 
-    def reset_world_at(self, PRNG_key: Array, env_index: int | None) -> "MockScenario":
+    def reset_world_at(
+        self, PRNG_key: Array, env_index: Int[Array, f"{env_index_dim}"] | None
+    ) -> "MockScenario":
         agent = self.world.agents[0]
         if env_index is None:
             agent = agent.set_pos(jnp.ones((self.world.batch_dim, 2)))
@@ -87,15 +90,13 @@ class TestBaseScenario:
         PRNG_key = jax.random.PRNGKey(0)
         # Test reset with specific index
         scenario = scenario.env_reset_world_at(
-            PRNG_key=PRNG_key, env_index=jnp.asarray(0)
+            PRNG_key=PRNG_key, env_index=jnp.asarray([0])
         )
         assert jnp.all(scenario.world.agents[0].state.pos[0] == 1.0)
         assert not jnp.all(scenario.world.agents[0].state.pos[1] == 1.0)
 
         # Test reset all environments
-        scenario = scenario.env_reset_world_at(
-            PRNG_key=PRNG_key, env_index=jnp.asarray(-1)
-        )
+        scenario = scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=None)
         assert jnp.all(scenario.world.agents[0].state.pos == 1.0)
 
     def test_observation(self, scenario: MockScenario):
@@ -166,12 +167,12 @@ class TestBaseScenario:
         # Test jit compatibility of reset
         @eqx.filter_jit
         def reset_scenario(
-            scenario: MockScenario, PRNG_key: Array, env_index: Int[Array, ""]
+            scenario: MockScenario, PRNG_key: Array, env_index: Int[Array, ""] | None
         ):
             return scenario.env_reset_world_at(PRNG_key=PRNG_key, env_index=env_index)
 
         PRNG_key = jax.random.PRNGKey(0)
-        reset_scen = reset_scenario(scenario, PRNG_key, jnp.asarray(0))
+        reset_scen = reset_scenario(scenario, PRNG_key, jnp.asarray([0]))
         assert jnp.all(reset_scen.world.agents[0].state.pos[0] == 1.0)
 
         # Test jit compatibility of process_action

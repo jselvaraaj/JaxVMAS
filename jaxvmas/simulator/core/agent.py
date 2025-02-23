@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from jaxvmas.simulator.core.world import World
 
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 @jaxtyped(typechecker=beartype)
@@ -253,7 +254,7 @@ class Agent(Entity):
     @jaxtyped(typechecker=beartype)
     def _reset(
         self,
-        env_index: Int[Array, ""] | Int[Array, f"{batch_axis_dim}"] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "Agent":
         self = self.replace(action=self.action._reset(env_index))
         self = self.replace(dynamics=self.dynamics.reset(env_index))
@@ -261,7 +262,7 @@ class Agent(Entity):
 
     @chex.assert_max_traces(0)
     @jaxtyped(typechecker=beartype)
-    def render(self, env_index: Int[Array, ""] = jnp.asarray(0)) -> "list[Geom]":
+    def render(self, env_index: int = 0) -> "list[Geom]":
         from jaxvmas.simulator import rendering
 
         geoms = super(Agent, self).render(env_index)

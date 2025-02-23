@@ -2,7 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array
+from jaxtyping import Array, Int
 
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
@@ -13,6 +13,8 @@ from jaxvmas.simulator.core.world import (
     World,
 )
 from jaxvmas.simulator.utils import LINE_MIN_DIST
+
+env_index_dim = "env_index_dim"
 
 
 # Test that an unsupported shape triggers a RuntimeError.
@@ -81,7 +83,7 @@ class TestWorld:
         world = world_with_agent.replace(agents=[agent])
 
         # Test reset
-        world = world.reset(env_index=jnp.asarray(0))
+        world = world.reset(env_index=jnp.asarray([0]))
         assert jnp.all(world.agents[0].state.pos[0] == 0)
         assert jnp.all(world.agents[0].state.pos[1] == 1)
 
@@ -337,10 +339,10 @@ class TestWorld:
 
         # Test jit compatibility of reset with specific index
         @eqx.filter_jit
-        def reset_env(world: World, env_idx: int):
-            return world.reset(env_index=jnp.asarray(env_idx))
+        def reset_env(world: World, env_idx: Int[Array, f"{env_index_dim}"]):
+            return world.reset(env_index=env_idx)
 
-        reset_world = reset_env(world, 0)
+        reset_world = reset_env(world, jnp.asarray([0]))
         assert jnp.all(reset_world.agents[0].state.pos[0] == 0)
 
         # Test jit compatibility of collision detection
@@ -964,10 +966,10 @@ class TestGetDistanceFromPoint:
         # For batch 0: expected distance = norm([1,1]-[2,1]) = 1.0 - 0.5 = 0.5.
         # For batch 1: expected distance = norm([2,2]-[3,2]) = 1.0 - 0.5 = 0.5.
         result0 = world.get_distance_from_point(
-            sphere_agent, test_point, env_index=jnp.asarray(0)
+            sphere_agent, test_point, env_index=jnp.asarray([0])
         )
         result1 = world.get_distance_from_point(
-            sphere_agent, test_point, env_index=jnp.asarray(1)
+            sphere_agent, test_point, env_index=jnp.asarray([1])
         )
         assert jnp.allclose(result0, 0.5, atol=1e-3)
         assert jnp.allclose(result1, 0.5, atol=1e-3)

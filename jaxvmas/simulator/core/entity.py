@@ -1,7 +1,6 @@
 from enum import Enum
 
 import chex
-import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
@@ -13,6 +12,7 @@ from jaxvmas.equinox_utils import (
 from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
     batch_axis_dim,
+    env_index_dim,
     pos_dim,
 )
 from jaxvmas.simulator.core.shapes import Shape, Sphere
@@ -178,7 +178,7 @@ class Entity(JaxVectorizedObject):
     @jaxtyped(typechecker=beartype)
     def _reset(
         self,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         return self.replace(state=self.state._reset(env_index))
 
@@ -186,7 +186,7 @@ class Entity(JaxVectorizedObject):
     def set_pos(
         self,
         pos: Array,
-        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        batch_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         return self._set_state_property("pos", pos, batch_index)
 
@@ -194,7 +194,7 @@ class Entity(JaxVectorizedObject):
     def set_vel(
         self,
         vel: Array,
-        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        batch_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         return self._set_state_property("vel", vel, batch_index)
 
@@ -202,7 +202,7 @@ class Entity(JaxVectorizedObject):
     def set_rot(
         self,
         rot: Array,
-        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        batch_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         return self._set_state_property("rot", rot, batch_index)
 
@@ -210,7 +210,7 @@ class Entity(JaxVectorizedObject):
     def set_ang_vel(
         self,
         ang_vel: Array,
-        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        batch_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         return self._set_state_property("ang_vel", ang_vel, batch_index)
 
@@ -219,12 +219,12 @@ class Entity(JaxVectorizedObject):
         self,
         prop_name: str,
         new: Array,
-        batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        batch_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         chex.assert_scalar(self.batch_dim)
 
         def batch_index_is_nan(
-            batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            batch_index: Int[Array, f"{env_index_dim}"] | None,
             new: Array,
             value: Array,
         ):
@@ -238,7 +238,7 @@ class Entity(JaxVectorizedObject):
             return ret
 
         def batch_index_is_not_nan(
-            batch_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            batch_index: Int[Array, f"{env_index_dim}"] | None,
             new: Array,
             value: Array,
         ):
@@ -249,13 +249,10 @@ class Entity(JaxVectorizedObject):
             new_value = JaxUtils.where_from_index(batch_index, new, value)
             return new_value
 
-        prop_value = jax.lax.cond(
-            batch_index == -1,
-            batch_index_is_nan,
-            batch_index_is_not_nan,
-            batch_index,
-            new,
-            getattr(self.state, prop_name),
+        prop_value = jnp.where(
+            batch_index is None,
+            batch_index_is_nan(batch_index, new, getattr(self.state, prop_name)),
+            batch_index_is_not_nan(batch_index, new, getattr(self.state, prop_name)),
         )
         new_state = self.state.replace(**{prop_name: prop_value})
         # there was a notify_observers call in the past, so we need to notify observers manually
@@ -264,7 +261,7 @@ class Entity(JaxVectorizedObject):
     @chex.assert_max_traces(0)
     def render(
         self,
-        env_index: Int[Array, ""] = jnp.asarray(0),
+        env_index: int = 0,
     ) -> "list[Geom]":
         from jaxvmas.simulator import rendering
 

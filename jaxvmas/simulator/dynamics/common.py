@@ -8,7 +8,6 @@ import abc
 from abc import ABC
 from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
 from beartype import beartype
 from jaxtyping import Array, Int, jaxtyped
 
@@ -17,7 +16,7 @@ from jaxvmas.equinox_utils import PyTreeNode
 if TYPE_CHECKING:
     from jaxvmas.simulator.core.agent import Agent
 
-batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 class Dynamics(PyTreeNode, ABC):
@@ -25,7 +24,7 @@ class Dynamics(PyTreeNode, ABC):
     @jaxtyped(typechecker=beartype)
     def reset(
         self,
-        index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "Dynamics":
         return self
 

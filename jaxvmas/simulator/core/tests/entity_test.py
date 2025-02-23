@@ -46,17 +46,17 @@ class TestEntity:
     def test_property_setters(self, basic_entity: Entity):
         # Test setting position
         new_pos = jnp.array([1.0, 2.0])
-        updated_entity = basic_entity.set_pos(new_pos, batch_index=jnp.asarray(0))
+        updated_entity = basic_entity.set_pos(new_pos, batch_index=jnp.asarray([0]))
         assert jnp.array_equal(updated_entity.state.pos[0], new_pos)
 
         # Test setting velocity
         new_vel = jnp.array([0.5, 0.5])
-        updated_entity = basic_entity.set_vel(new_vel, batch_index=jnp.asarray(0))
+        updated_entity = basic_entity.set_vel(new_vel, batch_index=jnp.asarray([0]))
         assert jnp.array_equal(updated_entity.state.vel[0], new_vel)
 
         # Test setting rotation
         new_rot = jnp.array([1.5])
-        updated_entity = basic_entity.set_rot(new_rot, batch_index=jnp.asarray(0))
+        updated_entity = basic_entity.set_rot(new_rot, batch_index=jnp.asarray([0]))
         assert jnp.array_equal(updated_entity.state.rot[0], new_rot)
 
     def test_collision_filter(self, basic_entity: Entity):
@@ -106,7 +106,7 @@ class TestEntity:
         )
 
         # Test reset
-        reset_entity = basic_entity._reset(env_index=jnp.asarray(0))
+        reset_entity = basic_entity._reset(env_index=jnp.asarray([0]))
         # Verify values were actually changed from non-zero to zero
         assert jnp.allclose(reset_entity.state.pos[0], jnp.zeros(2))
         assert jnp.allclose(reset_entity.state.pos[1], jnp.array([1.0, 2.0]))
@@ -120,7 +120,7 @@ class TestEntity:
     def test_is_jittable(self, basic_entity: Entity):
         @eqx.filter_jit
         def f(entity, pos):
-            return entity.set_pos(pos, batch_index=jnp.asarray(0))
+            return entity.set_pos(pos, batch_index=jnp.asarray([0]))
 
         test_pos = jnp.array([1.0, 2.0])
         f(basic_entity, test_pos)

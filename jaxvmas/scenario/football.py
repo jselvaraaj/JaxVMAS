@@ -4,11 +4,12 @@
 
 from enum import Enum
 
+import chex
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, PRNGKeyArray, jaxtyped
+from jaxtyping import Array, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
@@ -24,6 +25,8 @@ from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, JaxUtils, ScenarioUtils, X, Y
+
+env_index_dim = "env_index"
 
 
 @jaxtyped(typechecker=beartype)
@@ -105,7 +108,7 @@ class AgentPolicy(PyTreeNode):
     replan_margin: float
     initialised: bool
     disabled: bool
-    team_color: Color | None
+    team_color: Enum | None
     enable_shooting: bool
     objectives: dict[str, dict[str, Array]]
     agent_possession: dict[int, Array]
@@ -1299,8 +1302,8 @@ class Scenario(BaseScenario[FootballWorld]):
     _dense_reward_blue: Array | None
     _dense_reward_red: Array | None
     _render_field: bool | None
-    min_agent_dist_to_ball_blue: None
-    min_agent_dist_to_ball_red: None
+    min_agent_dist_to_ball_blue: Array | None
+    min_agent_dist_to_ball_red: Array | None
     _reset_agent_range: Array | None
     _reset_agent_offset_blue: Array | None
     _reset_agent_offset_red: Array | None
@@ -2132,7 +2135,11 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
-    def reset_world_at(self, PRNG_key: PRNGKeyArray, env_index: int | None = None):
+    def reset_world_at(
+        self,
+        PRNG_key: PRNGKeyArray,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         print("starting reset_world_at")
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self = self.reset_agents(subkey, env_index)
@@ -2152,8 +2159,13 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
-    def reset_agents(self, PRNG_key: PRNGKeyArray, env_index: int | None = None):
+    def reset_agents(
+        self,
+        PRNG_key: PRNGKeyArray,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         PRNG_key, subkey = jax.random.split(PRNG_key)
+        batch_index = env_index if env_index is not None else jnp.asarray(-1)
         if self.spawn_in_formation:
             agents = self._spawn_formation(subkey, self.blue_agents, True, env_index)
             self = self.replace(blue_agents=agents)
@@ -2172,7 +2184,7 @@ class Scenario(BaseScenario[FootballWorld]):
                 )
                 agent = agent.set_pos(
                     pos,
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 blue_agents.append(agent)
             self = self.replace(blue_agents=blue_agents)
@@ -2188,18 +2200,21 @@ class Scenario(BaseScenario[FootballWorld]):
                 )
                 agent = agent.set_pos(
                     pos,
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 agent = agent.set_rot(
                     jnp.array([jnp.pi]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 red_agents.append(agent)
             self = self.replace(red_agents=red_agents)
         return self
 
     @jaxtyped(typechecker=beartype)
-    def reset_controllers(self, env_index: int | None = None):
+    def reset_controllers(
+        self,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         red_controller = self.red_controller
         blue_controller = self.blue_controller
         if red_controller is not None:
@@ -2216,7 +2231,10 @@ class Scenario(BaseScenario[FootballWorld]):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def reset_ball(self, env_index: int | None = None):
+    def reset_ball(
+        self,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         if not self.ai_blue_agents:
             min_agent_dist_to_ball_blue = self.get_closest_agent_to_ball(
                 self.blue_agents, env_index
@@ -2340,8 +2358,12 @@ class Scenario(BaseScenario[FootballWorld]):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def reset_walls(self, env_index: int | None = None):
+    def reset_walls(
+        self,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         landmarks = []
+        batch_index = env_index if env_index is not None else jnp.asarray(-1)
         for landmark in self.world.landmarks:
             if landmark.name == "Left Top Wall":
                 landmark = landmark.set_pos(
@@ -2351,11 +2373,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             self.pitch_width / 4 + self.goal_size / 4,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Left Bottom Wall":
@@ -2366,11 +2388,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             -self.pitch_width / 4 - self.goal_size / 4,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Right Top Wall":
@@ -2381,11 +2403,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             self.pitch_width / 4 + self.goal_size / 4,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Right Bottom Wall":
@@ -2396,11 +2418,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             -self.pitch_width / 4 - self.goal_size / 4,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             else:
@@ -2409,8 +2431,12 @@ class Scenario(BaseScenario[FootballWorld]):
         return self
 
     @jaxtyped(typechecker=beartype)
-    def reset_goals(self, env_index: int | None = None):
+    def reset_goals(
+        self,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
+    ):
         landmarks = []
+        batch_index = env_index if env_index is not None else jnp.asarray(-1)
         for landmark in self.world.landmarks:
             if landmark.name == "Left Goal Back":
                 landmark = landmark.set_pos(
@@ -2420,11 +2446,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             0.0,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Right Goal Back":
@@ -2435,11 +2461,11 @@ class Scenario(BaseScenario[FootballWorld]):
                             0.0,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmark = landmark.set_rot(
                     jnp.asarray([jnp.pi / 2]),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Left Goal Top":
@@ -2452,7 +2478,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             self.goal_size / 2,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Left Goal Bottom":
@@ -2465,7 +2491,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             -self.goal_size / 2,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Right Goal Top":
@@ -2478,7 +2504,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             self.goal_size / 2,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Right Goal Bottom":
@@ -2491,7 +2517,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             -self.goal_size / 2,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Red Net":
@@ -2504,7 +2530,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             0.0,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             elif landmark.name == "Blue Net":
@@ -2517,7 +2543,7 @@ class Scenario(BaseScenario[FootballWorld]):
                             0.0,
                         ],
                     ),
-                    batch_index=env_index,
+                    batch_index=batch_index,
                 )
                 landmarks.append(landmark)
             else:
@@ -2525,74 +2551,153 @@ class Scenario(BaseScenario[FootballWorld]):
         self = self.replace(world=self.world.replace(landmarks=landmarks))
         return self
 
+    @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(1)
     def _spawn_formation(
         self,
         PRNG_key: PRNGKeyArray,
         agents: list["FootballAgent"],
         blue: bool,
-        env_index: int | None,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
+        def compute_formation_positions(
+            PRNG_key: PRNGKeyArray,
+            batch_dim: int,
+            dim_p: int,
+            num_agents: int,
+            blue: bool,
+            pitch_length: float,
+            goal_depth: float,
+            formation_agents_per_column: int,
+            pitch_width: float,
+            formation_noise: float,
+            env_index: Int[Array, f"{env_index_dim}"] | None,
+        ):
+            # Compute the target endpoint (depending on blue)
+            endpoint = -(pitch_length / 2 + goal_depth) * (1 if blue else -1)
+            # Determine number of columns and compute x positions
+            n_columns = num_agents // formation_agents_per_column + 3
+            x_lin = jnp.linspace(0, endpoint, n_columns)
+            valid_x = x_lin[(x_lin != 0) & (x_lin != endpoint)]
+
+            # Pre-allocate an array to store positions (shape: [num_agents, 2])
+            positions = jnp.zeros((num_agents, 2))
+
+            # The scan will iterate over each valid x and update the positions array.
+            # The carry is a tuple (agent_idx, positions) where agent_idx tracks how many
+            # agents have been assigned so far.
+            def body_fn(carry, x):
+                agent_idx, positions = carry
+
+                # If no agents remain, do nothing.
+                def do_nothing(carry):
+                    return carry, None
+
+                # Otherwise, update the positions for this column.
+                def update(carry):
+                    agent_idx, positions = carry
+                    remaining = num_agents - agent_idx
+                    # Use up to formation_agents_per_column agents in this column.
+                    n_agents_in_col = jnp.minimum(
+                        formation_agents_per_column, remaining
+                    )
+                    # Create a full linspace along y, then select the inner values.
+                    y_lin = jnp.linspace(
+                        pitch_width / 2,
+                        -pitch_width / 2,
+                        formation_agents_per_column + 2,
+                    )
+                    # Here we need only the inner points; note that n_agents_in_col might be less than formation_agents_per_column.
+                    # Since slicing with a dynamic size is not directly supported in jitted code,
+                    # we can use jax.lax.dynamic_slice.
+                    start = 1  # skip the first element
+                    slice_size = (n_agents_in_col,)
+                    y_vals = jax.lax.dynamic_slice(y_lin, (start,), slice_size)
+                    # Create an array for the x-coordinate (same shape as y_vals).
+                    x_vals = jnp.full((n_agents_in_col,), x)
+                    col_positions = jnp.stack(
+                        [x_vals, y_vals], axis=-1
+                    )  # shape: (n_agents_in_col, 2)
+                    # Update the preallocated positions array at the appropriate index.
+                    positions = jax.lax.dynamic_update_slice(
+                        positions, col_positions, (agent_idx, 0)
+                    )
+                    agent_idx = agent_idx + n_agents_in_col
+                    return (agent_idx, positions)
+
+                new_carry, _ = jax.lax.cond(
+                    agent_idx >= num_agents, do_nothing, update, (agent_idx, positions)
+                )
+                return new_carry, None
+
+            # Run the scan over all valid x positions.
+            (final_idx, positions), _ = jax.lax.scan(body_fn, (0, positions), valid_x)
+
+            # Generate random noise for each agent.
+            keys = jax.random.split(PRNG_key, num_agents)
+
+            def sample_noise(key):
+                shape = (dim_p,) if env_index is None else (batch_dim, dim_p)
+                return jax.random.uniform(key, shape) - 0.5
+
+            noise = jax.vmap(sample_noise)(keys)
+
+            # Adjust positions shape for broadcasting.
+            if env_index is None:
+                base_positions = jnp.broadcast_to(
+                    positions[:, None, :], (num_agents, batch_dim, dim_p)
+                )
+            else:
+                base_positions = positions[:, None, :]
+
+            # Compute the final positions by adding the noise scaled by formation_noise.
+            final_positions = base_positions + noise * formation_noise
+            return final_positions
+
         PRNG_key, subkey = jax.random.split(PRNG_key)
         if self.randomise_formation_indices:
             order = jax.random.permutation(subkey, len(agents)).tolist()
             agents = [agents[i] for i in order]
-        agent_index = 0
-        endpoint = -(self.pitch_length / 2 + self.goal_depth) * (1 if blue else -1)
-        for x in jnp.linspace(
-            0, endpoint, len(agents) // self.formation_agents_per_column + 3
-        ):
-            if agent_index >= len(agents):
-                break
-            if x == 0 or x == endpoint:
-                continue
-            agents_this_column = agents[
-                agent_index : agent_index + self.formation_agents_per_column
-            ]
-            n_agents_this_column = len(agents_this_column)
+        # Compute all the new positions in pure JAX.
+        new_positions = compute_formation_positions(
+            PRNG_key,
+            self.world.batch_dim,
+            self.world.dim_p,
+            len(agents),
+            blue,
+            self.pitch_length,
+            self.goal_depth,
+            self.formation_agents_per_column,
+            self.pitch_width,
+            self.formation_noise,
+            env_index,
+        )
 
-            for y in jnp.linspace(
-                self.pitch_width / 2,
-                -self.pitch_width / 2,
-                n_agents_this_column + 2,
-            ):
-                if y == -self.pitch_width / 2 or y == self.pitch_width / 2:
-                    continue
-                pos = jnp.asarray([x, y])
-                if env_index is None:
-                    pos = jnp.broadcast_to(
-                        pos, (self.world.batch_dim, self.world.dim_p)
-                    )
-                PRNG_key, subkey = jax.random.split(PRNG_key)
-                agents[agent_index] = agents[agent_index].set_pos(
-                    pos
-                    + (
-                        jax.random.uniform(
-                            subkey,
-                            (
-                                (self.world.dim_p,)
-                                if env_index is not None
-                                else (self.world.batch_dim, self.world.dim_p)
-                            ),
-                        )
-                        - 0.5
-                    )
-                    * self.formation_noise,
-                    batch_index=env_index,
-                )
-                agent_index += 1
+        # Finally, update each agent with its computed position.
+        # (This loop happens in Python because FootballAgent is a Python object.)
+        batch_index = env_index if env_index is not None else jnp.asarray(-1)
+        for i, agent in enumerate(agents):
+            agents[i] = agent.set_pos(
+                new_positions[i],
+                batch_index=batch_index,
+            )
+
         return agents
 
     @jaxtyped(typechecker=beartype)
     def _get_random_spawn_position(
-        self, PRNG_key: PRNGKeyArray, blue: bool, env_index: int | None
+        self,
+        PRNG_key: PRNGKeyArray,
+        blue: bool,
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         PRNG_key, subkey = jax.random.split(PRNG_key)
         return jax.random.uniform(
             subkey,
             (
                 (1, self.world.dim_p)
-                if env_index is not None
+                if env_index is None
                 else (self.world.batch_dim, self.world.dim_p)
             ),
         ) * self._reset_agent_range + (
@@ -2601,7 +2706,9 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @jaxtyped(typechecker=beartype)
     def get_closest_agent_to_ball(
-        self, team: list[Agent], env_index: int | None = None
+        self,
+        team: list[Agent],
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         pos = jnp.stack(
             [a.state.pos for a in team], axis=-2

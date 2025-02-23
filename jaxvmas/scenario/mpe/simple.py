@@ -10,6 +10,7 @@ from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, ScenarioUtils
 
 batch_axis_dim = "batch_axis_dim"
+env_index_dim = "env_index_dim"
 
 
 @jaxtyped(typechecker=beartype)
@@ -47,14 +48,14 @@ class Scenario(BaseScenario):
     def reset_world_at(
         self,
         PRNG_key: PRNGKeyArray,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
         agents = []
         for agent in self.world.agents:
             PRNG_key, PRNG_key_agent = jax.random.split(PRNG_key)
             agent = agent.set_pos(
                 jax.lax.cond(
-                    env_index == -1,
+                    env_index is None,
                     lambda: jax.random.uniform(
                         key=PRNG_key_agent,
                         shape=(self.world.batch_dim, self.world.dim_p),
@@ -82,7 +83,7 @@ class Scenario(BaseScenario):
             PRNG_key, PRNG_key_landmark = jax.random.split(PRNG_key)
             landmark = landmark.set_pos(
                 jax.lax.cond(
-                    env_index == -1,
+                    env_index is None,
                     lambda: jax.random.uniform(
                         key=PRNG_key_landmark,
                         shape=(self.world.batch_dim, self.world.dim_p),

@@ -56,7 +56,7 @@ class TestAction:
         # Set non-zero values
         action = basic_action.replace(u=jnp.ones((2, 3)), c=jnp.ones((2, 2)))
         # Test reset
-        reset_action = action._reset(jnp.asarray(-1))
+        reset_action = action._reset(None)
         assert jnp.all(reset_action.u == 0)
         assert jnp.all(reset_action.c == 0)
 
@@ -64,7 +64,7 @@ class TestAction:
         # Set non-zero values
         action = basic_action.replace(u=jnp.ones((2, 3)), c=jnp.ones((2, 2)))
         # Test reset for specific environment
-        reset_action = action._reset(jnp.asarray(0))
+        reset_action = action._reset(jnp.asarray([0]))
         assert jnp.all(reset_action.u[0] == 0)
         assert jnp.all(reset_action.u[1] == 1)
         assert jnp.all(reset_action.c[0] == 0)

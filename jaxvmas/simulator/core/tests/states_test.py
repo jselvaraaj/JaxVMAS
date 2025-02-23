@@ -33,7 +33,7 @@ class TestEntityState:
         assert jnp.array_equal(reset_state.ang_vel, jnp.zeros((2, 1)))
 
         # Test reset with env_index=0 - should only reset first environment
-        reset_state_index = entity_state._reset(env_index=jnp.asarray(0))
+        reset_state_index = entity_state._reset(env_index=jnp.asarray([0]))
 
         # First environment should be zero
         assert jnp.array_equal(reset_state_index.pos[0], jnp.zeros(4))
@@ -150,7 +150,7 @@ class TestAgentState:
         assert jnp.array_equal(reset_state.torque, jnp.zeros((2, 1)))
 
         # Test reset with env_index
-        reset_state_index = agent_state._reset(env_index=jnp.asarray(0))
+        reset_state_index = agent_state._reset(env_index=jnp.asarray([0]))
         assert jnp.array_equal(reset_state_index.c[0], jnp.zeros(2))
         assert jnp.array_equal(reset_state_index.c[1], jnp.ones(2))
         assert jnp.array_equal(reset_state_index.force[0], jnp.zeros(4))
@@ -181,6 +181,6 @@ class TestAgentState:
 
         @eqx.filter_jit
         def f3(a_s: AgentState):
-            return a_s._reset(env_index=jnp.asarray(0))
+            return a_s._reset(env_index=jnp.asarray([0]))
 
         f3(agent_state)

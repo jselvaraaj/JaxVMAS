@@ -8,6 +8,7 @@ from jaxvmas.simulator.core.jax_vectorized_object import (
     JaxVectorizedObject,
     batch_axis_dim,
     comm_dim,
+    env_index_dim,
     pos_dim,
 )
 from jaxvmas.simulator.utils import (
@@ -33,7 +34,7 @@ class EntityState(JaxVectorizedObject):
     @jaxtyped(typechecker=beartype)
     def _reset(
         self,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "EntityState":
         self.assert_is_spwaned()
         return self.replace(
@@ -114,12 +115,12 @@ class AgentState(EntityState):
     @jaxtyped(typechecker=beartype)
     def _reset(
         self,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
+        env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ) -> "AgentState":
         self.assert_is_spwaned()
 
         def env_index_is_nan(
-            env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            env_index: Int[Array, f"{env_index_dim}"] | None,
             c: Float[Array, f"{batch_axis_dim} {comm_dim}"],
             force: Float[Array, f"{batch_axis_dim} {pos_dim}"],
             torque: Float[Array, f"{batch_axis_dim} 1"],
@@ -142,7 +143,7 @@ class AgentState(EntityState):
             )
 
         def env_index_is_not_nan(
-            env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+            env_index: Int[Array, f"{env_index_dim}"] | None,
             c: Float[Array, f"{batch_axis_dim} {comm_dim}"],
             force: Float[Array, f"{batch_axis_dim} {pos_dim}"],
             torque: Float[Array, f"{batch_axis_dim} 1"],
@@ -169,7 +170,7 @@ class AgentState(EntityState):
             )
 
         c, force, torque = jax.lax.cond(
-            env_index == -1,
+            env_index is None,
             env_index_is_nan,
             env_index_is_not_nan,
             env_index,

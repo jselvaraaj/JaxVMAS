@@ -194,7 +194,7 @@ class TestAgent:
         )
 
         # Test reset
-        reset_agent = modified_agent._reset(env_index=jnp.asarray(0))
+        reset_agent = modified_agent._reset(env_index=jnp.asarray([0]))
         assert jnp.all(reset_agent.state.pos[0] == 0)
         assert jnp.all(reset_agent.state.vel[0] == 0)
         assert jnp.all(reset_agent.action.u[0] == 0)
