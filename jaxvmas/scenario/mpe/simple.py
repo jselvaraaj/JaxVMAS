@@ -2,7 +2,7 @@ import chex
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Int, jaxtyped
+from jaxtyping import Array, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.interactive_rendering import render_interactively
 from jaxvmas.simulator.core import Agent, Landmark, World
@@ -46,7 +46,7 @@ class Scenario(BaseScenario):
     @jaxtyped(typechecker=beartype)
     def reset_world_at(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""] = jnp.asarray(-1),
     ):
         agents = []

@@ -2,24 +2,32 @@
 # ProrokLab (https://www.proroklab.org/)
 # All rights reserved.
 
-from typing import TypeVar
 
 import chex
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Bool, Float, Int, PyTree, Scalar, jaxtyped
+from jaxtyping import Array, Bool, Float, PRNGKeyArray, Scalar, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.environment.environment import Environment
-from jaxvmas.simulator.utils import extract_nested_with_index
+from jaxvmas.simulator.utils import (
+    AGENT_INFO_TYPE,
+    AGENT_OBS_TYPE,
+    AGENT_REWARD_TYPE,
+    INFO_TYPE,
+    OBS_TYPE,
+    REWARD_TYPE,
+    extract_nested_with_index,
+)
 
 # Type definitions for dimensions
-batch = "batch"  # Batch dimension for vectorized environments
-agents = "agents"  # Number of agents dimension
-action = "action"  # Action dimension
-obs = "obs"  # Observation dimension
 
-T = TypeVar("T")  # Generic type for nested structures
+batch_axis_dim = "batch_axis_dim"
+BATCHED_ARRAY_TYPE = Float[Array, f"{batch_axis_dim} ..."]
+
+agents_dim = "agents"  # Number of agents dimension
+action_dim = "action"  # Action dimension
+obs_dim = "obs"  # Observation dimension
 
 
 @jaxtyped(typechecker=beartype)
@@ -28,12 +36,12 @@ class EnvData(
 ):
     """Immutable container for environment step data."""
 
-    obs: T
-    rews: T
-    terminated: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
-    truncated: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
-    done: Bool[Array, f"{batch}"] | Bool[Scalar, ""]
-    info: T
+    obs: OBS_TYPE
+    rews: REWARD_TYPE
+    terminated: Bool[Array, f"{batch_axis_dim}"] | Bool[Scalar, ""]
+    truncated: Bool[Array, f"{batch_axis_dim}"] | Bool[Scalar, ""]
+    done: Bool[Array, f"{batch_axis_dim}"] | Bool[Scalar, ""]
+    info: INFO_TYPE
 
 
 @jaxtyped(typechecker=beartype)
@@ -65,9 +73,8 @@ class BaseJaxGymWrapper(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def _convert_output(
         self,
-        data: PyTree[Float[Array, "..."] | Int[Array, "..."] | Bool[Array, "..."]],
-        item: bool = False,
-    ) -> PyTree[Float[Array, "..."] | Int[Array, "..."] | Bool[Array, "..."]]:
+        data: AGENT_OBS_TYPE | AGENT_INFO_TYPE | AGENT_REWARD_TYPE | BATCHED_ARRAY_TYPE,
+    ) -> AGENT_OBS_TYPE | AGENT_INFO_TYPE | AGENT_REWARD_TYPE | BATCHED_ARRAY_TYPE:
         """Convert output data based on vectorization settings.
 
         Args:
@@ -77,12 +84,15 @@ class BaseJaxGymWrapper(PyTreeNode):
         if not self.vectorized:
             # Take first item if not vectorized
             data = extract_nested_with_index(data, index=0)
-            if item:
-                return data
         return data
 
     @jaxtyped(typechecker=beartype)
-    def _compress_infos(self, infos: PyTree) -> dict:
+    def _compress_infos(
+        self,
+        infos: (
+            list[AGENT_INFO_TYPE] | dict[str, AGENT_INFO_TYPE] | tuple[AGENT_INFO_TYPE]
+        ),
+    ) -> dict[str, AGENT_INFO_TYPE]:
         """Compress info data into a dictionary format.
 
         Args:
@@ -92,20 +102,16 @@ class BaseJaxGymWrapper(PyTreeNode):
             return infos
         elif isinstance(infos, (list, tuple)):
             return {self.env.agents[i].name: info for i, info in enumerate(infos)}
-        else:
-            raise ValueError(
-                f"Expected list or dictionary for infos but got {type(infos)}"
-            )
 
     @jaxtyped(typechecker=beartype)
     def _convert_env_data(
         self,
-        obs: PyTree | None = None,
-        rews: PyTree | None = None,
-        info: PyTree | None = None,
-        terminated: Bool[Array, f"{batch}"] | None = None,
-        truncated: Bool[Array, f"{batch}"] | None = None,
-        done: Bool[Array, f"{batch}"] | None = None,
+        obs: OBS_TYPE | None = None,
+        rews: REWARD_TYPE | None = None,
+        info: INFO_TYPE | None = None,
+        terminated: Bool[Array, f"{batch_axis_dim}"] | None = None,
+        truncated: Bool[Array, f"{batch_axis_dim}"] | None = None,
+        done: Bool[Array, f"{batch_axis_dim}"] | None = None,
     ) -> EnvData:
         """Convert environment data to appropriate format.
 
@@ -124,7 +130,10 @@ class BaseJaxGymWrapper(PyTreeNode):
                 if info is not None:
                     info[agent] = self._convert_output(info[agent])
                 if rews is not None:
-                    rews[agent] = self._convert_output(rews[agent], item=True)
+                    rews[agent] = self._convert_output(rews[agent])
+            info = self._compress_infos(info) if info is not None else {}
+            obs = obs if obs is not None else {}
+            rews = rews if rews is not None else {}
         else:
             for i in range(len(self.env.agents)):
                 if obs is not None:
@@ -132,24 +141,27 @@ class BaseJaxGymWrapper(PyTreeNode):
                 if info is not None:
                     info[i] = self._convert_output(info[i])
                 if rews is not None:
-                    rews[i] = self._convert_output(rews[i], item=True)
+                    rews[i] = self._convert_output(rews[i])
+
+            info = self._compress_infos(info) if info is not None else []
+            obs = obs if obs is not None else []
+            rews = rews if rews is not None else []
 
         terminated = (
-            self._convert_output(terminated, item=True)
+            self._convert_output(terminated)
             if terminated is not None
             else jnp.zeros(self.env.num_envs, dtype=bool)
         )
         truncated = (
-            self._convert_output(truncated, item=True)
+            self._convert_output(truncated)
             if truncated is not None
             else jnp.zeros(self.env.num_envs, dtype=bool)
         )
         done = (
-            self._convert_output(done, item=True)
+            self._convert_output(done)
             if done is not None
             else jnp.zeros(self.env.num_envs, dtype=bool)
         )
-        info = self._compress_infos(info) if info is not None else None
 
         return EnvData(
             obs=obs,
@@ -161,7 +173,7 @@ class BaseJaxGymWrapper(PyTreeNode):
         )
 
     @jaxtyped(typechecker=beartype)
-    def _action_list_to_array(self, actions: list) -> list[Array]:
+    def _action_list_to_array(self, actions: list) -> list[BATCHED_ARRAY_TYPE]:
         """Convert action list to JAX arrays.
 
         Args:
@@ -187,7 +199,7 @@ class BaseJaxGymWrapper(PyTreeNode):
 
     @jaxtyped(typechecker=beartype)
     def step(
-        self, PRNG_key: Array, action: PyTree
+        self, PRNG_key: PRNGKeyArray, action: BATCHED_ARRAY_TYPE
     ) -> tuple["BaseJaxGymWrapper", EnvData]:
         """Take a step in the environment."""
         raise NotImplementedError
@@ -197,7 +209,7 @@ class BaseJaxGymWrapper(PyTreeNode):
         self,
         *,
         options: dict | None = None,
-    ) -> tuple["BaseJaxGymWrapper", tuple[PyTree, dict]]:
+    ) -> tuple["BaseJaxGymWrapper", tuple[OBS_TYPE, INFO_TYPE]]:
         """Reset the environment."""
         raise NotImplementedError
 

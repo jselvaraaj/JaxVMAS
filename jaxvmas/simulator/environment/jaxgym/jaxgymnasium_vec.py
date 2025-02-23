@@ -10,18 +10,22 @@ Ensures all operations are jittable and compatible with JAX transformations.
 import chex
 import jax
 from beartype import beartype
-from jaxtyping import Array, PyTree, jaxtyped
+from jaxtyping import Array, Float, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.environment.jaxgym.base import BaseJaxGymWrapper, EnvData
 from jaxvmas.simulator.environment.jaxgym.spaces import Space
+from jaxvmas.simulator.utils import INFO_TYPE, OBS_TYPE
+
+batch_axis_dim = "batch_axis_dim"
+BATCHED_ARRAY_TYPE = Float[Array, f"{batch_axis_dim} ..."]
+
 
 # Type definitions for dimensions
-batch = "batch"  # Batch dimension for vectorized environments
-agents = "agents"  # Number of agents dimension
-action = "action"  # Action dimension
-obs = "obs"  # Observation dimension
+agents_dim = "agents"  # Number of agents dimension
+action_dim = "action"  # Action dimension
+obs_dim = "obs"  # Observation dimension
 
 
 @jaxtyped(typechecker=beartype)
@@ -63,7 +67,7 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
 
     @jaxtyped(typechecker=beartype)
     def step(
-        self, PRNG_key: Array, action: PyTree
+        self, PRNG_key: PRNGKeyArray, action: BATCHED_ARRAY_TYPE
     ) -> tuple["JaxGymnasiumVecWrapper", EnvData]:
         """Take a step in the environment.
 
@@ -95,10 +99,10 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
     @jaxtyped(typechecker=beartype)
     def reset(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         *,
         options: dict | None = None,
-    ) -> tuple["JaxGymnasiumVecWrapper", tuple[PyTree, dict]]:
+    ) -> tuple["JaxGymnasiumVecWrapper", tuple[OBS_TYPE, INFO_TYPE]]:
 
         # Reset environment state
         env, (obs, info) = self.env.reset(

@@ -10,7 +10,7 @@ from jaxvmas.simulator.environment.environment import Environment
 from jaxvmas.simulator.environment.jaxgym.base import (
     BaseJaxGymWrapper,
     EnvData,
-    batch,
+    batch_axis_dim,
 )
 from jaxvmas.simulator.scenario import BaseScenario
 
@@ -122,7 +122,7 @@ class TestEnvData:
 
     def test_jit_compatibility(self, env_data):
         @eqx.filter_jit
-        def process_env_data(data: EnvData) -> Float[Array, f"{batch}"]:
+        def process_env_data(data: EnvData) -> Float[Array, f"{batch_axis_dim}"]:
             return data.rews["agent_0"]
 
         rews = process_env_data(env_data)

@@ -7,7 +7,7 @@ import chex
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Int, jaxtyped
+from jaxtyping import Array, Int, PRNGKeyArray, Scalar, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.core.agent import Agent
@@ -91,6 +91,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         )
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def env_make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         # Do not override
         self = self.make_world(batch_dim, **kwargs)
@@ -99,8 +100,8 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     @jaxtyped(typechecker=beartype)
     def env_reset_world_at(
         self,
-        PRNG_key: Array,
-        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
+        PRNG_key: PRNGKeyArray,
+        env_index: Int[Array, f"{batch_axis_dim}"] | Int[Scalar, ""],
     ) -> "BaseScenario":
         # Do not override
         self = self.replace(world=self.world.reset(env_index))
@@ -109,7 +110,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
 
     @jaxtyped(typechecker=beartype)
     def env_process_action(
-        self, PRNG_key: Array, agent: Agent
+        self, PRNG_key: PRNGKeyArray, agent: Agent
     ) -> tuple["BaseScenario", Agent]:
         # Do not override
         if agent.action_script is not None:
@@ -124,6 +125,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
         return self, agent
 
     @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def make_world(self, batch_dim: int, **kwargs) -> "BaseScenario":
         """
         This function needs to be implemented when creating a scenario.
@@ -142,7 +144,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     @jaxtyped(typechecker=beartype)
     def reset_world_at(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         env_index: Int[Array, f"{batch_axis_dim}"] | Int[Array, ""],
     ) -> "BaseScenario":
         """Resets the world at the specified env_index.
@@ -225,7 +227,7 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     @jaxtyped(typechecker=beartype)
     def extra_render(
         self,
-        env_index: Int[Array, ""],
+        env_index: Int[Scalar, ""],
     ) -> list[Geom]:
         """
         This function facilitates additional user/scenario-level rendering for a specific environment index.

@@ -1,18 +1,26 @@
 #  Copyright (c) 2022-2025.
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
+
+from __future__ import annotations
+
 import os
 import warnings
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import chex
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Float, Int, jaxtyped
+from jaxtyping import Array, Bool, Float, Int, Scalar, jaxtyped
 
 if TYPE_CHECKING:
+    from jaxvmas.simulator.core.entity import Entity
+    from jaxvmas.simulator.core.world import World
     from jaxvmas.simulator.rendering import Geom
+    from jaxvmas.simulator.scenario import BaseScenario
+
 
 X = 0
 Y = 1
@@ -28,17 +36,26 @@ TORQUE_CONSTRAINT_FORCE = 1.0
 DRAG = 0.25
 LINEAR_FRICTION = 0.0
 ANGULAR_FRICTION = 0.0
+batch_dim = "batch_dim"
 
-AGENT_OBS_TYPE = Array | dict[str, Array]
-AGENT_INFO_TYPE = dict[str, Array]
-AGENT_REWARD_TYPE = Array
+AGENT_ARRAY_TYPE = (
+    Float[Array, f"{batch_dim} ..."]
+    | Int[Array, f"{batch_dim} ..."]
+    | Bool[Array, f"{batch_dim} ..."]
+)
+
+AGENT_OBS_TYPE = AGENT_ARRAY_TYPE | dict[str, AGENT_ARRAY_TYPE]
+AGENT_INFO_TYPE = dict[str, AGENT_ARRAY_TYPE]
+AGENT_REWARD_TYPE = AGENT_ARRAY_TYPE
+
+AGENT_PYTREE_TYPE = AGENT_OBS_TYPE | AGENT_INFO_TYPE | AGENT_REWARD_TYPE
 
 OBS_TYPE = list[AGENT_OBS_TYPE] | dict[str, AGENT_OBS_TYPE]
 INFO_TYPE = list[AGENT_INFO_TYPE] | dict[str, AGENT_INFO_TYPE]
 REWARD_TYPE = list[AGENT_REWARD_TYPE] | dict[str, AGENT_REWARD_TYPE]
-DONE_TYPE = Array
+DONE_TYPE = AGENT_ARRAY_TYPE
 
-batch_dim = "batch_dim"
+SCENARIO_PYTREE_TYPE = OBS_TYPE | REWARD_TYPE | DONE_TYPE | INFO_TYPE
 
 
 class Color(Enum):
@@ -55,6 +72,8 @@ class Color(Enum):
     YELLOW = (0.87, 0.87, 0)
 
 
+@jaxtyped(typechecker=beartype)
+@chex.assert_max_traces(0)
 def _init_pyglet_device():
     available_devices = os.getenv("CUDA_VISIBLE_DEVICES")
     if available_devices is not None and len(available_devices) > 0:
@@ -65,6 +84,8 @@ def _init_pyglet_device():
         )
 
 
+@jaxtyped(typechecker=beartype)
+@chex.assert_max_traces(0)
 def save_video(name: str, frame_list: list[Array], fps: int):
     """Requires cv2. Saves a list of frames as an MP4 video."""
     import cv2
@@ -87,6 +108,8 @@ def save_video(name: str, frame_list: list[Array], fps: int):
     video.release()
 
 
+@jaxtyped(typechecker=beartype)
+@chex.assert_max_traces(0)
 def x_to_rgb_colormap(
     x: Array,
     low: float | None = None,
@@ -115,15 +138,9 @@ def x_to_rgb_colormap(
     return colors
 
 
-def extract_nested_with_index(data: Array | dict[str, Array], index: int):
-    if isinstance(data, Array):
-        return data[index]
-    elif isinstance(data, dict):
-        return {
-            key: extract_nested_with_index(value, index) for key, value in data.items()
-        }
-    else:
-        raise NotImplementedError(f"Invalid type of data {data}")
+@jaxtyped(typechecker=beartype)
+def extract_nested_with_index(data: Array | dict[str, Array], index: Int[Scalar, ""]):
+    return jax.tree.map(lambda x: x[index], data)
 
 
 # Define dimension variables for type annotations
@@ -135,14 +152,16 @@ angle = "angle"
 
 class JaxUtils:
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def clamp_with_norm(
-        tensor: Float[Array, f"{batch} {vector}"], max_norm: float
+        tensor: Float[Array, f"{batch} {vector}"], max_norm: Float[Scalar, ""]
     ) -> Float[Array, f"{batch} {vector}"]:
         norm = jnp.linalg.norm(tensor, axis=-1, keepdims=True)
         normalized = (tensor / norm) * max_norm
         return jnp.where(norm > max_norm, normalized, tensor)
 
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def rotate_vector(
         vector: Float[Array, f"{batch} {vector}"], angle: Float[Array, f"{batch}"]
     ) -> Float[Array, f"{batch} {vector}"]:
@@ -163,6 +182,7 @@ class JaxUtils:
         )
 
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def cross(
         vector_a: Float[Array, f"{batch} {vector}"],
         vector_b: Float[Array, f"{batch} {vector}"],
@@ -172,26 +192,11 @@ class JaxUtils:
         )[..., None]
 
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def compute_torque(
         f: Float[Array, f"{batch} {vector}"], r: Float[Array, f"{batch} {vector}"]
     ) -> Float[Array, f"{batch} 1"]:
         return JaxUtils.cross(r, f)
-
-    @staticmethod
-    def to_numpy(data: Array | dict[str, Array] | list[Array]):
-        if isinstance(data, Array):
-            return data.block_until_ready()
-        elif isinstance(data, dict):
-            return {k: JaxUtils.to_numpy(v) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [JaxUtils.to_numpy(v) for v in data]
-        raise TypeError("Unsupported type for conversion")
-
-    @staticmethod
-    def recursive_clone(value: dict[str, Array] | Array):
-        if isinstance(value, Array):
-            return value
-        return {key: JaxUtils.recursive_clone(val) for key, val in value.items()}
 
     @staticmethod
     @jaxtyped(typechecker=beartype)
@@ -252,22 +257,23 @@ class JaxUtils:
 
 class ScenarioUtils:
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def spawn_entities_randomly(
-        entities,
-        world,
-        env_index: int,
-        min_dist_between_entities: float,
+        entities: list[Entity],
+        world: World,
+        env_index: Int[Scalar, ""] | None,
+        min_dist_between_entities: Float[Scalar, ""],
         x_bounds: tuple[int, int],
         y_bounds: tuple[int, int],
         occupied_positions: Array | None = None,
         disable_warn: bool = False,
     ):
         batch_size = world.batch_dim if env_index is None else 1
+        if env_index is None:
+            env_index = jnp.asarray(-1)
 
         if occupied_positions is None:
-            occupied_positions = jnp.zeros(
-                (batch_size, 0, world.dim_p), device=world.device
-            )
+            occupied_positions = jnp.zeros((batch_size, 0, world.dim_p))
 
         for entity in entities:
             pos = ScenarioUtils.find_random_pos_for_entity(
@@ -282,10 +288,12 @@ class ScenarioUtils:
             occupied_positions = jnp.concatenate([occupied_positions, pos], axis=1)
             entity.set_pos(pos.squeeze(1), batch_index=env_index)
 
+    # TODO: Fix this
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def find_random_pos_for_entity(
         occupied_positions: Float[Array, f"{batch} n {dim_p}"],
-        env_index: int,
+        env_index: Int[Scalar, ""] | None,
         world,
         min_dist_between_entities: float,
         x_bounds: tuple[int, int],
@@ -339,6 +347,7 @@ class ScenarioUtils:
         return final_pos
 
     @staticmethod
+    @jaxtyped(typechecker=beartype)
     def check_kwargs_consumed(dictionary_of_kwargs: dict, warn: bool = True):
         if len(dictionary_of_kwargs) > 0:
             message = f"Scenario kwargs: {dictionary_of_kwargs} passed but not used by the scenario."
@@ -350,8 +359,13 @@ class ScenarioUtils:
                 raise ValueError(message)
 
     @staticmethod
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
     def render_agent_indices(
-        scenario, env_index: int, start_from: int = 0, exclude: list = None
+        scenario: BaseScenario,
+        env_index: int,
+        start_from: int = 0,
+        exclude: list = None,
     ) -> list["Geom"]:
         from jaxvmas.simulator import rendering
 
@@ -384,7 +398,13 @@ class ScenarioUtils:
         return geoms
 
     @staticmethod
-    def plot_entity_rotation(entity, env_index: int, length: float = 0.15) -> "Geom":
+    @jaxtyped(typechecker=beartype)
+    @chex.assert_max_traces(0)
+    def plot_entity_rotation(
+        entity: Entity,
+        env_index: int,
+        length: float = 0.15,
+    ) -> "Geom":
         from jaxvmas.simulator import rendering
 
         color = entity.color

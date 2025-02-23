@@ -8,7 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, jaxtyped
+from jaxtyping import Array, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
@@ -311,7 +311,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def dribble_policy(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
     ) -> tuple["AgentPolicy", "FootballWorld"]:
@@ -339,7 +339,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def passing_policy(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
     ) -> tuple["AgentPolicy", "FootballWorld"]:
@@ -385,7 +385,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def run(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
     ) -> tuple["AgentPolicy", "FootballWorld"]:
@@ -420,7 +420,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def dribble_to_goal(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         env_index=Ellipsis,
@@ -448,7 +448,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def dribble(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
@@ -467,7 +467,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def update_dribble(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
@@ -519,7 +519,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def shoot(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
@@ -570,7 +570,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def go_to(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
@@ -869,7 +869,7 @@ class AgentPolicy(PyTreeNode):
             return pos
 
     @jaxtyped(typechecker=beartype)
-    def check_possession(self, PRNG_key: Array, world: "FootballWorld"):
+    def check_possession(self, PRNG_key: PRNGKeyArray, world: "FootballWorld"):
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
             world
         )
@@ -913,7 +913,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def check_better_positions(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
         env_index=Ellipsis,
@@ -985,7 +985,7 @@ class AgentPolicy(PyTreeNode):
     @jaxtyped(typechecker=beartype)
     def get_pos_value(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         pos: Array,
         agent: "FootballAgent",
         world: "FootballWorld",
@@ -1882,7 +1882,9 @@ class Scenario(BaseScenario[FootballWorld]):
             for i in range(self.n_blue_agents):
 
                 def action_script(
-                    PRNG_key: Array, agent: "FootballAgent", world: "FootballWorld"
+                    PRNG_key: PRNGKeyArray,
+                    agent: "FootballAgent",
+                    world: "FootballWorld",
                 ):
                     return AgentPolicy.run(
                         world.blue_controller, PRNG_key, agent, world
@@ -1917,7 +1919,7 @@ class Scenario(BaseScenario[FootballWorld]):
         for i in range(self.n_red_agents):
 
             def action_script(
-                PRNG_key: Array, agent: "FootballAgent", world: "FootballWorld"
+                PRNG_key: PRNGKeyArray, agent: "FootballAgent", world: "FootballWorld"
             ):
                 return AgentPolicy.run(world.red_controller, PRNG_key, agent, world)
 
@@ -2130,7 +2132,7 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
-    def reset_world_at(self, PRNG_key: Array, env_index: int | None = None):
+    def reset_world_at(self, PRNG_key: PRNGKeyArray, env_index: int | None = None):
         print("starting reset_world_at")
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self = self.reset_agents(subkey, env_index)
@@ -2150,7 +2152,7 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
-    def reset_agents(self, PRNG_key: Array, env_index: int | None = None):
+    def reset_agents(self, PRNG_key: PRNGKeyArray, env_index: int | None = None):
         PRNG_key, subkey = jax.random.split(PRNG_key)
         if self.spawn_in_formation:
             agents = self._spawn_formation(subkey, self.blue_agents, True, env_index)
@@ -2526,7 +2528,7 @@ class Scenario(BaseScenario[FootballWorld]):
     @jaxtyped(typechecker=beartype)
     def _spawn_formation(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         agents: list["FootballAgent"],
         blue: bool,
         env_index: int | None,
@@ -2583,7 +2585,7 @@ class Scenario(BaseScenario[FootballWorld]):
 
     @jaxtyped(typechecker=beartype)
     def _get_random_spawn_position(
-        self, PRNG_key: Array, blue: bool, env_index: int | None
+        self, PRNG_key: PRNGKeyArray, blue: bool, env_index: int | None
     ):
         PRNG_key, subkey = jax.random.split(PRNG_key)
         return jax.random.uniform(
@@ -3302,7 +3304,9 @@ class Scenario(BaseScenario[FootballWorld]):
 def get_ball_action_script(
     agent_size: float, pitch_width: float, pitch_length: float, goal_size: float
 ):
-    def ball_action_script(PRNG_key: Array, ball: "BallAgent", world: FootballWorld):
+    def ball_action_script(
+        PRNG_key: PRNGKeyArray, ball: "BallAgent", world: FootballWorld
+    ):
         # Avoid getting stuck against the wall
         dist_thres = agent_size * 2
         vel_thres = 0.3

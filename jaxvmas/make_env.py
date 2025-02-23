@@ -5,7 +5,7 @@
 from typing import Optional, Union
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import PRNGKeyArray
 
 import jaxvmas.scenario as scenarios
 from jaxvmas.simulator.environment import Environment, Wrapper
@@ -15,7 +15,7 @@ from jaxvmas.simulator.scenario import BaseScenario
 def make_env(
     scenario: Union[str, BaseScenario],
     num_envs: int,
-    PRNG_key: Array,
+    PRNG_key: PRNGKeyArray,
     continuous_actions: bool = True,
     wrapper: Optional[Union[Wrapper, str]] = None,
     max_steps: int | float = jnp.inf,

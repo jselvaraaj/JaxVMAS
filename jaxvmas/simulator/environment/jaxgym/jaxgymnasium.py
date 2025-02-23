@@ -13,11 +13,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, PyTree, jaxtyped
+from jaxtyping import Array, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.simulator.environment.environment import Environment, RenderObject
 from jaxvmas.simulator.environment.jaxgym.base import BaseJaxGymWrapper, EnvData
+from jaxvmas.simulator.utils import INFO_TYPE, OBS_TYPE
 
 # Type definitions for dimensions
 batch = "batch"  # Batch dimension for vectorized environments
@@ -68,7 +69,7 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def step(
-        self, PRNG_key: Array, action: list
+        self, PRNG_key: PRNGKeyArray, action: list
     ) -> tuple["JaxGymnasiumWrapper", EnvData]:
         """Take a step in the environment.
 
@@ -102,10 +103,10 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
     @jaxtyped(typechecker=beartype)
     def reset(
         self,
-        PRNG_key: Array,
+        PRNG_key: PRNGKeyArray,
         *,
         options: dict | None = None,
-    ) -> tuple["JaxGymnasiumWrapper", tuple[PyTree, dict]]:
+    ) -> tuple["JaxGymnasiumWrapper", tuple[OBS_TYPE, INFO_TYPE]]:
 
         # Reset environment state
         env, (obs, info) = self.env.reset_at(

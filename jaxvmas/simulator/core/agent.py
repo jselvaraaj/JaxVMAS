@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable, Sequence
-from jaxtyping import Array, Bool, Int, jaxtyped
+from jaxtyping import Array, Bool, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.simulator.core.action import Action
 from jaxvmas.simulator.core.entity import Entity
@@ -209,7 +209,7 @@ class Agent(Entity):
 
     @jaxtyped(typechecker=beartype)
     def action_callback(
-        self, PRNG_key: Array, world: "World"
+        self, PRNG_key: PRNGKeyArray, world: "World"
     ) -> tuple["Agent", "World"]:
         PRNG_key, sub_key = jax.random.split(PRNG_key)
         self, world = self.action_script(sub_key, self, world)
