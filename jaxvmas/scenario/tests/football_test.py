@@ -1020,3 +1020,212 @@ def test_reward_calculation():
     reward = scenario.reward(scenario.blue_agents[0])
     assert isinstance(reward, Array)
     assert reward.shape == (1,)
+
+
+def test_reward_ball_to_goal():
+    """Test reward calculation for ball movement towards goal."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+    )
+    scenario = scenario.env_make_world(batch_dim=2)
+
+    # Test blue team reward
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(pos=jnp.array([[1.0, 0.0], [-1.0, 0.0]])),
+            pos_shaping_blue=jnp.zeros(2),
+        )
+    )
+    reward = scenario.reward_ball_to_goal(blue=True)
+
+    assert reward.shape == (2,), "Incorrect reward shape"
+    assert jnp.all(reward[0] > reward[1]), "Reward should be higher when closer to goal"
+
+    # Test red team reward
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(pos_shaping_red=jnp.zeros(2))
+    )
+    reward = scenario.reward_ball_to_goal(blue=False)
+    assert jnp.all(reward[1] > reward[0]), "Reward should be higher when closer to goal"
+
+
+def test_reward_all_agent_to_ball():
+    """Test reward calculation for agents approaching ball."""
+    scenario = Scenario.create(
+        n_blue_agents=2,  # Use only 2 agents for simpler testing
+        n_red_agents=2,
+        pos_shaping_factor_agent_ball=1.0,  # Set to 1.0 for simpler testing
+        distance_to_ball_trigger=0.3,  # Set lower than min test distance
+    )
+    scenario = scenario.env_make_world(batch_dim=2)
+
+    # Create test agents at different distances from ball
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(
+                pos=jnp.zeros((2, 2)),
+                vel=jnp.zeros((2, 2)),
+            )
+        )
+    )
+
+    # Position agents at different distances from ball
+    blue_agents = scenario.blue_agents
+    blue_agents[0] = blue_agents[0].replace(
+        state=blue_agents[0].state.replace(pos=jnp.array([[0.8, 0.0], [1.0, 0.0]]))
+    )
+    blue_agents[1] = blue_agents[1].replace(
+        state=blue_agents[1].state.replace(pos=jnp.array([[1.0, 0.0], [1.2, 0.0]]))
+    )
+    scenario = scenario.replace(blue_agents=blue_agents)
+
+    # Initialize reward calculation state
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            pos_shaping_agent_blue=jnp.array([1.5, 1.2]),
+            pos_rew_agent_blue=jnp.zeros(2),
+        )
+    )
+
+    # First reward calculation
+    reward1 = scenario.reward_all_agent_to_ball(blue=True)
+    assert reward1.shape == (2,), "Incorrect reward shape"
+    assert jnp.all(
+        reward1[0] > reward1[1]
+    ), "Reward should be higher when agent made more progress"
+    assert jnp.all(reward1[0] > 0), "Reward should be positive when agent moves closer"
+    assert jnp.allclose(reward1[0], jnp.array(0.7)), "Incorrect reward value"
+    assert jnp.allclose(reward1[1], jnp.array(0.2)), "Incorrect reward value"
+
+    # Store previous shaping values
+    prev_shaping = scenario.ball.pos_shaping_agent_blue
+
+    # Move agents closer to ball
+    blue_agents = scenario.blue_agents
+    blue_agents[0] = blue_agents[0].replace(
+        state=blue_agents[0].state.replace(pos=jnp.array([[0.5, 0.0], [0.8, 0.0]]))
+    )
+    blue_agents[1] = blue_agents[1].replace(
+        state=blue_agents[1].state.replace(pos=jnp.array([[0.7, 0.0], [1.0, 0.0]]))
+    )
+    scenario = scenario.replace(blue_agents=blue_agents)
+
+    # Calculate reward after movement
+    reward2 = scenario.reward_all_agent_to_ball(blue=True)
+    assert reward2.shape == (2,), "Incorrect reward shape"
+    assert jnp.all(
+        reward2[0] > reward2[1]
+    ), "Reward should be higher when agent made more progress"
+    assert jnp.allclose(reward2[0], prev_shaping[0] - 0.5), "Incorrect reward value"
+    assert jnp.allclose(reward2[1], prev_shaping[1] - 0.8), "Incorrect reward value"
+
+
+def test_observation_base():
+    """Test base observation generation."""
+    scenario = Scenario.create(
+        n_blue_agents=4,
+        n_red_agents=4,
+        observe_teammates=False,  # Disable teammate observation for this test
+        observe_adversaries=False,  # Disable adversary observation for this test
+        dict_obs=True,  # Enable dictionary observations
+    )
+    scenario = scenario.env_make_world(batch_dim=2)
+
+    # Test observation for blue agent
+    agent_pos = jnp.array([[0.0, 0.0], [1.0, 1.0]])
+    agent_rot = jnp.zeros(2)
+    agent_vel = jnp.zeros_like(agent_pos)
+    agent_force = jnp.zeros_like(agent_pos)
+    ball_pos = jnp.array([[0.5, 0.5], [-0.5, -0.5]])
+    ball_vel = jnp.zeros_like(ball_pos)
+    ball_force = jnp.zeros_like(ball_pos)
+    goal_pos = jnp.array([[2.0, 0.0], [2.0, 0.0]])
+
+    obs = scenario.observation_base(
+        agent_pos=agent_pos,
+        agent_rot=agent_rot,
+        agent_vel=agent_vel,
+        agent_force=agent_force,
+        teammate_poses=[],
+        teammate_forces=[],
+        teammate_vels=[],
+        adversary_poses=[],
+        adversary_forces=[],
+        adversary_vels=[],
+        ball_pos=ball_pos,
+        ball_vel=ball_vel,
+        ball_force=ball_force,
+        goal_pos=goal_pos,
+        blue=True,
+    )
+
+    assert isinstance(obs, dict), "Observation should be a dictionary"
+    assert "obs" in obs, "Observation should contain 'obs' key"
+    assert len(obs["obs"].shape) == 2, "Observation should be 2D array"
+
+
+def test_agent_policy_run():
+    """Test agent policy execution."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+        n_traj_points=0,  # Set to 0 to disable trajectory visualization
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+
+    # Initialize world state
+    PRNG_key = jax.random.PRNGKey(0)
+    scenario = scenario.reset_world_at(PRNG_key)
+
+    policy = AgentPolicy.create(
+        team="Blue", speed_strength=1.0, decision_strength=1.0, precision_strength=1.0
+    )
+    policy = policy.init(scenario.world)
+
+    agent = scenario.blue_agents[0]
+    world = scenario.world.replace(
+        traj_points={
+            "Blue": {agent.id: []},
+            "Red": {},
+        }  # Initialize empty trajectory points
+    )
+    scenario = scenario.replace(world=world)
+
+    # Test normal operation
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    policy, agent, world = policy.run(subkey, agent, scenario.world)
+    scenario = scenario.replace(world=world)
+    assert agent.action.u is not None, "Action should be set"
+    assert agent.action.u.shape == (1, agent.action_size), "Incorrect action shape"
+
+    # Test disabled policy
+    policy = policy.disable()
+    PRNG_key, subkey = jax.random.split(PRNG_key)
+    policy, agent, world = policy.run(subkey, agent, scenario.world)
+    scenario = scenario.replace(world=world)
+    assert jnp.allclose(
+        agent.action.u, jnp.zeros_like(agent.action.u)
+    ), "Disabled policy should produce zero actions"
+
+
+def test_splines_hermite():
+    """Test Spline interpolation."""
+    p0 = jnp.array([[0.0, 0.0], [1.0, 1.0]])
+    p1 = jnp.array([[1.0, 1.0], [2.0, 2.0]])
+    p0dot = jnp.array([[0.5, 0.5], [0.5, 0.5]])
+    p1dot = jnp.array([[0.5, 0.5], [0.5, 0.5]])
+
+    splines = Splines()
+    # Test interpolation at different points
+    _, result_start = splines.hermite(p0, p1, p0dot, p1dot, u=0.0, deriv=0)
+    _, result_mid = splines.hermite(p0, p1, p0dot, p1dot, u=0.5, deriv=0)
+    _, result_end = splines.hermite(p0, p1, p0dot, p1dot, u=1.0, deriv=0)
+
+    assert jnp.allclose(result_start, p0), "Start point should match p0"
+    assert jnp.allclose(result_end, p1), "End point should match p1"
+    assert result_mid.shape == p0.shape, "Interpolated point should have same shape"
+
+    # Test derivatives
+    _, velocity = splines.hermite(p0, p1, p0dot, p1dot, u=0.0, deriv=1)
+    assert jnp.allclose(velocity, p0dot), "Initial velocity should match p0dot"

@@ -8,7 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Int, PRNGKeyArray, jaxtyped
+from jaxtyping import Array, Float, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
@@ -112,7 +112,7 @@ class AgentPolicy(PyTreeNode):
     objectives: dict[str, dict[str, Array]]
     agent_possession: dict[int, Array]
     team_possession: Array | None
-    team_disps: dict[str, Array]
+    team_disps: dict[tuple[bool, bool, bool], Array]
     splines: Splines
 
     @classmethod
@@ -333,7 +333,7 @@ class AgentPolicy(PyTreeNode):
             agent,
             world,
             pos=best_pos,
-            aggression=1.0,
+            aggression=jnp.array(1.0, dtype=jnp.float32),
             env_index=move_mask,
         )
         return self, world
@@ -370,7 +370,7 @@ class AgentPolicy(PyTreeNode):
             agent,
             world,
             pos=best_pos,
-            aggression=1.0,
+            aggression=jnp.array(1.0, dtype=jnp.float32),
             env_index=move_mask,
         )
         return self, world
@@ -390,7 +390,7 @@ class AgentPolicy(PyTreeNode):
         PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
-    ) -> tuple["AgentPolicy", "FootballWorld"]:
+    ) -> tuple["AgentPolicy", "FootballAgent", "FootballWorld"]:
         print("Compiling for agent", agent.name)
         if not self.disabled:
             if "0" in agent.name:
@@ -409,7 +409,7 @@ class AgentPolicy(PyTreeNode):
         else:
             agent = agent.replace(
                 action=agent.action.replace(
-                    u=jnp.zeros((self.world.batch_dim, agent.action_size))
+                    u=jnp.zeros((world.batch_dim, agent.action_size))
                 )
             )
         world = world.replace(
@@ -417,7 +417,7 @@ class AgentPolicy(PyTreeNode):
             blue_controller=self if self.team_name == "Blue" else world.blue_controller,
         )
 
-        return agent, world
+        return self, agent, world
 
     @jaxtyped(typechecker=beartype)
     def dribble_to_goal(
@@ -488,7 +488,9 @@ class AgentPolicy(PyTreeNode):
         ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
         direction = ball_disp / ball_dist[:, None]
         hit_vel = direction * self.dribble_speed
-        start_vel = self.get_start_vel(ball_pos, hit_vel, agent_pos, aggression=0.0)
+        start_vel = self.get_start_vel(
+            ball_pos, hit_vel, agent_pos, aggression=jnp.array(0.0, dtype=jnp.float32)
+        )
         start_vel_mag = jnp.linalg.norm(start_vel, axis=-1)
         # Calculate hit_pos, the adjusted position to strike the ball so it goes where we want
         offset = start_vel.copy()
@@ -578,7 +580,7 @@ class AgentPolicy(PyTreeNode):
         pos: Array,
         vel: Array | None = None,
         start_vel: Array | None = None,
-        aggression: float = 1.0,
+        aggression: Float[Array, ""] = jnp.array(1.0, dtype=jnp.float32),
         env_index=Ellipsis,
     ):
         start_pos = agent.state.pos
@@ -590,7 +592,9 @@ class AgentPolicy(PyTreeNode):
             vel = jnp.zeros_like(pos)
         if start_vel is None:
             aggression = (jnp.linalg.norm(pos - start_pos, axis=-1) > 0.1) * aggression
-            start_vel = self.get_start_vel(pos, vel, start_pos, aggression=aggression)
+            start_vel = self.get_start_vel(
+                pos, vel, start_pos, aggression=aggression[0]
+            )
 
         target_pos = self.objectives[agent.name]["target_pos"]
         if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
@@ -653,7 +657,11 @@ class AgentPolicy(PyTreeNode):
 
     @jaxtyped(typechecker=beartype)
     def get_start_vel(
-        self, pos: Array, vel: Array, start_pos: Array, aggression: float = 0.0
+        self,
+        pos: Array,
+        vel: Array,
+        start_pos: Array,
+        aggression: Float[Array, ""] = jnp.array(0.0, dtype=jnp.float32),
     ):
         # Calculates the starting velocity for a planned trajectory ending at position pos at velocity vel
         # The initial velocity is not directly towards the goal because we want a curved path
@@ -3058,12 +3066,12 @@ class Scenario(BaseScenario[FootballWorld]):
         agent_rot: Array,
         agent_vel: Array,
         agent_force: Array,
-        teammate_poses: Array,
-        teammate_forces: Array,
-        teammate_vels: Array,
-        adversary_poses: Array,
-        adversary_forces: Array,
-        adversary_vels: Array,
+        teammate_poses: list[Array],
+        teammate_forces: list[Array],
+        teammate_vels: list[Array],
+        adversary_poses: list[Array],
+        adversary_forces: list[Array],
+        adversary_vels: list[Array],
         ball_pos: Array,
         ball_vel: Array,
         ball_force: Array,
@@ -3097,14 +3105,11 @@ class Scenario(BaseScenario[FootballWorld]):
                     input[j] = jnp.broadcast_to(
                         input[j][None], (batch_dim, *input[j].shape)
                     )
-                input[j] = input[j].copy()
-
             else:
                 o = input[j]
                 for i in range(len(o)):
                     if len(o[i].shape) == 1:
                         o[i] = jnp.broadcast_to(o[i][None], (batch_dim, *o[i].shape))
-                    o[i] = o[i].copy()
 
         (
             agent_pos,
