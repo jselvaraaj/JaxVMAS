@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
+from jaxtyping import Array
 
 from jaxvmas.equinox_utils import dataclass_to_dict_first_layer
 from jaxvmas.scenario.football import (
@@ -724,3 +725,298 @@ def test_reset_controllers():
     scenario = scenario.reset_controllers()
     assert scenario.red_controller._initialised, "Controller not initialized"
     assert scenario.red_controller._reset_called, "Controller reset not called"
+
+
+def test_get_closest_agent_to_ball():
+    """Test distance calculation between agents and ball."""
+    scenario = Scenario.create(
+        n_blue_agents=3,
+        n_red_agents=3,
+    )
+    scenario = scenario.env_make_world(batch_dim=2)
+
+    # Set known positions for ball and agents
+    pos = jnp.array(
+        [
+            [0.0, 0.0],  # First env
+            [1.0, 1.0],  # Second env
+        ]
+    )
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(state=scenario.ball.state.replace(pos=pos))
+    )
+
+    # Set blue agents positions
+    blue_agents = []
+    for i, agent in enumerate(scenario.blue_agents):
+        pos = jnp.asarray(
+            [
+                [float(i), 0.0],  # First env
+                [float(i), 1.0],  # Second env
+            ]
+        )
+        agent = agent.replace(state=agent.state.replace(pos=pos))
+        blue_agents.append(agent)
+    scenario = scenario.replace(blue_agents=blue_agents)
+    # Test full batch
+    min_dists = scenario.get_closest_agent_to_ball(scenario.blue_agents, env_index=None)
+    assert min_dists.shape == (2,)  # One value per environment
+    assert jnp.allclose(min_dists[0], jnp.array(0.0))  # Closest agent at (0,0)
+    assert jnp.allclose(min_dists[1], jnp.array(0.0))  # Closest agent at (0,1)
+
+    # Test single environment
+    min_dist = scenario.get_closest_agent_to_ball(
+        scenario.blue_agents, env_index=jnp.array([0])
+    )
+    assert min_dist.shape == ()  # Scalar value
+    assert jnp.allclose(min_dist, jnp.array(0.0))
+
+
+def test_render_field():
+    """Test field rendering state changes."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+
+    # Test enabling rendering
+    scenario = scenario.render_field(True)
+    assert scenario._render_field == True
+    assert jnp.all(scenario.left_top_wall.is_rendering)
+    assert jnp.all(scenario.right_bottom_wall.is_rendering)
+
+    # Test disabling rendering
+    scenario = scenario.render_field(False)
+    assert scenario._render_field == False
+    assert not jnp.any(scenario.left_top_wall.is_rendering)
+    assert not jnp.any(scenario.right_bottom_wall.is_rendering)
+
+
+def test_process_action_shooting():
+    """Test action processing with shooting enabled."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+        enable_shooting=True,
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+    PRNG_key = jax.random.PRNGKey(0)
+    scenario = scenario.reset_world_at(PRNG_key)
+    # Setup test conditions
+    agent = scenario.blue_agents[0]
+    agent = agent.replace(
+        action=agent.action.replace(u=jnp.array([[1.0, 0.0, 0.0, 1.0]])),
+        state=agent.state.replace(pos=jnp.array([[0.0, 0.0]]), rot=jnp.array([[0.0]])),
+    )
+    scenario = scenario.replace(blue_agents=[agent] + scenario.blue_agents[1:])
+
+    # Place ball near agent
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(
+                pos=agent.state.pos + jnp.array([[0.05, 0.0]]),
+                vel=jnp.zeros_like(scenario.ball.state.pos),
+            ),
+            kicking_action=jnp.zeros_like(scenario.ball.state.pos),
+        )
+    )
+
+    # Process action
+    scenario, agent = scenario.process_action(agent)
+
+    # Verify shooting conditions
+    assert hasattr(agent, "ball_within_range")
+    assert hasattr(agent, "ball_within_angle")
+    assert hasattr(agent, "shoot_force")
+
+    # Verify action modification
+    assert agent.action.u.shape[-1] == 4  # Action size is still 4 after processing
+    assert jnp.any(scenario.ball.kicking_action)  # Ball received kick force
+
+
+def test_pre_step():
+    """Test pre-step processing."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+        enable_shooting=True,
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+
+    # Setup initial conditions
+    PRNG_key = jax.random.PRNGKey(0)
+    scenario = scenario.reset_world_at(PRNG_key)
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(
+                pos=jnp.zeros((1, 2)), vel=jnp.zeros((1, 2))
+            ),
+            action=scenario.ball.action.replace(u=jnp.zeros((1, 2))),
+            kicking_action=jnp.ones((1, 2)),
+        )
+    )
+
+    # Execute pre-step
+    scenario = scenario.pre_step()
+
+    # Verify state updates
+    assert scenario._agents_rel_pos_to_ball is not None
+    assert jnp.all(scenario.ball.action.u == 1.0)  # Kicking action transferred
+    assert jnp.all(scenario.ball.kicking_action == 0.0)  # Kicking action reset
+
+
+def test_agent_policy_possession():
+    """Test agent policy possession detection."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+
+    # Create test agents and add them to world
+    blue_agents = [
+        FootballAgent.create(
+            name=f"blue_{i}",
+            shape=Sphere(radius=0.05),
+            action_size=2,
+            dynamics=Holonomic(),
+            color=Color.BLUE,
+        )
+        for i in range(2)
+    ]
+    red_agents = [
+        FootballAgent.create(
+            name=f"red_{i}",
+            shape=Sphere(radius=0.05),
+            action_size=2,
+            dynamics=Holonomic(),
+            color=Color.RED,
+        )
+        for i in range(2)
+    ]
+
+    world = scenario.world
+    ball = scenario.ball
+    world = world.replace(
+        agents=[],
+    )
+    for agent in blue_agents + red_agents:
+        world = world.add_agent(agent)
+    world = world.add_agent(ball)
+    scenario = scenario.replace(world=world)
+
+    # Initialize world
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(
+                pos=jnp.array([[0.0, 0.0]]),
+                vel=jnp.zeros((1, 2)),
+            )
+        )
+    )
+    blue_agents = scenario.blue_agents
+    red_agents = scenario.red_agents
+
+    # Set agent positions
+    blue_agents[0] = blue_agents[0].replace(
+        state=blue_agents[0].state.replace(pos=jnp.array([[0.1, 0.0]]))
+    )
+    blue_agents[1] = blue_agents[1].replace(
+        state=blue_agents[1].state.replace(pos=jnp.array([[1.0, 0.0]]))
+    )
+    red_agents[0] = red_agents[0].replace(
+        state=red_agents[0].state.replace(pos=jnp.array([[0.5, 0.5]]))
+    )
+    red_agents[1] = red_agents[1].replace(
+        state=red_agents[1].state.replace(pos=jnp.array([[-0.5, -0.5]]))
+    )
+
+    # Set agent velocities
+    _blue_agents = []
+    for agent in blue_agents:
+        agent = agent.replace(state=agent.state.replace(vel=jnp.zeros((1, 2))))
+        _blue_agents.append(agent)
+    _red_agents = []
+    for agent in red_agents:
+        agent = agent.replace(state=agent.state.replace(vel=jnp.zeros((1, 2))))
+        _red_agents.append(agent)
+
+    scenario = scenario.replace(blue_agents=_blue_agents, red_agents=_red_agents)
+
+    # Create policy for blue team
+    policy = AgentPolicy.create(
+        team="Blue", speed_strength=1.0, decision_strength=1.0, precision_strength=1.0
+    )
+    policy = policy.init(scenario.world)
+
+    # Initialize policy attributes
+    policy = policy.replace(
+        possession_lookahead=0.0
+    )  # Disable lookahead for deterministic test
+    policy = policy.replace(
+        decision_strength=1.0
+    )  # Full decision strength for deterministic test
+
+    # Test possession check
+    PRNG_key = jax.random.PRNGKey(0)
+    policy = policy.check_possession(PRNG_key, scenario.world)
+
+    assert jnp.all(policy.team_possession)  # Blue team has possession
+    assert jnp.all(policy.agent_possession[blue_agents[0].id])  # Agent 0 has possession
+    assert jnp.all(
+        ~policy.agent_possession[blue_agents[1].id]
+    )  # Agent 1 does not have possession
+
+
+def test_reward_calculation():
+    """Test reward calculations for both teams."""
+    scenario = Scenario.create(
+        n_blue_agents=2,
+        n_red_agents=2,
+        dense_reward=True,
+    )
+    scenario = scenario.env_make_world(batch_dim=1)
+
+    # Initialize ball and goal positions
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(
+                pos=jnp.array([[scenario.pitch_length / 2 + 0.1, 0.0]]),
+                vel=jnp.zeros((1, 2)),
+            )
+        )
+    )
+
+    # Initialize ball shaping attributes
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            pos_shaping_blue=jnp.zeros(1),
+            pos_shaping_red=jnp.zeros(1),
+            pos_shaping_agent_blue=jnp.zeros(1),
+            pos_shaping_agent_red=jnp.zeros(1),
+            pos_rew_blue=jnp.zeros(1),
+            pos_rew_red=jnp.zeros(1),
+            pos_rew_agent_blue=jnp.zeros(1),
+            pos_rew_agent_red=jnp.zeros(1),
+        )
+    )
+
+    # Test goal reward
+    reward = scenario.reward(scenario.blue_agents[0])
+    assert reward > 0  # Blue team scored
+
+    # Test dense reward components
+    scenario = scenario.replace(
+        ball=scenario.ball.replace(
+            state=scenario.ball.state.replace(pos=jnp.array([[0.0, 0.0]]))
+        )
+    )
+    blue_agents = scenario.blue_agents
+    blue_agents[0] = blue_agents[0].replace(
+        state=blue_agents[0].state.replace(pos=jnp.array([[0.1, 0.0]]))
+    )
+    scenario = scenario.replace(blue_agents=blue_agents)
+    reward = scenario.reward(scenario.blue_agents[0])
+    assert isinstance(reward, Array)
+    assert reward.shape == (1,)

@@ -140,11 +140,20 @@ class Entity(JaxVectorizedObject):
 
     @property
     def is_rendering(self):
+        if self._render is None:
+            self.reset_render()
         return self._render
 
     @property
     def moment_of_inertia(self):
         return self.shape.moment_of_inertia(self.mass)
+
+    def replace(self, **kwargs) -> "Entity":
+        if "is_rendering" in kwargs:
+            is_rendering = kwargs.pop("is_rendering")
+            kwargs["_render"] = is_rendering
+
+        return JaxVectorizedObject.replace(self, **kwargs)
 
     @jaxtyped(typechecker=beartype)
     def reset_render(self):

@@ -1200,6 +1200,26 @@ class FootballWorld(World):
             agents = self.agents
             agents = agents[: self.n_blue_agents + self.n_red_agents] + [ball]
             self = self.replace(agents=agents)
+        if "right_top_wall" in kwargs:
+            right_top_wall = kwargs.pop("right_top_wall")
+            self = self.replace(landmarks=[right_top_wall] + self.landmarks[1:])
+
+        if "left_top_wall" in kwargs:
+            left_top_wall = kwargs.pop("left_top_wall")
+            self = self.replace(
+                landmarks=self.landmarks[:1] + [left_top_wall] + self.landmarks[2:]
+            )
+        if "right_bottom_wall" in kwargs:
+            right_bottom_wall = kwargs.pop("right_bottom_wall")
+            self = self.replace(
+                landmarks=self.landmarks[:2] + [right_bottom_wall] + self.landmarks[3:]
+            )
+
+        if "left_bottom_wall" in kwargs:
+            left_bottom_wall = kwargs.pop("left_bottom_wall")
+            self = self.replace(
+                landmarks=self.landmarks[:3] + [left_bottom_wall] + self.landmarks[4:]
+            )
 
         return World.replace(self, **kwargs)
 
@@ -1578,6 +1598,23 @@ class Scenario(BaseScenario[FootballWorld]):
             blue_controller = kwargs.pop("blue_controller")
             self = self.replace(
                 world=self.world.replace(blue_controller=blue_controller)
+            )
+
+        if "left_top_wall" in kwargs:
+            left_top_wall = kwargs.pop("left_top_wall")
+            self = self.replace(world=self.world.replace(left_top_wall=left_top_wall))
+        if "right_top_wall" in kwargs:
+            right_top_wall = kwargs.pop("right_top_wall")
+            self = self.replace(world=self.world.replace(right_top_wall=right_top_wall))
+        if "left_bottom_wall" in kwargs:
+            left_bottom_wall = kwargs.pop("left_bottom_wall")
+            self = self.replace(
+                world=self.world.replace(left_bottom_wall=left_bottom_wall)
+            )
+        if "right_bottom_wall" in kwargs:
+            right_bottom_wall = kwargs.pop("right_bottom_wall")
+            self = self.replace(
+                world=self.world.replace(right_bottom_wall=right_bottom_wall)
             )
 
         return super(BaseScenario, self).replace(**kwargs)
@@ -2673,10 +2710,18 @@ class Scenario(BaseScenario[FootballWorld]):
 
     def render_field(self, render: bool):
         _render_field = render
-        left_top_wall = self.left_top_wall.is_rendering.at[:].set(render)
-        left_bottom_wall = self.left_bottom_wall.is_rendering.at[:].set(render)
-        right_top_wall = self.right_top_wall.is_rendering.at[:].set(render)
-        right_bottom_wall = self.right_bottom_wall.is_rendering.at[:].set(render)
+        left_top_wall = self.left_top_wall.replace(
+            is_rendering=self.left_top_wall.is_rendering.at[:].set(render)
+        )
+        left_bottom_wall = self.left_bottom_wall.replace(
+            is_rendering=self.left_bottom_wall.is_rendering.at[:].set(render)
+        )
+        right_top_wall = self.right_top_wall.replace(
+            is_rendering=self.right_top_wall.is_rendering.at[:].set(render)
+        )
+        right_bottom_wall = self.right_bottom_wall.replace(
+            is_rendering=self.right_bottom_wall.is_rendering.at[:].set(render)
+        )
 
         self = self.replace(
             _render_field=_render_field,
@@ -2692,12 +2737,12 @@ class Scenario(BaseScenario[FootballWorld]):
     def process_action(self, agent: "FootballAgent"):
         print("starting process_action")
         assert (
-            self.reset == True
+            self.reset is True
         ), "Please reset the environment before processing actions"
-        if agent is self.ball:
+        if agent.id == self.ball.id:
             return self, agent
         blue = agent.id in [a.id for a in self.blue_agents]
-        if agent.action_script is None and not blue:  # Non AI
+        if not agent.is_scripted_agent and not blue:  # Non AI
             u_x = -agent.action.u[..., X]  # Red agents have the action X flipped
             u = agent.action.u.at[..., X].set(u_x)
             agent = agent.replace(action=agent.action.replace(u=u))
@@ -2745,8 +2790,8 @@ class Scenario(BaseScenario[FootballWorld]):
 
             kicking_action = self.ball.kicking_action + shoot_force
             self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
-            u = agent.action.u[:, :-1]
-            agent = agent.replace(action=agent.action.replace(u=u))
+            # u = agent.action.u[:, :-1]
+            # agent = agent.replace(action=agent.action.replace(u=u))
         print("ending process_action")
         return self, agent
 
@@ -2765,16 +2810,18 @@ class Scenario(BaseScenario[FootballWorld]):
             _agents_closest_to_ball = _agent_dist_to_ball == _agent_dist_to_ball.min(
                 axis=-1, keepdims=True
             )
+            ball = self.ball
+            u = ball.action.u + ball.kicking_action
+            kicking_action = ball.kicking_action.at[:].set(0)
+
+            ball = ball.replace(action=ball.action.replace(u=u))
+            ball = ball.replace(kicking_action=kicking_action)
             self = self.replace(
+                ball=ball,
                 _agents_rel_pos_to_ball=_agents_rel_pos_to_ball,
                 _agent_dist_to_ball=_agent_dist_to_ball,
                 _agents_closest_to_ball=_agents_closest_to_ball,
             )
-
-            u = self.ball.action.u + self.ball.kicking_action
-            self.ball = self.ball.replace(action=self.ball.action.replace(u=u))
-            kicking_action = self.ball.kicking_action.at[:].set(0)
-            self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
 
         print("ending pre_step")
         return self
@@ -2804,8 +2851,8 @@ class Scenario(BaseScenario[FootballWorld]):
 
             _done = blue_score | red_score
             # Dense Reward
-            _dense_reward_blue = 0
-            _dense_reward_red = 0
+            _dense_reward_blue = jnp.zeros(self.world.batch_dim)
+            _dense_reward_red = jnp.zeros(self.world.batch_dim)
             self = self.replace(
                 _sparse_reward_blue=_sparse_reward_blue,
                 _sparse_reward_red=_sparse_reward_red,
