@@ -124,7 +124,7 @@ class JaxGymnasiumVecWrapper(BaseJaxGymWrapper):
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         **kwargs,
-    ) -> tuple[RenderObject, Array]:
+    ) -> tuple[RenderObject, Array | None]:
         return self.env.render(
             render_object=render_object,
             mode=self.render_mode,

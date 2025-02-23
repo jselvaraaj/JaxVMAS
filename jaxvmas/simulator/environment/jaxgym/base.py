@@ -6,7 +6,7 @@
 import chex
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Bool, Float, PRNGKeyArray, Scalar, jaxtyped
+from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, Scalar, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode
 from jaxvmas.simulator.environment.environment import Environment
@@ -23,8 +23,10 @@ from jaxvmas.simulator.utils import (
 # Type definitions for dimensions
 
 batch_axis_dim = "batch_axis_dim"
-BATCHED_ARRAY_TYPE = Float[Array, f"{batch_axis_dim} ..."]
-UNBATCHED_ARRAY_TYPE = Float[Array, "..."]
+BATCHED_ARRAY_TYPE = (
+    Float[Array, f"{batch_axis_dim} ..."] | Int[Array, f"{batch_axis_dim} ..."]
+)
+UNBATCHED_ARRAY_TYPE = Float[Array, "..."] | Int[Array, "..."]
 
 
 agents_dim = "agents"  # Number of agents dimension

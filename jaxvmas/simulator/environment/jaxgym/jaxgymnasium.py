@@ -123,11 +123,11 @@ class JaxGymnasiumWrapper(BaseJaxGymWrapper):
         agent_index_focus: int | None = None,
         visualize_when_rgb: bool = False,
         **kwargs,
-    ) -> tuple[RenderObject, Array]:
+    ) -> tuple[RenderObject, Array | None]:
 
         kwargs = {
             "mode": self.render_mode,
-            "env_index": jnp.asarray(0),
+            "env_index": 0,
             "agent_index_focus": agent_index_focus,
             "visualize_when_rgb": visualize_when_rgb,
             **kwargs,

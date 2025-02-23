@@ -1,6 +1,7 @@
 #  Copyright (c) 2022-2024.
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
+from __future__ import annotations
 
 from enum import Enum
 
@@ -44,7 +45,13 @@ class Splines(PyTreeNode):
 
     @jaxtyped(typechecker=beartype)
     def hermite(
-        self, p0: Array, p1: Array, p0dot: Array, p1dot: Array, u: float, deriv: int
+        self,
+        p0: Array,
+        p1: Array,
+        p0dot: Array,
+        p1dot: Array,
+        u: Float[Array, "1"],
+        deriv: int,
     ):
         # A trajectory specified by the initial pos p0, initial vel p0dot, end pos p1,
         #     and end vel p1dot.
@@ -55,13 +62,12 @@ class Splines(PyTreeNode):
         # assert isinstance(u, float)
         U_matmul_A = None
         if U_matmul_A is None:
-            u_jax_array = jnp.asarray([u])
             U = jnp.stack(
                 [
-                    self.nPr(3, deriv) * (u_jax_array ** max(0, 3 - deriv)),
-                    self.nPr(2, deriv) * (u_jax_array ** max(0, 2 - deriv)),
-                    self.nPr(1, deriv) * (u_jax_array ** max(0, 1 - deriv)),
-                    self.nPr(0, deriv) * (u_jax_array**0),
+                    self.nPr(3, deriv) * (u ** max(0, 3 - deriv)),
+                    self.nPr(2, deriv) * (u ** max(0, 2 - deriv)),
+                    self.nPr(1, deriv) * (u ** max(0, 1 - deriv)),
+                    self.nPr(0, deriv) * (u**0),
                 ],
                 axis=1,
             )
@@ -730,7 +736,7 @@ class AgentPolicy(PyTreeNode):
             target_pos,
             start_vel,
             target_vel,
-            u=min(self.pos_lookahead, 1),
+            u=jnp.asarray([min(self.pos_lookahead, 1)]),
             deriv=0,
         )
         self = self.replace(splines=splines)
@@ -740,7 +746,7 @@ class AgentPolicy(PyTreeNode):
             target_pos,
             start_vel,
             target_vel,
-            u=min(self.vel_lookahead, 1),
+            u=jnp.asarray([min(self.vel_lookahead, 1)]),
             deriv=1,
         )
         self = self.replace(splines=splines)
@@ -812,7 +818,7 @@ class AgentPolicy(PyTreeNode):
                 target_pos,
                 start_vel,
                 target_vel,
-                u=u,
+                u=u[None],
                 deriv=0,
             )
             self = self.replace(splines=splines)
@@ -1688,7 +1694,7 @@ class Scenario(BaseScenario[FootballWorld]):
         return self.world.traj_points
 
     @jaxtyped(typechecker=beartype)
-    def make_world(self, batch_dim: int) -> "Scenario":
+    def make_world(self, batch_dim: int, **kwargs) -> "Scenario":
         world = self.init_world(batch_dim)
         world = self.init_agents(world)
         world = self.init_ball(world)
@@ -3574,12 +3580,12 @@ if __name__ == "__main__":
     render_interactively(
         __file__,
         control_two_agents=True,
-        n_blue_agents=5,
-        n_red_agents=5,
+        n_blue_agents=2,
+        n_red_agents=2,
         ai_blue_agents=False,
         ai_red_agents=True,
         ai_strength=1.0,
         ai_decision_strength=1.0,
         ai_precision_strength=1.0,
-        n_traj_points=8,
+        n_traj_points=2,
     )

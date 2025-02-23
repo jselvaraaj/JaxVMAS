@@ -261,12 +261,12 @@ def test_splines():
 
     # Test at different points along curve
     for u in [0.0, 0.5, 1.0]:
-        _, result = splines.hermite(p0, p1, p0dot, p1dot, u, deriv=0)
+        _, result = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([u]), 0)
         assert result.shape == (1, 2)
 
     # Test derivatives
     for deriv in [0, 1, 2]:
-        _, result = splines.hermite(p0, p1, p0dot, p1dot, 0.5, deriv)
+        _, result = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([0.5]), deriv)
         assert result.shape == (1, 2)
 
 
@@ -1218,14 +1218,14 @@ def test_splines_hermite():
 
     splines = Splines()
     # Test interpolation at different points
-    _, result_start = splines.hermite(p0, p1, p0dot, p1dot, u=0.0, deriv=0)
-    _, result_mid = splines.hermite(p0, p1, p0dot, p1dot, u=0.5, deriv=0)
-    _, result_end = splines.hermite(p0, p1, p0dot, p1dot, u=1.0, deriv=0)
+    _, result_start = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([0.0]), 0)
+    _, result_mid = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([0.5]), 0)
+    _, result_end = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([1.0]), 0)
 
     assert jnp.allclose(result_start, p0), "Start point should match p0"
     assert jnp.allclose(result_end, p1), "End point should match p1"
     assert result_mid.shape == p0.shape, "Interpolated point should have same shape"
 
     # Test derivatives
-    _, velocity = splines.hermite(p0, p1, p0dot, p1dot, u=0.0, deriv=1)
+    _, velocity = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([0.0]), 1)
     assert jnp.allclose(velocity, p0dot), "Initial velocity should match p0dot"

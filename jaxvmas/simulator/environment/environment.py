@@ -880,7 +880,7 @@ class Environment(JaxVectorizedObject):
         plot_position_function_cmap_range: tuple[float, float] | None = None,
         plot_position_function_cmap_alpha: float = 1.0,
         plot_position_function_cmap_name: str | None = "viridis",
-    ) -> tuple[RenderObject, Array]:
+    ) -> tuple[RenderObject, Array | None]:
         """
         Render function for environment using pyglet
 
@@ -1045,6 +1045,5 @@ class Environment(JaxVectorizedObject):
             render_object.viewer.add_onetime_list(entity.render(env_index=env_index))
 
         # render to display or array
-        return render_object, render_object.viewer.render(
-            return_rgb_array=mode == "rgb_array"
-        )
+        arr = render_object.viewer.render(return_rgb_array=mode == "rgb_array")
+        return (render_object, arr)
