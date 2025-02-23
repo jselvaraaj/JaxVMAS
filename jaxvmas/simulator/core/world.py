@@ -645,10 +645,14 @@ class World(JaxVectorizedObject):
 
             # Process agents
             if len(self.agents) > 0:
+                print("starting apply_action_force for agents")
                 agent_carry = (self, 0)
+                print("starting partition for agents")
                 agent_dynamic_carry, agent_static_carry = eqx.partition(
                     agent_carry, eqx.is_array
                 )
+                print("finished partition for agents")
+                print("finished partition for agents")
 
                 # Process agents first
                 def _process_agent(dynamic_carry, unused):
@@ -676,18 +680,25 @@ class World(JaxVectorizedObject):
 
                     return _agent_dynamic_carry, None
 
+                print("starting scan for agents")
                 _agent_dynamic_carry, _ = jax.lax.scan(
                     _process_agent, agent_dynamic_carry, None, length=len(self.agents)
                 )
+                print("finished scan for agents")
+                print("starting combine for agents")
                 self, _ = eqx.combine(agent_static_carry, _agent_dynamic_carry)
+                print("finished combine for agents")
                 self = self
 
             # Process landmarks
             if len(self.landmarks) > 0:
+                print("starting apply_action_force for landmarks")
                 landmark_carry = (self, 0)
+                print("starting partition for landmarks")
                 landmark_dynamic_carry, landmark_static_carry = eqx.partition(
                     landmark_carry, eqx.is_array
                 )
+                print("finished partition for landmarks")
 
                 # Process landmarks separately
                 def _process_landmark(dynamic_carry, unused):
@@ -712,17 +723,20 @@ class World(JaxVectorizedObject):
 
                     return _landmark_dynamic_carry, None
 
+                print("starting scan for landmarks")
                 _landmark_dynamic_carry, _ = jax.lax.scan(
                     _process_landmark,
                     landmark_dynamic_carry,
                     None,
                     length=len(self.landmarks),
                 )
+                print("finished scan for landmarks")
+                print("starting combine for landmarks")
                 self, _ = eqx.combine(landmark_static_carry, _landmark_dynamic_carry)
+                print("finished combine for landmarks")
                 self = self
 
             self = self._apply_vectorized_enviornment_force()
-            print("ending apply_vectorized_enviornment_force")
 
             entities = []
             print("starting integrate_state")
@@ -868,6 +882,7 @@ class World(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def _apply_vectorized_enviornment_force(self):
+        print("starting _apply_vectorized_enviornment_force")
         s_s = []
         l_s = []
         b_s = []
@@ -954,21 +969,37 @@ class World(JaxVectorizedObject):
         collision_mask_b_s = jnp.asarray(collision_mask_b_s)
         collision_mask_b_l = jnp.asarray(collision_mask_b_l)
         collision_mask_b_b = jnp.asarray(collision_mask_b_b)
+        print("finished _apply_vectorized_enviornment_force")
+
+        print("starting vectorized_joint_constraints")
         # Joints
         self = self._vectorized_joint_constraints(joints)
+        print("finished vectorized_joint_constraints")
 
         # Sphere and sphere
+        print("starting sphere_sphere_vectorized_collision")
         self = self._sphere_sphere_vectorized_collision(s_s, collision_mask_s_s)
+        print("finished sphere_sphere_vectorized_collision")
         # Line and sphere
+        print("starting sphere_line_vectorized_collision")
         self = self._sphere_line_vectorized_collision(l_s, collision_mask_l_s)
+        print("finished sphere_line_vectorized_collision")
         # Line and line
+        print("starting line_line_vectorized_collision")
         self = self._line_line_vectorized_collision(l_l, collision_mask_l_l)
+        print("finished line_line_vectorized_collision")
         # Box and sphere
+        print("starting box_sphere_vectorized_collision")
         self = self._box_sphere_vectorized_collision(b_s, collision_mask_b_s)
+        print("finished box_sphere_vectorized_collision")
         # Box and line
+        print("starting box_line_vectorized_collision")
         self = self._box_line_vectorized_collision(b_l, collision_mask_b_l)
+        print("finished box_line_vectorized_collision")
         # Box and box
+        print("starting box_box_vectorized_collision")
         self = self._box_box_vectorized_collision(b_b, collision_mask_b_b)
+        print("finished box_box_vectorized_collision")
 
         return self
 
