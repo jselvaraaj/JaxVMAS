@@ -3322,7 +3322,7 @@ class Scenario(BaseScenario[FootballWorld]):
                 xform.set_rotation(agent.state.rot[env_index])
                 xform.set_translation(*agent.state.pos[env_index])
                 sector.add_attr(xform)
-                sector.set_color(*color, alpha=agent._alpha / 2)
+                sector.set_color(*color, alpha=agent.alpha / 2)
                 geoms.append(sector)
 
                 shoot_intensity = jnp.linalg.norm(agent.shoot_force[env_index]) / (
@@ -3339,7 +3339,7 @@ class Scenario(BaseScenario[FootballWorld]):
                 xform.set_rotation(agent.state.rot[env_index])
                 xform.set_translation(*agent.state.pos[env_index])
                 line.add_attr(xform)
-                line.set_color(*color, alpha=agent._alpha)
+                line.set_color(*color, alpha=agent.alpha)
                 geoms.append(line)
 
         return geoms
