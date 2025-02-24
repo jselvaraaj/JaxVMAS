@@ -1,7 +1,6 @@
 jax
 jaxtyping
 flax
-gymnax
 chex
 beartype
 equinox
@@ -9,6 +8,6 @@ equinox
 pyglet<=1.5.27
 opencv-python
 
-pytest
-pytest-xdist
-pytest-cov
+# pytest
+# pytest-xdist
+# pytest-cov
