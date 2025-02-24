@@ -12,10 +12,12 @@ from jaxvmas.scenario.football import (
     Scenario,
     Splines,
 )
+from jaxvmas.scenario.mpe.tests.simple_test import run_heuristic
 from jaxvmas.simulator.core.landmark import Landmark
 from jaxvmas.simulator.core.shapes import Box, Line, Sphere
 from jaxvmas.simulator.dynamics.holonomic import Holonomic
 from jaxvmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
+from jaxvmas.simulator.heuristic_policy import RandomPolicy
 from jaxvmas.simulator.utils import Color
 
 
@@ -1229,3 +1231,29 @@ def test_splines_hermite():
     # Test derivatives
     _, velocity = splines.hermite(p0, p1, p0dot, p1dot, jnp.asarray([0.0]), 1)
     assert jnp.allclose(velocity, p0dot), "Initial velocity should match p0dot"
+
+
+def test_run_heuristic():
+    expected_reward = -63.96318817138672
+    actual_reward = run_heuristic(
+        scenario_name="football",
+        heuristic=RandomPolicy,
+        n_envs=1,
+        n_steps=200,
+        render=False,
+        save_render=False,
+        env_kwargs={
+            "control_two_agents": True,
+            "n_blue_agents": 5,
+            "n_red_agents": 5,
+            "ai_blue_agents": False,
+            "ai_red_agents": True,
+            "ai_strength": 1.0,
+            "ai_decision_strength": 1.0,
+            "ai_precision_strength": 1.0,
+            "n_traj_points": 8,
+        },
+    )
+    assert jnp.isclose(
+        actual_reward, expected_reward, atol=1e-5
+    ), f"Expected reward: {expected_reward}, but got: {actual_reward}"

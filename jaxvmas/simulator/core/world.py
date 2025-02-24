@@ -1,6 +1,5 @@
 import chex
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from beartype import beartype
 from beartype.typing import Callable
@@ -633,7 +632,6 @@ class World(JaxVectorizedObject):
     @eqx.filter_jit
     # @chex.assert_max_traces(1)
     def step(self):
-
         for substep in range(self.substeps):
             # Initialize force and torque dictionaries
             forces_dict = {
@@ -642,91 +640,107 @@ class World(JaxVectorizedObject):
             torques_dict = {e.id: jnp.zeros((self.batch_dim, 1)) for e in self.entities}
             self = self.replace(force_dict=forces_dict, torque_dict=torques_dict)
 
-            # Process agents
-            if len(self.agents) > 0:
+            # # Process agents
+            # if len(self.agents) > 0:
 
-                agent_carry = (self, 0)
+            #     agent_carry = (self, 0)
 
-                agent_dynamic_carry, agent_static_carry = eqx.partition(
-                    agent_carry, eqx.is_array
-                )
+            #     agent_dynamic_carry, agent_static_carry = eqx.partition(
+            #         agent_carry, eqx.is_array
+            #     )
 
-                # Process agents first
-                def _process_agent(dynamic_carry, unused):
-                    carry: tuple[World, int] = eqx.combine(
-                        agent_static_carry, dynamic_carry
-                    )
-                    world, i = carry
+            #     # Process agents first
+            #     def _process_agent(dynamic_carry, unused):
+            #         carry: tuple[World, int] = eqx.combine(
+            #             agent_static_carry, dynamic_carry
+            #         )
+            #         world, i = carry
 
-                    agent = world.agents[i]
+            #         agent = world.agents[i]
+            #         # apply agent force controls
+            #         agent, world = world._apply_action_force(agent)
+            #         # apply agent torque controls
+            #         agent, world = world._apply_action_torque(agent)
+            #         # apply friction
+            #         agent, world = world._apply_friction_force(agent)
+            #         # apply gravity
+            #         agent, world = world._apply_gravity(agent)
+
+            #         world = world.replace(
+            #             agents=world.agents[:i] + [agent] + world.agents[i + 1 :]
+            #         )
+
+            #         _agent_carry = (world, i + 1)
+            #         _agent_dynamic_carry, _ = eqx.partition(_agent_carry, eqx.is_array)
+
+            #         return _agent_dynamic_carry, None
+
+            #     _agent_dynamic_carry, _ = jax.lax.scan(
+            #         _process_agent, agent_dynamic_carry, None, length=len(self.agents)
+            #     )
+
+            #     self, _ = eqx.combine(agent_static_carry, _agent_dynamic_carry)
+
+            #     self = self
+
+            # # Process landmarks
+            # if len(self.landmarks) > 0:
+
+            #     landmark_carry = (self, 0)
+
+            #     landmark_dynamic_carry, landmark_static_carry = eqx.partition(
+            #         landmark_carry, eqx.is_array
+            #     )
+
+            #     # Process landmarks separately
+            #     def _process_landmark(dynamic_carry, unused):
+            #         carry: tuple[World, int] = eqx.combine(
+            #             landmark_static_carry, dynamic_carry
+            #         )
+            #         world, i = carry
+            #         landmark = world.landmarks[i]
+            #         # apply friction
+            #         landmark, world = world._apply_friction_force(landmark)
+            #         # apply gravity
+            #         landmark, world = world._apply_gravity(landmark)
+            #         world = world.replace(
+            #             landmarks=world.landmarks[:i]
+            #             + [landmark]
+            #             + world.landmarks[i + 1 :]
+            #         )
+            #         _landmark_carry = (world, i + 1)
+            #         _landmark_dynamic_carry, _ = eqx.partition(
+            #             _landmark_carry, eqx.is_array
+            #         )
+
+            #         return _landmark_dynamic_carry, None
+
+            #     _landmark_dynamic_carry, _ = jax.lax.scan(
+            #         _process_landmark,
+            #         landmark_dynamic_carry,
+            #         None,
+            #         length=len(self.landmarks),
+            #     )
+
+            #     self, _ = eqx.combine(landmark_static_carry, _landmark_dynamic_carry)
+
+            #     self = self
+
+            # Apply forces from actions and environment
+            entities = []
+            for entity in self.entities:
+                if isinstance(entity, Agent):
                     # apply agent force controls
-                    agent, world = world._apply_action_force(agent)
+                    entity, self = self._apply_action_force(entity)
                     # apply agent torque controls
-                    agent, world = world._apply_action_torque(agent)
-                    # apply friction
-                    agent, world = world._apply_friction_force(agent)
-                    # apply gravity
-                    agent, world = world._apply_gravity(agent)
+                    entity, self = self._apply_action_torque(entity)
+                # apply friction
+                entity, self = self._apply_friction_force(entity)
+                # apply gravity
+                entity, self = self._apply_gravity(entity)
+                entities.append(entity)
 
-                    world = world.replace(
-                        agents=world.agents[:i] + [agent] + world.agents[i + 1 :]
-                    )
-
-                    _agent_carry = (world, i + 1)
-                    _agent_dynamic_carry, _ = eqx.partition(_agent_carry, eqx.is_array)
-
-                    return _agent_dynamic_carry, None
-
-                _agent_dynamic_carry, _ = jax.lax.scan(
-                    _process_agent, agent_dynamic_carry, None, length=len(self.agents)
-                )
-
-                self, _ = eqx.combine(agent_static_carry, _agent_dynamic_carry)
-
-                self = self
-
-            # Process landmarks
-            if len(self.landmarks) > 0:
-
-                landmark_carry = (self, 0)
-
-                landmark_dynamic_carry, landmark_static_carry = eqx.partition(
-                    landmark_carry, eqx.is_array
-                )
-
-                # Process landmarks separately
-                def _process_landmark(dynamic_carry, unused):
-                    carry: tuple[World, int] = eqx.combine(
-                        landmark_static_carry, dynamic_carry
-                    )
-                    world, i = carry
-                    landmark = world.landmarks[i]
-                    # apply friction
-                    landmark, world = world._apply_friction_force(landmark)
-                    # apply gravity
-                    landmark, world = world._apply_gravity(landmark)
-                    world = world.replace(
-                        landmarks=world.landmarks[:i]
-                        + [landmark]
-                        + world.landmarks[i + 1 :]
-                    )
-                    _landmark_carry = (world, i + 1)
-                    _landmark_dynamic_carry, _ = eqx.partition(
-                        _landmark_carry, eqx.is_array
-                    )
-
-                    return _landmark_dynamic_carry, None
-
-                _landmark_dynamic_carry, _ = jax.lax.scan(
-                    _process_landmark,
-                    landmark_dynamic_carry,
-                    None,
-                    length=len(self.landmarks),
-                )
-
-                self, _ = eqx.combine(landmark_static_carry, _landmark_dynamic_carry)
-
-                self = self
+            self = self.replace(entities=entities)
 
             self = self._apply_vectorized_enviornment_force()
 

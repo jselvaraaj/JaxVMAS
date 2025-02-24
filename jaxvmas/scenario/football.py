@@ -1036,13 +1036,14 @@ class AgentPolicy(PyTreeNode):
             team_disps = jnp.concatenate(
                 [team_disps[:, 0:agent_index], team_disps[:, agent_index + 1 :]], axis=1
             )
-            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-                # Use boolean masking for indexed environments
-                team_disps_masked = jnp.where(
-                    env_index[:, None], team_disps, team_disps
-                )
-            else:
-                team_disps_masked = team_disps
+            team_disps_masked = team_disps
+            # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+            #     # Use boolean masking for indexed environments
+            #     team_disps_masked = jnp.where(
+            #         env_index[:, None], team_disps, team_disps
+            #     )
+            # else:
+            #     team_disps_masked = team_disps
 
             team_dists = jnp.linalg.norm(
                 team_disps_masked[:, None] - pos[:, :, None], axis=-1
@@ -1103,7 +1104,9 @@ class AgentPolicy(PyTreeNode):
         vel=False,
     ) -> tuple["AgentPolicy", Array]:
         assert teammate or opposition, "One of teammate or opposition must be True"
-        ball, teammates, _, own_net, target_net = self.get_dynamic_params(world)
+        ball, teammates, oppositions, own_net, target_net = self.get_dynamic_params(
+            world
+        )
         key = (teammate, opposition, vel)
         if key in self.team_disps:
             return self, self.team_disps[key]
@@ -1116,7 +1119,7 @@ class AgentPolicy(PyTreeNode):
                     agent_disp = otheragent.state.pos
                 disps.append(agent_disp)
         if opposition:
-            for otheragent in opposition:
+            for otheragent in oppositions:
                 if vel:
                     agent_disp = otheragent.state.vel
                 else:
@@ -1126,7 +1129,7 @@ class AgentPolicy(PyTreeNode):
 
         team_disps = dict(self.team_disps)
         team_disps[key] = out
-        self = self.replace(team_disps=team_disps)
+        # self = self.replace(team_disps=team_disps)
 
         return self, out
 

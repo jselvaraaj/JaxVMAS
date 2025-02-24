@@ -44,7 +44,7 @@ def run_heuristic(
     )
 
     frame_list = []  # For creating a gif
-    init_time = time.time()
+    total_init_time = time.time()
     step = 0
     env, obs = env.reset(PRNG_key=PRNG_key)
     total_reward = 0
@@ -77,7 +77,7 @@ def run_heuristic(
             )
             frame_list.append(rgb_array)
     else:
-
+        compile_init_time = time.time()
         init_state = (env, obs, PRNG_key, jnp.asarray(total_reward, dtype=jnp.float32))
         dynamic_init_state, static_state = eqx.partition(init_state, eqx.is_array)
 
@@ -109,10 +109,19 @@ def run_heuristic(
             dynamic_carry, _ = eqx.partition(carry, eqx.is_array)
             return dynamic_carry, None
 
-        final_carry, _ = jax.lax.scan(step_fn, dynamic_init_state, None, length=n_steps)
-        env, obs, PRNG_key, total_reward = eqx.combine(static_state, final_carry)
+        # dry run to warm up jax
+        _ = jax.lax.scan(step_fn, dynamic_init_state, None, length=n_steps)
+        jax.block_until_ready(_)
+        compile_time = time.time() - compile_init_time
+        print(f"Compile time: {compile_time}s")
 
-    total_time = time.time() - init_time
+        simulation_init_time = time.time()
+        print("Starting simulation")
+        final_carry, _ = jax.lax.scan(step_fn, dynamic_init_state, None, length=n_steps)
+        jax.block_until_ready(final_carry)
+        env, obs, PRNG_key, total_reward = eqx.combine(static_state, final_carry)
+        print("Simulation done", time.time() - simulation_init_time)
+    total_time = time.time() - total_init_time
     if render and save_render:
         save_video(scenario_name, frame_list, 1 / env.scenario.world.dt)
 
@@ -127,10 +136,21 @@ if __name__ == "__main__":
     from jaxvmas.simulator.heuristic_policy import RandomPolicy
 
     run_heuristic(
-        scenario_name="simple",
+        scenario_name="football",
         heuristic=RandomPolicy,
-        n_envs=32,
+        n_envs=1,
         n_steps=200,
         render=False,
         save_render=False,
+        env_kwargs={
+            "control_two_agents": True,
+            "n_blue_agents": 5,
+            "n_red_agents": 5,
+            "ai_blue_agents": False,
+            "ai_red_agents": True,
+            "ai_strength": 1.0,
+            "ai_decision_strength": 1.0,
+            "ai_precision_strength": 1.0,
+            "n_traj_points": 8,
+        },
     )
