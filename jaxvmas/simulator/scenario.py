@@ -69,17 +69,17 @@ class BaseScenario(PyTreeNode, Generic[WorldType]):
     def create(cls, **kwargs) -> "BaseScenario":
         """Do not override."""
         world = None
-        viewer_size = INITIAL_VIEWER_SIZE
+        viewer_size = kwargs.pop("viewer_size", INITIAL_VIEWER_SIZE)
         """The size of the rendering viewer window. This can be changed in the :class:`~make_world` function. """
-        viewer_zoom = VIEWER_DEFAULT_ZOOM
+        viewer_zoom = kwargs.pop("viewer_zoom", VIEWER_DEFAULT_ZOOM)
         """The zoom of the rendering camera (a lower value means more zoom). This can be changed in the :class:`~make_world` function. """
-        render_origin = (0.0, 0.0)
+        render_origin = kwargs.pop("render_origin", (0.0, 0.0))
         """The origin of the rendering camera when ``agent_index_to_focus`` is None in the ``render()`` arguments. This can be changed in the :class:`~make_world` function. """
-        plot_grid = False
+        plot_grid = kwargs.pop("plot_grid", False)
         """Whether to plot a grid in the scenario rendering background. This can be changed in the :class:`~make_world` function. """
-        grid_spacing = 0.1
+        grid_spacing = kwargs.pop("grid_spacing", 0.1)
         """If :class:`~plot_grid`, the distance between lines in the background grid. This can be changed in the :class:`~make_world` function. """
-        visualize_semidims = True
+        visualize_semidims = kwargs.pop("visualize_semidims", True)
         """Whether to display boundaries in dimension-limited environment. This can be changed in the :class:`~make_world` function. """
         return cls(
             world,

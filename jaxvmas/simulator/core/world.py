@@ -622,17 +622,18 @@ class World(JaxVectorizedObject):
             entities = kwargs.pop("entities")
             kwargs["agents"] = entities[:num_agents]
             kwargs["landmarks"] = entities[num_agents:]
-        elif "policy_agents" in kwargs:
+        if "policy_agents" in kwargs:
             policy_agents = kwargs.pop("policy_agents")
             scripted_agents = self.scripted_agents
             kwargs["agents"] = policy_agents + scripted_agents
+
         return super().replace(**kwargs)
 
     # update state of the world
     @eqx.filter_jit
     # @chex.assert_max_traces(1)
     def step(self):
-        print("starting step")
+
         for substep in range(self.substeps):
             # Initialize force and torque dictionaries
             forces_dict = {
@@ -641,18 +642,14 @@ class World(JaxVectorizedObject):
             torques_dict = {e.id: jnp.zeros((self.batch_dim, 1)) for e in self.entities}
             self = self.replace(force_dict=forces_dict, torque_dict=torques_dict)
 
-            print("starting apply_action_force")
-
             # Process agents
             if len(self.agents) > 0:
-                print("starting apply_action_force for agents")
+
                 agent_carry = (self, 0)
-                print("starting partition for agents")
+
                 agent_dynamic_carry, agent_static_carry = eqx.partition(
                     agent_carry, eqx.is_array
                 )
-                print("finished partition for agents")
-                print("finished partition for agents")
 
                 # Process agents first
                 def _process_agent(dynamic_carry, unused):
@@ -680,25 +677,22 @@ class World(JaxVectorizedObject):
 
                     return _agent_dynamic_carry, None
 
-                print("starting scan for agents")
                 _agent_dynamic_carry, _ = jax.lax.scan(
                     _process_agent, agent_dynamic_carry, None, length=len(self.agents)
                 )
-                print("finished scan for agents")
-                print("starting combine for agents")
+
                 self, _ = eqx.combine(agent_static_carry, _agent_dynamic_carry)
-                print("finished combine for agents")
+
                 self = self
 
             # Process landmarks
             if len(self.landmarks) > 0:
-                print("starting apply_action_force for landmarks")
+
                 landmark_carry = (self, 0)
-                print("starting partition for landmarks")
+
                 landmark_dynamic_carry, landmark_static_carry = eqx.partition(
                     landmark_carry, eqx.is_array
                 )
-                print("finished partition for landmarks")
 
                 # Process landmarks separately
                 def _process_landmark(dynamic_carry, unused):
@@ -723,32 +717,30 @@ class World(JaxVectorizedObject):
 
                     return _landmark_dynamic_carry, None
 
-                print("starting scan for landmarks")
                 _landmark_dynamic_carry, _ = jax.lax.scan(
                     _process_landmark,
                     landmark_dynamic_carry,
                     None,
                     length=len(self.landmarks),
                 )
-                print("finished scan for landmarks")
-                print("starting combine for landmarks")
+
                 self, _ = eqx.combine(landmark_static_carry, _landmark_dynamic_carry)
-                print("finished combine for landmarks")
+
                 self = self
 
             self = self._apply_vectorized_enviornment_force()
 
             entities = []
-            print("starting integrate_state")
+
             for entity in self.entities:
                 # integrate physical state
                 entity = self._integrate_state(entity, substep)
                 entities.append(entity)
-            print("ending integrate_state")
+
             self = self.replace(entities=entities)
 
             # Update joint states after entity states have been updated
-            print("starting update_joints")
+
             new_joints = {}
             for joint_key, joint in self._joints.items():
                 entity_a = self.entity_id_to_entity(joint.entity_a_id)
@@ -756,17 +748,15 @@ class World(JaxVectorizedObject):
                 updated_joint = joint.update_joint_state(entity_a, entity_b)
                 new_joints[joint_key] = updated_joint
             self = self.replace(_joints=new_joints)
-            print("ending update_joints")
+
         # update non-differentiable comm state
         if self.dim_c > 0:
-            print("starting update_comm_state")
+
             agents = []
             for agent in self.agents:
                 agents.append(self._update_comm_state(agent))
             self = self.replace(agents=agents)
-            print("ending update_comm_state")
 
-        print("ending step")
         return self
 
     # gather agent action forces
@@ -882,7 +872,7 @@ class World(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def _apply_vectorized_enviornment_force(self):
-        print("starting _apply_vectorized_enviornment_force")
+
         s_s = []
         l_s = []
         b_s = []
@@ -969,37 +959,33 @@ class World(JaxVectorizedObject):
         collision_mask_b_s = jnp.asarray(collision_mask_b_s)
         collision_mask_b_l = jnp.asarray(collision_mask_b_l)
         collision_mask_b_b = jnp.asarray(collision_mask_b_b)
-        print("finished _apply_vectorized_enviornment_force")
 
-        print("starting vectorized_joint_constraints")
         # Joints
         self = self._vectorized_joint_constraints(joints)
-        print("finished vectorized_joint_constraints")
 
         # Sphere and sphere
-        print("starting sphere_sphere_vectorized_collision")
+
         self = self._sphere_sphere_vectorized_collision(s_s, collision_mask_s_s)
-        print("finished sphere_sphere_vectorized_collision")
+
         # Line and sphere
-        print("starting sphere_line_vectorized_collision")
+
         self = self._sphere_line_vectorized_collision(l_s, collision_mask_l_s)
-        print("finished sphere_line_vectorized_collision")
+
         # Line and line
-        print("starting line_line_vectorized_collision")
+
         self = self._line_line_vectorized_collision(l_l, collision_mask_l_l)
-        print("finished line_line_vectorized_collision")
+
         # Box and sphere
-        print("starting box_sphere_vectorized_collision")
+
         self = self._box_sphere_vectorized_collision(b_s, collision_mask_b_s)
-        print("finished box_sphere_vectorized_collision")
+
         # Box and line
-        print("starting box_line_vectorized_collision")
+
         self = self._box_line_vectorized_collision(b_l, collision_mask_b_l)
-        print("finished box_line_vectorized_collision")
+
         # Box and box
-        print("starting box_box_vectorized_collision")
+
         self = self._box_box_vectorized_collision(b_b, collision_mask_b_b)
-        print("finished box_box_vectorized_collision")
 
         return self
 
@@ -1383,18 +1369,21 @@ class World(JaxVectorizedObject):
 
             inner_point_box = closest_point_box
             d = jnp.zeros_like(radius_sphere)
-            if not_hollow_box_prior.any():
-                inner_point_box_hollow, d_hollow = _get_inner_point_box(
-                    pos_sphere, closest_point_box, pos_box
-                )
-                cond = jnp.broadcast_to(
-                    not_hollow_box[..., None],
-                    inner_point_box.shape,
-                )
-                inner_point_box = jnp.where(
-                    cond, inner_point_box_hollow, inner_point_box
-                )
-                d = jnp.where(not_hollow_box, d_hollow, d)
+
+            # Calculate hollow box points unconditionally
+            inner_point_box_hollow, d_hollow = _get_inner_point_box(
+                pos_sphere, closest_point_box, pos_box
+            )
+
+            # Broadcast condition to match shape
+            cond = jnp.broadcast_to(
+                not_hollow_box[..., None],
+                inner_point_box.shape,
+            )
+
+            # Use jnp.where for conditional updates
+            inner_point_box = jnp.where(cond, inner_point_box_hollow, inner_point_box)
+            d = jnp.where(not_hollow_box, d_hollow, d)
 
             force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_sphere, force_box = self._get_constraint_forces(
@@ -1490,18 +1479,17 @@ class World(JaxVectorizedObject):
 
             inner_point_box = point_box
             d = jnp.zeros_like(length_line)
-            if not_hollow_box_prior.any():
-                inner_point_box_hollow, d_hollow = _get_inner_point_box(
-                    point_line, point_box, pos_box
-                )
-                cond = jnp.broadcast_to(
-                    not_hollow_box[..., None],
-                    inner_point_box.shape,
-                )
-                inner_point_box = jnp.where(
-                    cond, inner_point_box_hollow, inner_point_box
-                )
-                d = jnp.where(not_hollow_box, d_hollow, d)
+
+            inner_point_box_hollow, d_hollow = _get_inner_point_box(
+                point_line, point_box, pos_box
+            )
+            cond = jnp.broadcast_to(
+                not_hollow_box[..., None],
+                inner_point_box.shape,
+            )
+            inner_point_box = jnp.where(cond, inner_point_box_hollow, inner_point_box)
+            d = jnp.where(not_hollow_box, d_hollow, d)
+
             force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_box, force_line = self._get_constraint_forces(
                 inner_point_box,
@@ -1619,29 +1607,29 @@ class World(JaxVectorizedObject):
 
             inner_point_a = point_a
             d_a = jnp.zeros_like(length_box)
-            if not_hollow_box_prior.any():
-                inner_point_box_hollow, d_hollow = _get_inner_point_box(
-                    point_b, point_a, pos_box
-                )
-                cond = jnp.broadcast_to(
-                    not_hollow_box[..., None],
-                    inner_point_a.shape,
-                )
-                inner_point_a = jnp.where(cond, inner_point_box_hollow, inner_point_a)
-                d_a = jnp.where(not_hollow_box, d_hollow, d_a)
+
+            inner_point_box_hollow, d_hollow = _get_inner_point_box(
+                point_b, point_a, pos_box
+            )
+            cond = jnp.broadcast_to(
+                not_hollow_box[..., None],
+                inner_point_a.shape,
+            )
+            inner_point_a = jnp.where(cond, inner_point_box_hollow, inner_point_a)
+            d_a = jnp.where(not_hollow_box, d_hollow, d_a)
 
             inner_point_b = point_b
             d_b = jnp.zeros_like(length_box2)
-            if not_hollow_box2_prior.any():
-                inner_point_box2_hollow, d_hollow2 = _get_inner_point_box(
-                    point_a, point_b, pos_box2
-                )
-                cond = jnp.broadcast_to(
-                    not_hollow_box2[..., None],
-                    inner_point_b.shape,
-                )
-                inner_point_b = jnp.where(cond, inner_point_box2_hollow, inner_point_b)
-                d_b = jnp.where(not_hollow_box2, d_hollow2, d_b)
+
+            inner_point_box2_hollow, d_hollow2 = _get_inner_point_box(
+                point_a, point_b, pos_box2
+            )
+            cond = jnp.broadcast_to(
+                not_hollow_box2[..., None],
+                inner_point_b.shape,
+            )
+            inner_point_b = jnp.where(cond, inner_point_box2_hollow, inner_point_b)
+            d_b = jnp.where(not_hollow_box2, d_hollow2, d_b)
 
             force_multiplier = jnp.where(collision_mask, self.collision_force, 0)
             force_a, force_b = self._get_constraint_forces(
@@ -1669,6 +1657,7 @@ class World(JaxVectorizedObject):
 
     @jaxtyped(typechecker=beartype)
     def collides(self, a: Entity, b: Entity) -> Bool[Array, ""]:
+
         # Early exit conditions
         collides_check = jnp.logical_and(a.collides(b), b.collides(a))
         same_entity = jnp.asarray(a.id == b.id)

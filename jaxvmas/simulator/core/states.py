@@ -75,21 +75,21 @@ class EntityState(JaxVectorizedObject):
             if self.vel is not None:
                 chex.assert_equal_shape([pos, self.vel])
 
-        elif "vel" in kwargs:
+        if "vel" in kwargs:
             vel = kwargs["vel"]
             if self.vel is not None:
                 chex.assert_shape(vel, self.vel.shape)
             if self.pos is not None:
                 chex.assert_equal_shape([vel, self.pos])
 
-        elif "ang_vel" in kwargs:
+        if "ang_vel" in kwargs:
             ang_vel = kwargs["ang_vel"]
             if self.ang_vel is not None:
                 chex.assert_shape(ang_vel, self.ang_vel.shape)
             if self.rot is not None:
                 chex.assert_equal_shape([ang_vel, self.rot])
 
-        elif "rot" in kwargs:
+        if "rot" in kwargs:
             rot = kwargs["rot"]
             if self.rot is not None:
                 chex.assert_shape(rot, self.rot.shape)
@@ -214,14 +214,14 @@ class AgentState(EntityState):
             if self.c is not None:
                 chex.assert_shape(c, self.c.shape)
 
-        elif "force" in kwargs:
+        if "force" in kwargs:
             force = kwargs["force"]
             if self.batch_dim is not None:
                 chex.assert_shape(force, (self.batch_dim, None))
             if self.force is not None:
                 chex.assert_shape(force, self.force.shape)
 
-        elif "torque" in kwargs:
+        if "torque" in kwargs:
             torque = kwargs["torque"]
             if self.batch_dim is not None:
                 chex.assert_shape(torque, (self.batch_dim, None))

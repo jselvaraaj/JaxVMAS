@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -8,7 +9,16 @@ from jaxvmas.simulator.rendering import Geom
 from jaxvmas.simulator.utils import X, Y
 
 
+class ShapeType(Enum):
+    BOX = "box"
+    SPHERE = "sphere"
+    LINE = "line"
+
+
 class Shape(ABC):
+    def __init__(self, type: ShapeType):
+        self.type = type
+
     @abstractmethod
     def moment_of_inertia(self, mass: float) -> float:
         raise NotImplementedError
@@ -28,7 +38,7 @@ class Shape(ABC):
 
 class Box(Shape):
     def __init__(self, length: float = 0.3, width: float = 0.1, hollow: bool = False):
-        super().__init__()
+        super().__init__(ShapeType.BOX)
         assert length > 0, f"Length must be > 0, got {length}"
         assert width > 0, f"Width must be > 0, got {length}"
         self._length = length
@@ -70,7 +80,7 @@ class Box(Shape):
 
 class Sphere(Shape):
     def __init__(self, radius: float = 0.05):
-        super().__init__()
+        super().__init__(ShapeType.SPHERE)
         assert radius > 0, f"Radius must be > 0, got {radius}"
         self._radius = radius
 
@@ -104,7 +114,7 @@ class Sphere(Shape):
 
 class Line(Shape):
     def __init__(self, length: float = 0.5):
-        super().__init__()
+        super().__init__(ShapeType.LINE)
         assert length > 0, f"Length must be > 0, got {length}"
         self._length = length
         self._width = 2

@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from enum import Enum
+from types import EllipsisType
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype
-from jaxtyping import Array, Float, Int, PRNGKeyArray, jaxtyped
+from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, jaxtyped
 
 from jaxvmas.equinox_utils import PyTreeNode, dataclass_to_dict_first_layer
 from jaxvmas.interactive_rendering import render_interactively
@@ -27,6 +28,7 @@ from jaxvmas.simulator.scenario import BaseScenario
 from jaxvmas.simulator.utils import Color, JaxUtils, ScenarioUtils, X, Y
 
 env_index_dim = "env_index"
+batch_axis_dim = "batch_axis"
 
 
 @jaxtyped(typechecker=beartype)
@@ -276,7 +278,11 @@ class AgentPolicy(PyTreeNode):
         )
 
     @jaxtyped(typechecker=beartype)
-    def reset(self, world: "FootballWorld", env_index=Ellipsis) -> "AgentPolicy":
+    def reset(
+        self,
+        world: "FootballWorld",
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
+    ) -> "AgentPolicy":
         team_disps = {}
         objectives = dict(self.objectives)
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
@@ -397,7 +403,6 @@ class AgentPolicy(PyTreeNode):
         agent: "FootballAgent",
         world: "FootballWorld",
     ) -> tuple["FootballAgent", "FootballWorld"]:
-        print("Compiling for agent", agent.name)
         if not self.disabled:
             if "0" in agent.name:
                 self = self.replace(team_disps={})
@@ -431,7 +436,7 @@ class AgentPolicy(PyTreeNode):
         PRNG_key: PRNGKeyArray,
         agent: "FootballAgent",
         world: "FootballWorld",
-        env_index=Ellipsis,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
         ball, teammates, opposition, own_net, target_net = self.get_dynamic_params(
             world
@@ -439,9 +444,9 @@ class AgentPolicy(PyTreeNode):
 
         # Create target position based on env_index
         target_pos = target_net.state.pos
-        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-            # Use boolean masking for indexed environments
-            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+        # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+        #     # Use boolean masking for indexed environments
+        #     target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
 
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self, world = self.dribble(
@@ -460,7 +465,7 @@ class AgentPolicy(PyTreeNode):
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
-        env_index=Ellipsis,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self, world = self.update_dribble(
@@ -479,16 +484,16 @@ class AgentPolicy(PyTreeNode):
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
-        env_index=Ellipsis,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
         # Specifies a new location to dribble towards.
 
         agent_pos = agent.state.pos
         ball_pos = world.ball.state.pos
-        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-            # Use boolean masking for indexed environments
-            agent_pos = jnp.where(env_index[:, None], agent_pos, agent_pos)
-            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
+        # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+        #     # Use boolean masking for indexed environments
+        #     agent_pos = jnp.where(env_index[:, None], agent_pos, agent_pos)
+        #     ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
 
         ball_disp = pos - ball_pos
         ball_dist = jnp.linalg.norm(ball_disp, axis=-1)
@@ -533,7 +538,7 @@ class AgentPolicy(PyTreeNode):
         agent: "FootballAgent",
         world: "FootballWorld",
         pos: Array,
-        env_index=Ellipsis,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
         agent_pos = agent.state.pos
         ball_disp = world.ball.state.pos - agent_pos
@@ -563,17 +568,20 @@ class AgentPolicy(PyTreeNode):
         # Shooting
         objectives[agent.name]["shot_power"][:] = -1
         objectives[agent.name]["shot_power"][
-            self.combine_mask(shooting_mask, env_index)
+            self.combine_mask(world, shooting_mask, env_index)
         ] = jnp.minimum(target_dist[shooting_mask] / self.max_shot_dist, 1.0)
         return self.replace(objectives=objectives), world
 
     @jaxtyped(typechecker=beartype)
-    def combine_mask(self, mask, env_index):
-        if env_index == Ellipsis:
+    def combine_mask(
+        self,
+        world: "FootballWorld",
+        mask,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
+    ):
+        if isinstance(env_index, EllipsisType):
             return mask
-        elif (
-            env_index.shape[0] == self.world.batch_dim and env_index.dtype == jnp.bool_
-        ):
+        elif env_index.shape[0] == world.batch_dim and env_index.dtype == jnp.bool_:
             return mask & env_index
         raise ValueError("Expected env_index to be : or boolean tensor")
 
@@ -587,12 +595,12 @@ class AgentPolicy(PyTreeNode):
         vel: Array | None = None,
         start_vel: Array | None = None,
         aggression: Float[Array, ""] = jnp.array(1.0, dtype=jnp.float32),
-        env_index=Ellipsis,
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ):
         start_pos = agent.state.pos
-        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-            # Use boolean masking for indexed environments
-            start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
+        # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+        #     # Use boolean masking for indexed environments
+        #     start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
 
         if vel is None:
             vel = jnp.zeros_like(pos)
@@ -603,9 +611,9 @@ class AgentPolicy(PyTreeNode):
             )
 
         target_pos = self.objectives[agent.name]["target_pos"]
-        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-            # Use boolean masking for indexed environments
-            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+        # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+        #     # Use boolean masking for indexed environments
+        #     target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
         diff = jnp.linalg.norm(target_pos - pos, axis=-1)[..., None]
 
         if self.precision_strength != 1:
@@ -628,7 +636,7 @@ class AgentPolicy(PyTreeNode):
         ball_pos = world.ball.state.pos
         if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
             # Use boolean masking for indexed environments
-            ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
+            # ball_pos = jnp.where(env_index[:, None], ball_pos, ball_pos)
 
             objectives[agent.name]["target_pos_rel"] = jnp.where(
                 env_index[:, None],
@@ -702,7 +710,11 @@ class AgentPolicy(PyTreeNode):
         return start_vel
 
     @jaxtyped(typechecker=beartype)
-    def get_action(self, agent: "FootballAgent", env_index=Ellipsis):
+    def get_action(
+        self,
+        agent: "FootballAgent",
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
+    ):
         # Gets the action computed by the policy for the given agent.
         # All the logic in AgentPolicy (dribbling, moving, shooting, etc) uses the go_to command
         #     as an interface to specify a desired trajectory.
@@ -722,14 +734,14 @@ class AgentPolicy(PyTreeNode):
         start_vel = self.objectives[agent.name]["start_vel"]
         target_vel = self.objectives[agent.name]["target_vel"]
 
-        if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-            # Use boolean masking for indexed environments
-            curr_pos = jnp.where(env_index[:, None], curr_pos, curr_pos)
-            curr_vel = jnp.where(env_index[:, None], curr_vel, curr_vel)
-            start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
-            target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
-            start_vel = jnp.where(env_index[:, None], start_vel, start_vel)
-            target_vel = jnp.where(env_index[:, None], target_vel, target_vel)
+        # if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
+        #     # Use boolean masking for indexed environments
+        #     curr_pos = jnp.where(env_index[:, None], curr_pos, curr_pos)
+        #     curr_vel = jnp.where(env_index[:, None], curr_vel, curr_vel)
+        #     start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
+        #     target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
+        #     start_vel = jnp.where(env_index[:, None], start_vel, start_vel)
+        #     target_vel = jnp.where(env_index[:, None], target_vel, target_vel)
 
         splines, des_curr_pos = self.splines.hermite(
             start_pos,
@@ -790,8 +802,13 @@ class AgentPolicy(PyTreeNode):
 
     @jaxtyped(typechecker=beartype)
     def plot_traj(
-        self, agent: "FootballAgent", world: "FootballWorld", env_index=0
+        self,
+        agent: "FootballAgent",
+        world: "FootballWorld",
+        env_index: Bool[Array, f"{batch_axis_dim}"] | EllipsisType = Ellipsis,
     ) -> tuple["AgentPolicy", "FootballWorld"]:
+        # TODO: Fix this to be able to reset any env_index
+        env_index = 0
         for i, u in enumerate(
             jnp.linspace(
                 0,
@@ -800,63 +817,29 @@ class AgentPolicy(PyTreeNode):
             )
         ):
             pointi_index = world.traj_points[self.team_name][agent.id][i]
-            pointi = world.landmarks[pointi_index]
-            start_pos = self.objectives[agent.name]["start_pos"]
-            target_pos = self.objectives[agent.name]["target_pos"]
-            start_vel = self.objectives[agent.name]["start_vel"]
-            target_vel = self.objectives[agent.name]["target_vel"]
-
-            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-                # Use boolean masking for indexed environments
-                start_pos = jnp.where(env_index[:, None], start_pos, start_pos)
-                target_pos = jnp.where(env_index[:, None], target_pos, target_pos)
-                start_vel = jnp.where(env_index[:, None], start_vel, start_vel)
-                target_vel = jnp.where(env_index[:, None], target_vel, target_vel)
-
+            assert 0 <= pointi_index < len(world.entities)
+            pointi = world.entities[pointi_index]
             splines, posi = self.splines.hermite(
-                start_pos,
-                target_pos,
-                start_vel,
-                target_vel,
+                self.objectives[agent.name]["start_pos"][env_index, :][None],
+                self.objectives[agent.name]["target_pos"][env_index, :][None],
+                self.objectives[agent.name]["start_vel"][env_index, :][None],
+                self.objectives[agent.name]["target_vel"][env_index, :][None],
                 u=u[None],
                 deriv=0,
             )
             self = self.replace(splines=splines)
-            # Simplify position setting with boolean masking
-            if isinstance(env_index, Array) and env_index.dtype == jnp.bool_:
-                pointi = pointi.set_pos(
-                    jnp.asarray(posi),
-                    batch_index=None,
-                )
-            elif isinstance(env_index, int):
-                pointi = pointi.set_pos(
-                    jnp.asarray(posi),
-                    batch_index=env_index,
-                )
-            elif isinstance(env_index, list):
-                for envi in env_index:
-                    pointi = pointi.set_pos(
-                        jnp.asarray(posi)[envi, :],
-                        batch_index=env_index[envi],
-                    )
-            elif (
-                isinstance(env_index, Array)
-                and env_index.dtype == jnp.bool_
-                and jnp.any(env_index)
-            ):
-                envs = jnp.where(env_index)
-                for i, envi in enumerate(envs):
-                    pointi = pointi.set_pos(
-                        jnp.asarray(posi)[i, :],
-                        batch_index=envi[0],
-                    )
-            all_landmarks = world.landmarks
-            all_landmarks = (
-                all_landmarks[:pointi_index]
-                + [pointi]
-                + all_landmarks[pointi_index + 1 :]
+
+            pointi = pointi.set_pos(
+                jnp.asarray(posi),
+                batch_index=jnp.asarray([env_index]),
             )
-            world = world.replace(landmarks=all_landmarks)
+            all_entities = world.entities
+            all_entities = (
+                all_entities[:pointi_index]
+                + [pointi]
+                + all_entities[pointi_index + 1 :]
+            )
+            world = world.replace(entities=all_entities)
         return self, world
 
     @jaxtyped(typechecker=beartype)
@@ -2033,7 +2016,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(right_top_wall)
-
+        right_top_wall = world.landmarks[-1]
         left_top_wall = Landmark.create(
             name="Left Top Wall",
             collide=True,
@@ -2044,7 +2027,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(left_top_wall)
-
+        left_top_wall = world.landmarks[-1]
         right_bottom_wall = Landmark.create(
             name="Right Bottom Wall",
             collide=True,
@@ -2055,7 +2038,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(right_bottom_wall)
-
+        right_bottom_wall = world.landmarks[-1]
         left_bottom_wall = Landmark.create(
             name="Left Bottom Wall",
             collide=True,
@@ -2066,7 +2049,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(left_bottom_wall)
-
+        left_bottom_wall = world.landmarks[-1]
         return world
 
     @jaxtyped(typechecker=beartype)
@@ -2079,7 +2062,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(right_goal_back)
-
+        right_goal_back = world.landmarks[-1]
         left_goal_back = Landmark.create(
             name="Left Goal Back",
             collide=True,
@@ -2088,7 +2071,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(left_goal_back)
-
+        left_goal_back = world.landmarks[-1]
         right_goal_top = Landmark.create(
             name="Right Goal Top",
             collide=True,
@@ -2097,7 +2080,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(right_goal_top)
-
+        right_goal_top = world.landmarks[-1]
         left_goal_top = Landmark.create(
             name="Left Goal Top",
             collide=True,
@@ -2106,7 +2089,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(left_goal_top)
-
+        left_goal_top = world.landmarks[-1]
         right_goal_bottom = Landmark.create(
             name="Right Goal Bottom",
             collide=True,
@@ -2115,7 +2098,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(right_goal_bottom)
-
+        right_goal_bottom = world.landmarks[-1]
         left_goal_bottom = Landmark.create(
             name="Left Goal Bottom",
             collide=True,
@@ -2124,7 +2107,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=Color.WHITE,
         )
         world = world.add_landmark(left_goal_bottom)
-
+        left_goal_bottom = world.landmarks[-1]
         blue_net = Landmark.create(
             name="Blue Net",
             collide=False,
@@ -2133,7 +2116,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=FootballColor.GRAY,
         )
         world = world.add_landmark(blue_net)
-
+        blue_net = world.landmarks[-1]
         red_net = Landmark.create(
             name="Red Net",
             collide=False,
@@ -2142,7 +2125,7 @@ class Scenario(BaseScenario[FootballWorld]):
             color=FootballColor.GRAY,
         )
         world = world.add_landmark(red_net)
-
+        red_net = world.landmarks[-1]
         return world
 
     @jaxtyped(typechecker=beartype)
@@ -2162,6 +2145,7 @@ class Scenario(BaseScenario[FootballWorld]):
                         color=Color.GRAY,
                     )
                     world = world.add_landmark(pointj)
+                    pointj = world.landmarks[-1]
                     _traj_points.append(pointj.id)
                 traj_points["Red"][agent.id] = _traj_points
         if self.ai_blue_agents:
@@ -2178,6 +2162,7 @@ class Scenario(BaseScenario[FootballWorld]):
                         color=Color.GRAY,
                     )
                     world = world.add_landmark(pointj)
+                    pointj = world.landmarks[-1]
                     _traj_points.append(pointj.id)
                 traj_points["Blue"][agent.id] = _traj_points
         world = world.replace(traj_points=traj_points)
@@ -2190,7 +2175,6 @@ class Scenario(BaseScenario[FootballWorld]):
         PRNG_key: PRNGKeyArray,
         env_index: Int[Array, f"{env_index_dim}"] | None = None,
     ):
-        print("starting reset_world_at")
         PRNG_key, subkey = jax.random.split(PRNG_key)
         self = self.reset_agents(subkey, env_index)
         self = self.reset_ball(env_index)
@@ -2204,7 +2188,7 @@ class Scenario(BaseScenario[FootballWorld]):
         )
         self = self.replace(_done=_done)
         self = self.replace(reset=True)
-        print("ending reset_world_at")
+
         return self
 
     @eqx.filter_jit
@@ -2749,7 +2733,7 @@ class Scenario(BaseScenario[FootballWorld]):
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def process_action(self, agent: "FootballAgent"):
-        print("starting process_action")
+
         assert (
             self.reset is True
         ), "Please reset the environment before processing actions"
@@ -2806,13 +2790,13 @@ class Scenario(BaseScenario[FootballWorld]):
             self = self.replace(ball=self.ball.replace(kicking_action=kicking_action))
             # u = agent.action.u[:, :-1]
             # agent = agent.replace(action=agent.action.replace(u=u))
-        print("ending process_action")
+
         return self, agent
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def pre_step(self):
-        print("starting pre_step")
+
         if self.enable_shooting:
             agents_exclude_ball = [a for a in self.world.agents if a is not self.ball]
 
@@ -2837,13 +2821,12 @@ class Scenario(BaseScenario[FootballWorld]):
                 _agents_closest_to_ball=_agents_closest_to_ball,
             )
 
-        print("ending pre_step")
         return self
 
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def reward(self, agent: "FootballAgent"):
-        print("starting reward")
+
         # Called with agent=None when only AIs are playing to compute the _done
         if agent is None or agent.id == self.world.agents[0].id:
             # Sparse Reward
@@ -2891,7 +2874,7 @@ class Scenario(BaseScenario[FootballWorld]):
             reward = self._sparse_reward_blue + self._dense_reward_blue
         else:
             reward = self._sparse_reward_red + self._dense_reward_red
-        print("ending reward")
+
         return reward
 
     @jaxtyped(typechecker=beartype)
@@ -2997,7 +2980,7 @@ class Scenario(BaseScenario[FootballWorld]):
         blue=None,
         env_index=Ellipsis,
     ):
-        print("starting observation")
+
         if blue:
             assert agent.id in [a.id for a in self.blue_agents]
         else:
@@ -3062,7 +3045,7 @@ class Scenario(BaseScenario[FootballWorld]):
             ),
             blue=blue,
         )
-        print("ending observation")
+
         return obs
 
     @jaxtyped(typechecker=beartype)
@@ -3245,10 +3228,10 @@ class Scenario(BaseScenario[FootballWorld]):
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def done(self):
-        print("starting done")
+
         if self.ai_blue_agents and self.ai_red_agents:
             self.reward(None)
-        print("ending done")
+
         return self._done
 
     @jaxtyped(typechecker=beartype)
@@ -3271,7 +3254,6 @@ class Scenario(BaseScenario[FootballWorld]):
     @eqx.filter_jit
     @jaxtyped(typechecker=beartype)
     def info(self, agent: Agent):
-        print("starting info")
 
         blue = agent.id in [a.id for a in self.blue_agents]
         info = {
@@ -3302,7 +3284,7 @@ class Scenario(BaseScenario[FootballWorld]):
                 self.min_agent_dist_to_ball_red
                 <= self.agent_size + self.ball_size + 1e-2
             )
-        print("ending info")
+
         return info
 
     @jaxtyped(typechecker=beartype)
@@ -3580,12 +3562,12 @@ if __name__ == "__main__":
     render_interactively(
         __file__,
         control_two_agents=True,
-        n_blue_agents=2,
-        n_red_agents=2,
+        n_blue_agents=5,
+        n_red_agents=5,
         ai_blue_agents=False,
         ai_red_agents=True,
         ai_strength=1.0,
         ai_decision_strength=1.0,
         ai_precision_strength=1.0,
-        n_traj_points=2,
+        n_traj_points=8,
     )

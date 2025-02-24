@@ -7,7 +7,7 @@ from jaxtyping import Array, Int
 from jaxvmas.simulator.core.agent import Agent
 from jaxvmas.simulator.core.entity import Entity
 from jaxvmas.simulator.core.landmark import Landmark
-from jaxvmas.simulator.core.shapes import Box, Line, Shape, Sphere
+from jaxvmas.simulator.core.shapes import Box, Line, Shape, ShapeType, Sphere
 from jaxvmas.simulator.core.world import (
     DRAG,
     World,
@@ -19,6 +19,9 @@ env_index_dim = "env_index_dim"
 
 # Test that an unsupported shape triggers a RuntimeError.
 class DummyShape(Shape):
+    def __init__(self):
+        super().__init__(ShapeType.BOX)
+
     def moment_of_inertia(self, mass):
         pass
 
