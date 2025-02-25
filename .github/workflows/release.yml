@@ -1,10 +1,8 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "*-release"
-      - "*-beta"
+  workflow_dispatch:  # This enables manual triggering
+
 
 jobs:
   details:
