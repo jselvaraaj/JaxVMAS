@@ -14,6 +14,13 @@ license = {text = "GPLv3"}
 requires-python = ">=3.11,<4.0"
 dependencies = [
     "jax",
+    "jaxtyping",
+    "flax",
+    "chex",
+    "beartype",
+    "equinox",
+    "pyglet<=1.5.27",
+    "opencv-python",
 ]
 
 [project.urls]

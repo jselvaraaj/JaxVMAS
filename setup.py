@@ -6,5 +6,14 @@ setup(
     url="https://github.com/jselvaraaj/JaxVMAS",
     license="GPLv3",
     packages=find_packages(),
-    install_requires=["jax"],
+    install_requires=[
+        "jax",
+        "jaxtyping",
+        "flax",
+        "chex",
+        "beartype",
+        "equinox",
+        "pyglet<=1.5.27",
+        "opencv-python",
+    ],
 )
